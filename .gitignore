@@ -1,0 +1,12 @@
+# Spectra app data
+.spectra/
+.env
+.venv/
+__pycache__/
+.pytest_cache/
+
+# experiment outputs
+runs/
+
+# Spectra vector search index
+docs/spectra/.vector-search.db*

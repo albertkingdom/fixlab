@@ -1,0 +1,40 @@
+schema: spec-driven
+
+context: |
+  專案：fixlab —— 教學導向的最小 CLI coding agent，專門修「多檔小型專案裡的 bug」，
+  並附 telemetry 與 bug benchmark，量化 agent 的表現。
+  與 ../code-agent-eval 的關係：那個專案是評測實驗（單檔函式題、agent 是受測對象）；
+  這個專案是能實際使用的 CLI 工具，評測沿用可見／隱藏測試與假通過的方法。
+  用途：華邦電子「AI 應用工程師」面試作品（104 職缺 94ndv）。
+  JD 對應：Tool-use Agent／Coding Copilot、CLI AI Assistant、模型評估／Telemetry／實驗框架、
+  程式碼生成的自動化驗證、開源模型、Prompt／Context Engineering；
+  後期選做 Agent Workflow／Multi-Agent、平台 Connector（MCP 或 GitHub issue）。
+  不做 Verilog／EDA（沒有相關經驗，不宣稱）。
+  讀者：使用者本人＋面試官。使用者必須能用自己的話解釋每個設計決定。
+  技術：Python、OpenAI 相容 API（本機 Ollama、OpenRouter），不使用 agent 框架，迴圈自己寫。
+  Agent 定義：由 LLM 決定下一步與何時完成；程式只設步數上限、連續失敗上限等保險。不得退化成寫死流程。
+
+  教學性質（所有產出都要遵守）：
+  - 程式碼好讀：主流程讀起來像偽碼；核心迴圈約 50 行；例外處理放進命名清楚的輔助函式。
+  - 註解用繁體中文，識別字用英文；註解說明「為什麼」，不重複程式碼在做什麼。
+  - 每個模組開頭用 2–5 行說明它在整體流程中的角色。
+  - 不追求通用與抽象，寧可直白也不要聰明。
+  - 文件用白話＋具體例子；新概念先給比喻或實例，再給定義。
+  - 每個階段完成後打 git tag（stage-1、stage-2…），讀者能逐階段看專案長大。
+
+  版控：Conventional Commits、英文；commit 訊息不提 AI 工具、不加 Co-Authored-By。
+
+  語言例外：規格檔（specs/*/spec.md）依 Spectra 格式以英文撰寫（SHALL／MUST 規範用語）；
+  提案、設計、任務仍用繁體中文。
+
+rules:
+  proposal:
+    - 寫明這個變更對應 JD 的哪幾點，以及不做什麼（Non-goals）。
+    - 若是補寫既有行為的規格，標註「實作後補寫」。
+  specs:
+    - 每條需求至少一個具體情境（給定／當／則），用實際檔名、指令或輸入值舉例。
+    - 用白話描述行為，避免只寫抽象名詞。
+  design:
+    - 每個設計決定寫出替代方案與取捨，讓使用者能在面試時說明「為什麼這樣做」。
+  tasks:
+    - 任務切成每項 2 小時以內，並標出對應的測試。
