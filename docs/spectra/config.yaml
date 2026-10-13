@@ -22,6 +22,8 @@ context: |
   - 文件用白話＋具體例子；新概念先給比喻或實例，再給定義。
   - 每個階段完成後打 git tag（stage-1、stage-2…），讀者能逐階段看專案長大。
 
+  原創性：不得複製他人專案的程式碼或題目結構；每個設計決定的依據要是自己的實驗、自己程式的缺陷或 Claude Code 的實際行為，外部文章只當參考並註明來源。
+
   版控：Conventional Commits、英文；commit 訊息不提 AI 工具、不加 Co-Authored-By。
 
   語言例外：規格檔（specs/*/spec.md）依 Spectra 格式以英文撰寫（SHALL／MUST 規範用語）；
