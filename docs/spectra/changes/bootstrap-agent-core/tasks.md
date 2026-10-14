@@ -1,6 +1,6 @@
 ## 1. 專案骨架與範例專案
 
-- [ ] 1.1 只建骨架，不搬任何模組：依「複製自己的程式並整理，不做共用套件」，之後每個模組在自己的任務裡從 code-agent-eval 複製並加上 2–5 行繁體中文的模組開頭說明。pyproject.toml 宣告 openai、regex、pytest，並設 `norecursedirs = ["tests/fixtures"]`，建立 .venv 與空的 fixlab 套件。驗證：在 .venv 內 `python -c "import fixlab, regex"` 成功，`pytest --collect-only` 退出碼為 5（沒有測試）且不報錯。
+- [x] 1.1 只建骨架，不搬任何模組：依「複製自己的程式並整理，不做共用套件」，之後每個模組在自己的任務裡從 code-agent-eval 複製並加上 2–5 行繁體中文的模組開頭說明。pyproject.toml 宣告 openai、regex、pytest，並設 `norecursedirs = ["tests/fixtures"]`，建立 .venv 與空的 fixlab 套件。驗證：在 .venv 內 `python -c "import fixlab, regex"` 成功，`pytest --collect-only` 退出碼為 5（沒有測試）且不報錯。
 - [ ] 1.2 寫 tests/fixtures/timelog 小專案（工時紀錄解析）：timelog/parser.py 的 parse_duration 用 `re.match(r"(\d+)([hm])", text)` 只取第一個單位，使 "1h30m" 變成 60 分鐘；timelog/report.py 的 weekly_total 呼叫它並換算小時；干擾檔 timelog/formatting.py 與 timelog/test_formatting.py；失敗的測試在 tests/test_report.py，斷言訊息只寫 "3.75 != 4.25"，不透露原因。驗證：tests/test_fixture.py 把它複製到暫存目錄跑 pytest，未修時恰好 1 個失敗；只改 parser.py 的那一個運算式後全數通過；並確認 fixlab 根目錄的 `pytest --collect-only` 不收集 tests/fixtures。
 
 ## 2. tool call 解析

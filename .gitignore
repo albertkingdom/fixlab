@@ -10,3 +10,4 @@ runs/
 
 # Spectra vector search index
 docs/spectra/.vector-search.db*
+*.egg-info/

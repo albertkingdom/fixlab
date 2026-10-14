@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fixlab"
+version = "0.1.0"
+description = "教學導向的最小 CLI coding agent，修多檔小專案的 bug"
+requires-python = ">=3.11"
+dependencies = [
+    "openai",
+    "regex",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.setuptools]
+packages = ["fixlab"]
+
+[tool.pytest.ini_options]
+# 覆寫 norecursedirs 會蓋掉 pytest 的預設值，所以把預設裡需要的（.*、venv 等）一起列出。
+# tests/fixtures 是給 agent 修的範例專案，裡面的測試本來就會失敗，不能被 fixlab 自己的 pytest 收集。
+norecursedirs = [".*", "*.egg", "build", "dist", "venv", "tests/fixtures"]
