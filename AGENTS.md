@@ -21,8 +21,8 @@ fixlab 是能實際使用的工具，沿用它的評測方法（可見／隱藏�
 | JD | fixlab 的對應 |
 |---|---|
 | Tool-use Agent、Coding Copilot（工作 3） | 多檔修 bug 的 agent 迴圈與工具 |
-| CLI AI Assistant（工作 8） | 互動式 CLI 與一次性 `fix` 指令 |
-| 評估、Telemetry、實驗框架（工作 5） | 事件記錄、彙整報告、bug benchmark |
+| CLI AI Assistant、Developer Productivity Tool（工作 8、加分 3） | 互動式 CLI 與一次性 `fix` 指令 |
+| 評估、Telemetry、實驗框架、AI Evaluation Framework（工作 5、加分 1） | 事件記錄、彙整報告、bug benchmark |
 | 程式碼生成的自動化驗證（工作 6） | 可抽換的 verifier（pytest） |
 | 開源模型與推論框架（加分 2） | Ollama／OpenRouter 上的 Qwen、Gemma 對商用模型 |
 | Prompt／Context Engineering（加分 1） | system prompt 規則消融、tool output 截斷 |
