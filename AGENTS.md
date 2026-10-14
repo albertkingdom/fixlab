@@ -58,6 +58,11 @@ Verilog／EDA、SWE-bench 與真實大型 repo（需 Docker、小模型成功率
 4. 不為了讓數字好看而調整題目或切分；任何調整寫入結果報告。不編造結果。
 5. 引用外部數字註明來源與日期。
 6. 版控：commit 訊息不提 AI 工具、不加 Co-Authored-By；Conventional Commits、英文。
+   - 新功能一律從 `main` 開新分支，命名 `feature/{feature-name}`，不直接 commit 到 `main`。
+   - 實作前要有完成的 Spectra 提案（`/spectra-propose`）。
+   - 合併前更新 `README.md` 反映新功能。
+   - 開 PR 前必須完成 code review，所有 blocking 與 important 的問題都要解決。
+   - review 發現的問題依 `review-findings` skill（`.claude/skills/review-findings/`）處理。
 7. **原創性**：不得複製他人專案的程式碼或題目結構（包含範例專案、bug 類型、檔案配置）。每個設計決定的依據必須是自己的實驗、自己程式的已知缺陷，或 Claude Code 的實際行為；外部文章只當參考，並在 README 與 `docs/spectra` 的設計文件註明讀過什麼、採用了哪個想法。
 
 ## 6. 參考來源（只是參考，不是設計依據）
