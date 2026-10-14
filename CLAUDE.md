@@ -1,3 +1,5 @@
+@AGENTS.md
+
 <!-- SPECTRA:START v1.3.0 -->
 
 # Spectra Instructions
