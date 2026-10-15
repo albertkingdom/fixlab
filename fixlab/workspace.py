@@ -1,4 +1,4 @@
-"""工作目錄與工具分派（改寫自 code-agent-eval 的 agent/tools.py 的 Workspace）。
+"""工作目錄與工具分派。
 
 Workspace 只認一個根目錄。工具傳進來的路徑一律先過 resolve()，必須落在根目錄內；
 call() 依名稱分派工具，永遠回傳 ToolResult、不拋例外，模型給怪參數時 loop 才不會崩潰。

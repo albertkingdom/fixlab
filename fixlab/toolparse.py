@@ -1,4 +1,4 @@
-"""把模型回覆解析成工具呼叫（複製自 code-agent-eval 的 agent/toolparse.py）。
+"""把模型回覆解析成工具呼叫。
 
 模型的工具呼叫有兩種寫法：API 的 tool_calls 欄位（原生），或寫在 content 文字裡的 JSON
 （本機小模型常見）。parse_message 把兩種都轉成 ParsedCall，並擋掉不合法的。
