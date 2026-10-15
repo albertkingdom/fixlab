@@ -5,7 +5,7 @@
 
 ## 2. tool call 解析
 
-- [ ] 2.1 從 code-agent-eval 複製 toolparse 成 fixlab/toolparse.py 並依 specs 補測試：Native tool calls take precedence、Fallback parsing from reply text、Calls are validated against tool schemas（含 bash 被當成未知工具）、Broken call attempts are errors, not silence 四個需求的所有情境。驗證：tests/test_toolparse.py 逐情境對應一個測試函式，全數通過。
+- [x] 2.1 從 code-agent-eval 複製 toolparse 成 fixlab/toolparse.py 並依 specs 補測試：Native tool calls take precedence、Fallback parsing from reply text、Calls are validated against tool schemas（含 bash 被當成未知工具）、Broken call attempts are errors, not silence 四個需求的所有情境。驗證：tests/test_toolparse.py 逐情境對應一個測試函式，全數通過。
 
 ## 3. 七個工具（先不含沙箱）
 
