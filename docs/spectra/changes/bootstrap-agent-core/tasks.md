@@ -9,7 +9,7 @@
 
 ## 3. 七個工具（先不含沙箱）
 
-- [ ] 3.1 實作 Workspace 的路徑解析與分派：依「工作目錄就是 repo 根目錄，任務文字由呼叫端傳入」的 Workspace 介面，加上 Paths stay inside the workspace 與 Tool errors never crash the loop，以及「blocked 旗標只留給路徑逃逸與受保護檔案」：../、sub/../../、絕對路徑、~ 開頭、符號連結逃逸都回 ok=false 並設 blocked；找不到檔案只回 ok=false 不設 blocked；未知工具 bash 與 old_string 傳數字都回 ok=false 而不是例外。驗證：tests/test_isolation.py 路徑表六列加 "Other errors are not blocked" 情境；tests/test_tools.py 未知工具與錯誤型別兩情境。
+- [x] 3.1 實作 Workspace 的路徑解析與分派：依「工作目錄就是 repo 根目錄，任務文字由呼叫端傳入」的 Workspace 介面，加上 Paths stay inside the workspace 與 Tool errors never crash the loop，以及「blocked 旗標只留給路徑逃逸與受保護檔案」：../、sub/../../、絕對路徑、~ 開頭、符號連結逃逸都回 ok=false 並設 blocked；找不到檔案只回 ok=false 不設 blocked；未知工具 bash 與 old_string 傳數字都回 ok=false 而不是例外。驗證：tests/test_isolation.py 路徑表六列加 "Other errors are not blocked" 情境；tests/test_tools.py 未知工具與錯誤型別兩情境。
 - [ ] 3.2 實作 read_file：依「輸出一律有上限，格式固定」，read_file returns numbered lines 用 splitlines、6 位右對齊行號加 tab、行範圍、空檔回 "(empty file)"、超過 20000 字元截斷並註明總量，整檔且未截斷的讀取記進 Workspace 的 files_read。驗證：tests/test_tools.py 的整檔（含結尾換行）、行範圍、空檔、缺檔四個情境加一個截斷測試。
 - [ ] 3.3 實作 list_files 與 glob：依「遍歷工具不跟隨符號連結，跳過清單共用」，list_files shows the project layout 與 glob finds files by name pattern 遞迴、依完整相對路徑字串排序、跳過 .git、.venv、__pycache__、.pytest_cache、不列出符號連結、上限 200 並註明省略數量，glob 無符合回 "no files matched"。驗證：tests/test_tools.py 的小專案排序、250 檔上限、符號連結、`**/test_*.py`、無符合五個情境。
 - [ ] 3.4 實作 grep：依「grep 自己實作，單行比對用 regex 套件加逾時」，grep searches file contents 輸出 路徑:行號:內容、單行只比對前 2000 字元、單行 1 秒與整體 5 秒的時間上限、不跟隨符號連結、上限 100 行、無效正規表示式回 ok=false。驗證：tests/test_tools.py 的找定義、無效 pattern、120 筆只回 100 行、`(a+)+$` 在 5 秒內回 "pattern too slow"、符號連結不被讀取五個情境。
