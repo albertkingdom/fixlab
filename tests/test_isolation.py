@@ -15,7 +15,7 @@ def ws(tmp_path):
 
     # 假工具：任務 3.2 以後才有真的 read_file，這裡只驗證路徑守門與錯誤分類。
     def read_file(path: str) -> ToolResult:
-        p = w.resolve(path)
+        p = w.resolve_inside(path)
         if not p.is_file():
             raise ToolError(f"file not found: {path!r}")
         return ToolResult(p.read_text(), True)

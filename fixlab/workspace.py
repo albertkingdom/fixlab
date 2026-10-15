@@ -1,6 +1,6 @@
 """工作目錄與工具分派。
 
-Workspace 只認一個根目錄。工具傳進來的路徑一律先過 resolve()，必須落在根目錄內；
+Workspace 只認一個根目錄。工具傳進來的路徑一律先過 resolve_inside()，必須落在根目錄內；
 call() 依名稱分派工具，永遠回傳 ToolResult、不拋例外，模型給怪參數時 loop 才不會崩潰。
 錯誤分兩類：路徑逃逸（PathBlocked）設 blocked 旗標，其餘（ToolError、OSError）只是 ok=False。
 """
@@ -43,7 +43,7 @@ class Workspace:
     def register(self, name: str, func: Callable[..., ToolResult], schema: dict) -> None:
         self._tools[name] = Tool(func, schema)
 
-    def resolve(self, rel: str) -> Path:
+    def resolve_inside(self, rel: str) -> Path:
         """把相對路徑解析成工作目錄內的真實路徑；不合規就 raise。"""
         if not isinstance(rel, str) or not rel.strip():
             raise ToolError("path must be a non-empty string")
