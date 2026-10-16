@@ -120,7 +120,7 @@ def call(self, name, args):
 
 **路徑檢查靠 `resolve_inside()`。** 先拒絕絕對路徑和 `~` 開頭，再 `resolve()`（會展開 `../` 並跟隨符號連結），最後確認結果還在工作目錄底下。
 
-**`blocked` 旗標只留給兩種情況：路徑逃逸（現在已有）與寫入受保護檔案（3.6 才加）。** 找不到檔案、參數型別不對都只是 `ok=False`。依據是我自己前一個專案的缺陷：code-agent-eval 把所有 `ToolError`（連 file not found 都算）設成 `blocked`，結果 `blocked_calls` 同時混了安全攔截和一般錯誤。階段 3 要統計「agent 嘗試越界的次數」，這個指標一混就沒意義。
+**`blocked` 旗標只留給兩種情況：路徑逃逸（現在已有）與寫入受保護檔案（3.9 才加）。** 找不到檔案、參數型別不對都只是 `ok=False`。依據是我自己前一個專案的缺陷：code-agent-eval 把所有 `ToolError`（連 file not found 都算）設成 `blocked`，結果 `blocked_calls` 同時混了安全攔截和一般錯誤。階段 3 要統計「agent 嘗試越界的次數」，這個指標一混就沒意義。
 
 同樣的七個呼叫，換成現在的 `Workspace`（測試裡的假 `read_file`，真的是 3.3）：
 
@@ -162,4 +162,4 @@ read_file({})                      ok=False flags={} output="error: read_file: m
 
 ## 下一篇
 
-3.2 把工具登記表轉成給模型看的清單，再實作 `read_file`、`list_files`、`edit_file`、`run_tests`，第 2 篇會從那裡開始。
+3.2 把工具登記表轉成給模型看的清單，接著實作 `read_file`、`list_files`，並把迴圈與最小入口提前接上，讓模型先唯讀探索一次 timelog。第 2 篇會從那裡開始。
