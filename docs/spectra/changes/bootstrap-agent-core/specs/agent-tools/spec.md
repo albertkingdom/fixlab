@@ -6,7 +6,7 @@ The agent gets seven tools (read_file, list_files, glob, grep, edit_file, write_
 
 ### Requirement: read_file returns numbered lines
 
-read_file SHALL split the file into lines with `str.splitlines` and return each line prefixed by its 1-based line number right-aligned in 6 characters followed by a tab, with no extra numbered line for a trailing newline. When start_line and end_line are given, it SHALL return only that inclusive range. An empty file SHALL return the text "(empty file)". When the output exceeds 20000 characters it SHALL be cut and end with a note giving the total character count. A missing file or a directory SHALL return ok=false. A read that has no line range and is not truncated SHALL record the file as fully read for write_file.
+read_file SHALL split the file into lines with `str.splitlines` and return each line prefixed by its 1-based line number right-aligned in 6 characters followed by a tab, with no extra numbered line for a trailing newline. When start_line and end_line are given, it SHALL return only that inclusive range. An empty file SHALL return the text "(empty file)". When the output exceeds 20000 characters it SHALL be cut and end with a note giving the total character count. A missing file or a directory SHALL return ok=false. A file that is not valid UTF-8 text SHALL return ok=false instead of raising. A line range with start_line below 1, with end_line below start_line, or with start_line past the last line SHALL return ok=false. A read that has no line range and is not truncated SHALL record the file as fully read for write_file.
 
 #### Scenario: Whole small file
 
@@ -27,6 +27,16 @@ read_file SHALL split the file into lines with `str.splitlines` and return each 
 
 - **WHEN** read_file is called with path nope.py that does not exist
 - **THEN** the result has ok=false, the message contains "file not found", and the `blocked` flag is not set
+
+#### Scenario: Not a UTF-8 text file
+
+- **WHEN** read_file is called on blob.bin, a file whose bytes are 0xFF 0xFE 0x00 0x80
+- **THEN** the result has ok=false, the message contains "UTF-8", and no exception reaches the caller
+
+#### Scenario: Invalid line range
+
+- **WHEN** read_file is called on a 2-line file with start_line 9
+- **THEN** the result has ok=false and the message contains "past the end"
 
 ### Requirement: list_files shows the project layout
 
