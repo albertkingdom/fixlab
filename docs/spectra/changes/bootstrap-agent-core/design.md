@@ -88,6 +88,10 @@ run_tests 執行的指令固定為：python -m pytest -q -p no:cacheprovider -c 
 
 code-agent-eval 把所有 ToolError（包括 file not found）都設成 blocked 旗標，使 blocked_calls 同時混了安全攔截與一般錯誤。fixlab 只在「路徑逃逸」與「寫入受保護檔案」時設 blocked 並計入 blocked_calls；其他錯誤（找不到檔案、old_string 出現次數不對、先讀後寫失敗）只是 ok=false。原因：階段 3 要統計 agent 嘗試越界的次數，指標必須乾淨。
 
+### 只解析原生 tool_calls，不做文字備援解析
+
+toolparse 只讀回覆的 tool_calls 欄位；沒有原生呼叫的回覆就是純文字，不掃描文字裡的 JSON。原生呼叫的參數 JSON 壞掉、工具不存在、缺必要參數，仍回報錯誤給模型重試。依據是自己的試跑（code-agent-eval/docs/pilot-results.md）：qwen3.5:9b 的 20 題迴圈是 74 次原生、0 次備援，gemma4:12b 的煙霧測試是 30/30 原生，備援解析在這兩個模型上不會被觸發；需要它的只有 qwen2.5-coder:7b（原生 0、備援 96，33 次無效呼叫，只有 7/20 自行完成）和 llama3.1:8b（偶爾寫在文字裡，還會編造工具）。專案決定只支援有穩定原生 tool calling 的模型，不為較弱的模型多維持一層解析。替代方案：保留備援解析當選用層（原本的四關設計）；不選的原因：在選定的模型上用不到的程式與規格，只增加閱讀與維護負擔，也讓「結束判斷不能只看 calls 是否為空」這類規則變複雜。取捨：不使用原生格式的模型不再支援；這類模型把 JSON 寫在文字裡時不會被偵測，看起來會是「第 1 步就宣告完成、沒呼叫任何工具」，靠 CLI 結束時再跑一次 run_tests、顯示 stop reason 與步數來暴露，README 列出支援的模型條件。階段 3 若要比較較弱的模型，再把備援解析加回來；舊實作留在 git 歷史（commit 302bf7d）。
+
 ### 保留 trace 回呼，不在階段 1 決定 telemetry 格式
 
 迴圈繼續接受一個 trace(record) 回呼，每個回覆呼叫一次，欄位沿用現有的（step、latency、token、tool_calls…）。階段 2 再決定寫檔格式與彙整。替代方案：現在就設計完整的事件 schema。不選的原因：還沒有實際的 CLI 與 benchmark 來決定需要哪些欄位，提前設計容易白做。
@@ -115,7 +119,7 @@ code-agent-eval 把所有 ToolError（包括 file not found）都設成 blocked 
 - 其他工具錯誤（找不到檔案、edit_file 的次數不是 1、覆寫沒整檔讀過的檔案、無效正規表示式、grep 太慢）：ok=false，不設 blocked。
 - `--apply` 遇到任何不符合寫回條件的檔：整個中止、不寫任何檔並說明原因。複本裡的符號連結不跟隨（read_file 被擋）。沒設 OPENAI_API_KEY：結束並給清楚的錯誤訊息。
 - 連續 3 次「有執行工具且全失敗」的回合：迴圈以 stuck 結束，counters 記錄 stuck_failures。
-- 回覆被截斷、空回覆、壞掉的 JSON：行為與 code-agent-eval 相同（回饋給模型，不算完成，也不影響連續失敗計數）。
+- 回覆被截斷、空回覆、原生呼叫的參數 JSON 壞掉：行為與 code-agent-eval 相同（回饋給模型，不算完成，也不影響連續失敗計數）。
 
 **Acceptance criteria**
 
@@ -132,6 +136,7 @@ code-agent-eval 把所有 ToolError（包括 file not found）都設成 blocked 
 ## Risks / Trade-offs
 
 - [MVP 階段 run_tests 在沙箱完成前直接執行被測程式（含模型改寫過的檔案），沒有網路與家目錄限制；被測程式可讀家目錄的機密檔，也能改複本裡的測試檔] → 環境變數白名單已隨 run_tests 一起上，API 金鑰不會進子行程；最小入口只改暫存複本，`--apply` 有三個寫回條件；沙箱任務完成前，只對自己寫的 fixture 執行並人工看過 diff，不對別人的 repo 跑。
+- [不使用原生 tool_calls 的模型（例如 qwen2.5-coder:7b）把 JSON 寫在文字裡，會被當成純文字，看起來是模型第 1 步就完成] → 刻意不支援；CLI 結束時再跑一次 run_tests 並顯示 stop reason 與步數，README 註明支援的模型要有原生 tool calling。
 - [白名單環境變數讓某些專案的測試跑不起來] → 階段 1 只服務自己寫的題目；階段 2 若要跑別人的 repo，再加可設定的白名單。
 - [sandbox-exec 已被 Apple 標為棄用，且只有 macOS] → 在 README 與 AGENTS.md 明講；沙箱介面保持單一模組，之後可換成 Docker。
 - [受保護目錄規則太寬（tests 或 test 目錄整個不可改）] → 對本專案的 benchmark 是想要的；若真實專案把原始碼放在名為 test 的目錄，會被誤擋，階段 1 接受這個限制。

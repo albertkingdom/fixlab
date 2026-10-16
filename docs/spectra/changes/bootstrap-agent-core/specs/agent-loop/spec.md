@@ -89,14 +89,14 @@ When a reply contains no valid tool call but has parse errors, the loop SHALL ap
 - **WHEN** the reply's finish reason is `length`
 - **THEN** the tool call in that reply is not executed, the next request tells the model its reply was "cut off", and `truncated_replies` is 1
 
-### Requirement: Text-mode calls execute one at a time
+### Requirement: All native calls in one reply are executed
 
-When tool calls are parsed from reply text (fallback) and the reply contains more than one, the loop SHALL execute only the first, record the number dropped in `dropped_calls`, and append a note asking the model to call one tool at a time. Native parallel calls SHALL all be executed.
+When a reply contains more than one valid native tool call, the loop SHALL execute all of them in the order given and append one tool result per call before asking the model again. The whole reply counts as one step.
 
-#### Scenario: Model writes the whole plan in text
+#### Scenario: Two reads in one reply
 
-- **WHEN** the reply text contains an edit_file JSON object followed by a run_tests JSON object
-- **THEN** only edit_file is executed, `dropped_calls` is 1, and the tool result contains the word "ignored"
+- **WHEN** the reply has a native read_file call on "timelog/parser.py" and a native read_file call on "timelog/report.py"
+- **THEN** both files are read in that order, the next request contains two tool results, and `steps` is 1
 
 ### Requirement: Transient provider errors are retried, timeouts are not
 
@@ -114,9 +114,9 @@ The loop SHALL retry a model request after HTTP 429, HTTP 5xx, or connection err
 
 ### Requirement: Every step is traced
 
-The loop SHALL call the trace callback once per answered model call with event `tool_calls`, `invalid_tool_call`, or `done`, containing the step number, latency, finish reason, token counts, reply text, parse errors, and for each executed tool call its name, source, arguments, ok flag, flags, and output. Arguments and outputs longer than 2000 characters SHALL be truncated in the record.
+The loop SHALL call the trace callback once per answered model call with event `tool_calls`, `invalid_tool_call`, or `done`, containing the step number, latency, finish reason, token counts, reply text, parse errors, and for each executed tool call its name, arguments, ok flag, flags, and output. Arguments and outputs longer than 2000 characters SHALL be truncated in the record.
 
 #### Scenario: Trace for a tool step
 
 - **WHEN** the model calls read_file on rules.py
-- **THEN** the trace record has event `tool_calls` and one tool call entry with name `read_file`, source `native`, and the numbered file content as output
+- **THEN** the trace record has event `tool_calls` and one tool call entry with name `read_file` and the numbered file content as output

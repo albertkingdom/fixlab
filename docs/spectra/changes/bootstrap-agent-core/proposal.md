@@ -27,13 +27,14 @@ fixlab 要做的是能實際修多檔 bug 的 CLI coding agent，但目前專案
 - 不追求跨平台：沙箱只支援 macOS 的 sandbox-exec。
 - 不處理硬連結（hard link）逃逸，只在 README 列為已知限制。
 - 不處理被測專案有自己的第三方依賴的情況（run_tests 使用 fixlab 自己的 venv）。
+- 不支援不使用原生 tool_calls 的模型（例如 qwen2.5-coder:7b），也不做從回覆文字解析 JSON 的備援；支援的模型必須有原生 tool calling。
 
 ## Capabilities
 
 ### New Capabilities
 
 - `agent-loop`: 由模型決定下一步與何時完成的迴圈；步數上限、連續失敗上限、暫時性錯誤重試、每步 trace。
-- `tool-call-parsing`: 把模型回覆解析成合法的工具呼叫，原生 tool_calls 優先，文字 JSON 為備援。
+- `tool-call-parsing`: 把模型回覆解析成合法的工具呼叫，只解析原生 tool_calls；文字裡的 JSON 一律視為純文字。
 - `agent-tools`: 七個檔案與測試工具的行為與輸出格式（行號、截斷上限、唯一字串替換、先讀後寫、固定的 pytest 指令）。
 - `workspace-isolation`: 路徑限制、測試檔保護與整組指紋、macOS 沙箱、子行程環境變數白名單。
 
