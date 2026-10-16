@@ -94,7 +94,7 @@ code-agent-eval 把所有 ToolError（包括 file not found）都設成 blocked 
 
 ### 設計依據與參考來源
 
-每個決定的依據必須是三類之一：自己 pilot 的實驗結果（docs 與 code-agent-eval/docs/pilot-results.md）、自己程式碼的已知缺陷、Claude Code 工具的實際行為。外部文章只列為「參考來源」，註明讀過什麼、採用了哪個想法，不當作設計依據，也不複製其程式碼或題目結構。已讀過的參考：高見龍的 KeSi 連載（kaochenlong.com，Day 11–18），影響了：連續失敗計數只算「整輪全失敗」、環境變數洩漏列為風險、成本與 token 量測的重視。範例專案 timelog 的領域、bug 類型（解析邏輯而非比較運算子）與檔案結構都是自己設計，刻意不沿用他實驗題的骨架。沙箱規則最初寫在 code-agent-eval 時參考過 KeSi 的 sandbox_spec，註解標為 MIT，但 AGENTS.md 記載查不到其 repo 與授權，所以沿用前要再核對，README 也要註明。另讀過同一作者的〈讓 Agent 看見專案〉：採用的想法只有「空結果要明確回報，讓模型分得出沒找到與沒執行成功」，並列出 .env 外洩風險；其 list_files 只列一層、fixlab 選遞迴，理由是 benchmark 專案小，一次看到全部結構比較省步數。〈用 ripgrep 搜尋程式碼〉也讀過，尚未決定是否改用 rg，決定時再補上採用了哪些想法。替代方案：不寫來源。不選的原因：面試時必須能說清楚哪些是自己的設計、哪些是參考。
+每個決定的依據必須是三類之一：自己 pilot 的實驗結果（docs 與 code-agent-eval/docs/pilot-results.md）、自己程式碼的已知缺陷、Claude Code 工具的實際行為。外部文章只列為「參考來源」，註明讀過什麼、採用了哪個想法，不當作設計依據，也不複製其程式碼或題目結構。已讀過的參考：高見龍的 KeSi 連載（kaochenlong.com，Day 01–18，並讀過 repo），影響了：連續失敗計數只算「整輪全失敗」、環境變數洩漏列為風險、成本與 token 量測的重視。範例專案 timelog 的領域、bug 類型（解析邏輯而非比較運算子）與檔案結構都是自己設計，刻意不沿用他實驗題的骨架。沙箱規則最初寫在 code-agent-eval 時參考過 KeSi 的 sandbox_spec，註解標為 MIT。已於 2026-10-16 查證其 repo（github.com/kaochenlong/KeSi）的 LICENSE 為 MIT，Copyright (c) 2026 Eddie Kao；5.2 動工前仍要比對 code-agent-eval 的沙箱規則與其 sandbox_spec 的相似程度，有沿用的部分附上版權聲明，README 也要註明。另讀過同一作者的〈讓 Agent 看見專案〉：採用的想法只有「空結果要明確回報，讓模型分得出沒找到與沒執行成功」，並列出 .env 外洩風險；其 list_files 只列一層、fixlab 選遞迴，理由是 benchmark 專案小，一次看到全部結構比較省步數。〈用 ripgrep 搜尋程式碼〉也讀過，尚未決定是否改用 rg，決定時再補上採用了哪些想法。替代方案：不寫來源。不選的原因：面試時必須能說清楚哪些是自己的設計、哪些是參考。
 
 ## Implementation Contract
 
@@ -143,7 +143,7 @@ code-agent-eval 把所有 ToolError（包括 file not found）都設成 blocked 
 - [被測程式讀取家目錄的機密檔（~/.ssh、~/.aws、其他專案的 .env），經測試輸出送進對話與 LLM 供應商] → 沙箱預設擋住整個家目錄的讀取，只放行工作目錄與 .venv；家目錄以外仍可讀的機密（例如 /etc 底下的設定）不在階段 1 範圍。
 - [基底 Python 裝在家目錄底下時，擋家目錄會讓 pytest 無法啟動] → run_tests 回報啟動失敗而不是靜默通過；需要時把基底 Python 目錄加入放行清單。
 - [SBPL 的正規表示式與 Python 的 re 不完全相同，跳脫字元集合可能漏掉] → 以含 +、(、)、.、[ 的目錄名做測試；若有遺漏，保護會悄悄失效，所以測試要實際嘗試寫入受保護檔案而不只檢查規則文字。
-- [KeSi 授權與網址在 AGENTS.md 記為查不到，但 code-agent-eval 的沙箱註解寫 MIT] → 沿用前先到 repo 核對授權；README 註明參考來源。
+- [code-agent-eval 的沙箱規則最初參考 KeSi 的 sandbox_spec，兩者可能有相似的段落；KeSi 為 MIT，要求保留版權聲明] → 授權已查證；5.2 動工前逐段比對，有沿用就附 Copyright (c) 2026 Eddie Kao 與 MIT 聲明；README 註明參考來源。
 
 ## Open Questions
 

@@ -13,7 +13,7 @@
 ### 與 code-agent-eval 的關係
 `../code-agent-eval` 是評測實驗：單檔函式題，agent 是受測對象，量「只用可見測試自我驗證可不可信」。
 fixlab 是能實際使用的工具，沿用它的評測方法（可見／隱藏測試、假通過）與部分程式（迴圈、tool call 解析、沙箱）。
-沙箱寫法最初參考 KeSi（github.com/kaochenlong/KeSi，MIT）；沿用須註明來源。
+沙箱寫法最初參考 KeSi（github.com/kaochenlong/KeSi，MIT，Copyright (c) 2026 Eddie Kao）；沿用須註明來源，複製較大段內容時須保留其版權聲明。
 
 ### 為什麼做（JD 對應）
 華邦電子「軟體類 AI 應用工程師（竹北）」，104 職缺 `94ndv`：
@@ -66,6 +66,6 @@ Verilog／EDA、SWE-bench 與真實大型 repo（需 Docker、小模型成功率
 7. **原創性**：不得複製他人專案的程式碼或題目結構（包含範例專案、bug 類型、檔案配置）。每個設計決定的依據必須是自己的實驗、自己程式的已知缺陷，或 Claude Code 的實際行為；外部文章只當參考，並在 README 與 `docs/spectra` 的設計文件註明讀過什麼、採用了哪個想法。
 
 ## 6. 參考來源（只是參考，不是設計依據）
-- 高見龍 KeSi 連載：<https://kaochenlong.com/build-your-own-claude-code>。讀過 Day 11–18。影響到的想法：連續失敗只算「整輪全失敗」、環境變數洩漏是風險、重視 token 與成本量測、沙箱的風險清單。程式 repo 網址與授權查不到；沙箱寫法在 code-agent-eval 的註解標為參考 KeSi（MIT），沿用前要再核對。範例專案、bug 類型、檔案結構、規格與測試都是自己設計。
+- 高見龍 KeSi 連載：<https://kaochenlong.com/build-your-own-claude-code>。讀過 Day 01–18，也讀過其 repo。影響到的想法：連續失敗只算「整輪全失敗」、環境變數洩漏是風險、重視 token 與成本量測、沙箱的風險清單。程式 repo：<https://github.com/kaochenlong/KeSi>，MIT 授權，Copyright (c) 2026 Eddie Kao（2026-10-16 查證 LICENSE）。沙箱寫法在 code-agent-eval 的註解標為參考 KeSi 的 sandbox_spec；5.2 動工前要比對兩者，有沿用的部分就附上版權聲明。範例專案、bug 類型、檔案結構、規格與測試都是自己設計。範例專案、bug 類型、檔案結構、規格與測試都是自己設計。
 - 前身專案：`../code-agent-eval`（自己的程式與試跑結果 docs/pilot-results.md）。
 - Claude Code 的工具行為（Edit 的唯一字串替換、Write 覆寫前需先讀過）。
