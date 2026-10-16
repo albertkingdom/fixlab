@@ -43,6 +43,9 @@ class Workspace:
         self.root = Path(root).resolve()  # 先解析一次，之後的路徑都跟它比
         self.python = python  # run_tests 用哪個直譯器；不 resolve，venv 的 python 是符號連結，解析後會找不到套件
         self._tools: dict[str, Tool] = {}
+        # 模型「整檔、未截斷」讀過的檔案（解析後的真實路徑）。write_file 覆寫既有檔案前要查它，
+        # 避免模型憑空改寫沒看過的內容；edit_file 成功後會把該檔移除。
+        self.files_read: set[Path] = set()
 
     def register(self, name: str, func: Callable[..., ToolResult], schema: dict, description: str = "") -> None:
         self._tools[name] = Tool(func, schema, description)
