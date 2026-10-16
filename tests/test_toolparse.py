@@ -39,39 +39,35 @@ def tc(name, arguments):
     return FakeToolCall(FakeFunction(name, arguments))
 
 
-# Requirement: Native tool calls take precedence
+# Requirement: Only native tool calls are parsed
 def test_native_call_plus_json_in_text():
     r = parse_message(
         msg(content='{"name": "run_tests", "arguments": {}}', tool_calls=[tc("read_file", '{"path": "a.py"}')]),
         SCHEMAS,
     )
-    assert [(c.name, c.arguments, c.source) for c in r.calls] == [("read_file", {"path": "a.py"}, "native")]
+    assert [(c.name, c.arguments) for c in r.calls] == [("read_file", {"path": "a.py"})]
+    assert r.errors == []
+
+
+def test_json_only_in_text_is_not_a_call():
+    r = parse_message(msg(content='{"name": "run_tests", "arguments": {}}'), SCHEMAS)
+    assert r.calls == [] and r.errors == []
+
+
+def test_two_native_calls_in_order():
+    r = parse_message(msg(tool_calls=[tc("read_file", '{"path": "a.py"}'), tc("run_tests", "{}")]), SCHEMAS)
+    assert [c.name for c in r.calls] == ["read_file", "run_tests"]
     assert r.errors == []
 
 
 def test_native_bad_json_is_error_not_crash():
     r = parse_message(msg(tool_calls=[tc("read_file", '{"path": ')]), SCHEMAS)
-    assert r.calls == [] and r.errors
+    assert r.calls == [] and "bad arguments" in r.errors[0]
 
 
-# Requirement: Fallback parsing from reply text
-def test_fallback_object_with_only_a_name():
-    r = parse_message(msg(content='{"name": "run_tests"}'), SCHEMAS)
-    assert [(c.name, c.arguments) for c in r.calls] == [("run_tests", {})]
-
-
-def test_fallback_ordinary_json_with_name_field():
-    r = parse_message(msg(content='Done. Example: {"name": "Alice", "age": 3}'), SCHEMAS)
-    assert r.calls == [] and r.errors == ["unknown tool: 'Alice'"]
-
-
-def test_fallback_two_calls_as_json_lines():
-    content = (
-        '{"name": "edit_file", "arguments": {"path": "a.py", "old_string": "x", "new_string": "y"}}\n'
-        '{"name": "run_tests", "arguments": {}}'
-    )
-    r = parse_message(msg(content=content), SCHEMAS)
-    assert [(c.name, c.source) for c in r.calls] == [("edit_file", "fallback"), ("run_tests", "fallback")]
+def test_ordinary_text_is_not_a_call():
+    r = parse_message(msg(content="Done. Example: {'a': 1}"), SCHEMAS)
+    assert r.calls == [] and r.errors == []
 
 
 # Requirement: Calls are validated against tool schemas
@@ -83,15 +79,3 @@ def test_missing_required_argument():
 def test_shell_tool_is_not_offered():
     r = parse_message(msg(tool_calls=[tc("bash", '{"command": "ls"}')]), SCHEMAS)
     assert r.calls == [] and "unknown tool: 'bash'" in r.errors[0]
-
-
-# Requirement: Broken call attempts are errors, not silence
-def test_python_triple_quotes_inside_json():
-    content = '{"name": "edit_file", "arguments": {"path": "a.py", "old_string": "x", "new_string": """y"""}}'
-    r = parse_message(msg(content=content), SCHEMAS)
-    assert r.calls == [] and any("not valid JSON" in e for e in r.errors)
-
-
-def test_ordinary_text_is_not_a_call():
-    r = parse_message(msg(content="Done. Example: {'a': 1}"), SCHEMAS)
-    assert r.calls == [] and r.errors == []

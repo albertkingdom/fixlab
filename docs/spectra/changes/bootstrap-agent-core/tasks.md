@@ -6,7 +6,7 @@
 ## 2. tool call 解析
 
 - [x] 2.1 從 code-agent-eval 複製 toolparse 成 fixlab/toolparse.py 並依 specs 補測試：Native tool calls take precedence、Fallback parsing from reply text、Calls are validated against tool schemas（含 bash 被當成未知工具）、Broken call attempts are errors, not silence 四個需求的所有情境。驗證：tests/test_toolparse.py 逐情境對應一個測試函式，全數通過。
-- [ ] 2.2 移除備援解析，toolparse 只處理原生 tool_calls：依「只解析原生 tool_calls，不做文字備援解析」，刪掉從回覆文字取 JSON 的流程、壞呼叫檢查（含只為它存在的輔助函式）與 `ParsedCall.source`；原生呼叫的參數 JSON 壞掉時回報 "bad arguments" 錯誤；更新模組開頭說明（四關改兩關，刪掉單引號 JSON 的已知缺口）。對應規格 Only native tool calls are parsed 與 Calls are validated against tool schemas。驗證：tests/test_toolparse.py 刪掉三個 fallback 測試與 Python 三引號測試，新增「只有文字裡的 JSON → 無呼叫無錯誤」「兩個原生呼叫依序回傳」兩個情境，原生壞 JSON 的測試改為檢查訊息含 "bad arguments"，其餘測試去掉 `source` 斷言後保留；`pytest` 全數通過。
+- [x] 2.2 移除備援解析，toolparse 只處理原生 tool_calls：依「只解析原生 tool_calls，不做文字備援解析」，刪掉從回覆文字取 JSON 的流程、壞呼叫檢查（含只為它存在的輔助函式）與 `ParsedCall.source`；原生呼叫的參數 JSON 壞掉時回報 "bad arguments" 錯誤；更新模組開頭說明（四關改兩關，刪掉單引號 JSON 的已知缺口）。對應規格 Only native tool calls are parsed 與 Calls are validated against tool schemas。驗證：tests/test_toolparse.py 刪掉三個 fallback 測試與 Python 三引號測試，新增「只有文字裡的 JSON → 無呼叫無錯誤」「兩個原生呼叫依序回傳」兩個情境，原生壞 JSON 的測試改為檢查訊息含 "bad arguments"，其餘測試去掉 `source` 斷言後保留；`pytest` 全數通過。
 
 ## 3. MVP 切片：端到端跑通 fixlab fix
 
