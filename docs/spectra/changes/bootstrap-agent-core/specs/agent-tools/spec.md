@@ -30,7 +30,7 @@ read_file SHALL split the file into lines with `str.splitlines` and return each 
 
 ### Requirement: list_files shows the project layout
 
-list_files SHALL list files under the given directory (default the workspace root) recursively as relative paths sorted by plain string order of the full relative path, one per line. It SHALL skip the directories .git, .venv, __pycache__, and .pytest_cache, SHALL NOT follow or list symbolic links, and SHALL return at most 200 entries, ending with a note that states how many were omitted when more exist.
+list_files SHALL list files under the given directory (default the workspace root) recursively as relative paths sorted by plain string order of the full relative path, one per line. It SHALL skip the directories .git, .venv, __pycache__, and .pytest_cache, SHALL NOT follow or list symbolic links, and SHALL return at most 200 entries, ending with a note that states how many were omitted when more exist. When there is nothing to list it SHALL return ok=true with the text "no files listed", so the model can tell an empty result from a failed call.
 
 #### Scenario: Small project
 
@@ -46,6 +46,11 @@ list_files SHALL list files under the given directory (default the workspace roo
 
 - **WHEN** the workspace contains a symbolic link link_secret pointing to ../secret
 - **THEN** link_secret does not appear in the list_files output
+
+#### Scenario: Nothing to list
+
+- **WHEN** the workspace contains only a .git directory and list_files is called without arguments
+- **THEN** the result has ok=true and the text "no files listed"
 
 ### Requirement: glob finds files by name pattern
 
