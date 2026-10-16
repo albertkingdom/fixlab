@@ -18,13 +18,23 @@ fixlab 目前只有規劃文件（AGENTS.md）。前身專案 code-agent-eval �
 
 **Non-Goals:**
 
-- CLI、權限提示、telemetry 檔案格式、benchmark、隱藏測試評分（階段 2 與 3）。
+- 正式的 CLI、權限提示、telemetry 檔案格式、benchmark、隱藏測試評分（階段 2 與 3）。
 - 任意 shell 工具、git 工具。
 - 驗證器抽換介面、Anthropic 轉接層、串流。
 - 跨平台沙箱（只支援 macOS 的 sandbox-exec）。
 - 硬連結逃逸、被測專案的第三方依賴。
 
 ## Decisions
+
+### MVP 優先的實作順序，最小入口在暫存複本上跑
+
+任務順序改成先做能端到端跑通的最小切片（工具註冊、read_file、list_files、edit_file、受保護路徑只接 edit_file、run_tests 加環境變數白名單、迴圈核心與步數上限、最小入口 `fixlab fix`），用真模型實際修一次 timelog，再補 glob、grep、write_file、指紋、沙箱與迴圈保險。原因：原順序要到後段才有迴圈，最早的真實回饋要等很久；先跑通能提早發現工具輸出格式與提示詞的問題。
+
+環境變數白名單不等沙箱，跟 run_tests 一起上。依據是自己程式的已知缺陷：code-agent-eval 的 run_tests 把整個 os.environ 傳給子行程，而 smoke 會在 shell 匯出真的 API 金鑰；被執行的程式包含模型改寫過的檔案，只要印出環境，金鑰就會進入測試輸出、對話與 README 紀錄。
+
+取捨：沙箱完成前仍沒有網路與家目錄限制，所以最小入口只改暫存複本，複製用 `copytree(symlinks=True)`（預設會跟隨符號連結，把目錄外的內容複製進來），這段期間只對自己寫的 fixture 執行。沒有沙箱與指紋，被測程式也能改複本裡的測試檔，所以 `--apply` 只在每個要寫回的檔都不是受保護路徑、原檔不是符號連結、原檔內容與複製當下相同時才寫，任何一個不符合就整個中止；diff 則涵蓋包含測試檔在內的所有檔。`fixlab fix` 只是 smoke 用的最小入口，不代表階段 2 的 CLI 設計。
+
+替代方案：另開 fixlab-mvp 專案或 spike 分支；不選的原因：會複製已完成的 workspace、toolparse 與 fixture，之後合併回來還要重寫一次。
 
 ### 複製自己的程式並整理，不做共用套件
 
@@ -96,12 +106,14 @@ code-agent-eval 把所有 ToolError（包括 file not found）都設成 blocked 
 - read_file 輸出每行格式為 6 位右對齊行號、一個 tab、原文；空檔輸出 "(empty file)"；結尾換行不產生多餘的編號空行。
 - grep、glob、list_files 的路徑一律是相對於工作目錄的相對路徑，不跟隨符號連結。
 - run_tests 的指令固定如「run_tests 的 pytest 指令固定」所述，逾時 10 秒，輸出超過 4000 字元就截斷並加註；旗標含 tests_passed、timed_out，必要時含 test_file_tampered。
+- `fixlab fix PATH`（fixlab/cli.py，smoke 用的最小入口）：把 PATH 以 `copytree(symlinks=True)` 複製到暫存目錄（略過共用跳過清單），用 OpenAI 相容端點（`OpenAI(timeout=600, max_retries=0)`）在複本上跑 agent，每步在 stderr 印工具名稱、ok 與 flags；結束後在複本上再跑一次 run_tests，並印 stop reason、步數、token 與涵蓋所有檔（含測試檔）的 unified diff。預設不動 PATH；`--apply` 只在每個要寫回的檔都不是受保護路徑、原檔不是符號連結、原檔內容與複製當下相同時才寫回。
 
 **Failure modes**
 
 - 路徑在工作目錄外、絕對路徑、以 ~ 開頭、跟隨符號連結後跑出工作目錄、run_tests 的 target 在工作目錄外：ok=false 並設 blocked。
 - 寫入受保護檔案：ok=false 並設 blocked，檔案不變。
 - 其他工具錯誤（找不到檔案、edit_file 的次數不是 1、覆寫沒整檔讀過的檔案、無效正規表示式、grep 太慢）：ok=false，不設 blocked。
+- `--apply` 遇到任何不符合寫回條件的檔：整個中止、不寫任何檔並說明原因。複本裡的符號連結不跟隨（read_file 被擋）。沒設 OPENAI_API_KEY：結束並給清楚的錯誤訊息。
 - 連續 3 次「有執行工具且全失敗」的回合：迴圈以 stuck 結束，counters 記錄 stuck_failures。
 - 回覆被截斷、空回覆、壞掉的 JSON：行為與 code-agent-eval 相同（回饋給模型，不算完成，也不影響連續失敗計數）。
 
@@ -109,16 +121,17 @@ code-agent-eval 把所有 ToolError（包括 file not found）都設成 blocked 
 
 - `pytest` 在 fixlab 根目錄全數通過，且不收集 tests/fixtures；測試涵蓋迴圈、解析、七個工具、隔離（路徑、測試檔保護、指紋、沙箱讀寫、環境變數、workspace 位於專案內、含特殊字元的 workspace 路徑、tests 目錄改名）。
 - 範例專案 tests/fixtures/timelog 在未修復時 run_tests 恰有 1 個失敗，只改 parser 一處後通過；對「就地執行」與「複製到暫存目錄」兩種位置都成立。
-- 手動 smoke：scripts/smoke_fix.py 把範例專案複製到暫存目錄，用 OpenAI 相容端點與一個模型跑一次，印出 trace 摘要；不納入自動測試。
+- 手動 smoke：先把範例專案複製到暫存目錄，對那個複本執行 `fixlab fix`（絕不對 tests/fixtures/timelog 本身用 `--apply`），用 OpenAI 相容端點與一個模型跑一次。這是觀察不是通過門檻：修好與否都照實記錄 stop reason、步數、token、最終測試結果與 AGENTS.md 守則 3 的欄位，貼進 README；真模型這一次不納入自動測試。`--apply` 的寫回條件與複製規則由 tests/test_cli.py 以假 client 驗證。
 - README 說明讀程式順序、七個工具、已知限制與「設計依據與參考來源」。
 
 **Scope boundaries**
 
-- In：fixlab 套件、tests、範例專案、smoke 腳本、README、AGENTS.md 與 docs/spectra/config.yaml 的現況與原創性規則更新。
-- Out：CLI 入口、權限提示、telemetry 檔案、benchmark、評分、shell 工具、多 agent、connector。
+- In：fixlab 套件、tests、範例專案、smoke 用的最小入口 `fixlab fix`（fixlab/cli.py）、README、AGENTS.md 與 docs/spectra/config.yaml 的現況與原創性規則更新。
+- Out：正式 CLI（互動模式、權限提示、規格）、telemetry 檔案、benchmark、評分、shell 工具、多 agent、connector。
 
 ## Risks / Trade-offs
 
+- [MVP 階段 run_tests 在沙箱完成前直接執行被測程式（含模型改寫過的檔案），沒有網路與家目錄限制；被測程式可讀家目錄的機密檔，也能改複本裡的測試檔] → 環境變數白名單已隨 run_tests 一起上，API 金鑰不會進子行程；最小入口只改暫存複本，`--apply` 有三個寫回條件；沙箱任務完成前，只對自己寫的 fixture 執行並人工看過 diff，不對別人的 repo 跑。
 - [白名單環境變數讓某些專案的測試跑不起來] → 階段 1 只服務自己寫的題目；階段 2 若要跑別人的 repo，再加可設定的白名單。
 - [sandbox-exec 已被 Apple 標為棄用，且只有 macOS] → 在 README 與 AGENTS.md 明講；沙箱介面保持單一模組，之後可換成 Docker。
 - [受保護目錄規則太寬（tests 或 test 目錄整個不可改）] → 對本專案的 benchmark 是想要的；若真實專案把原始碼放在名為 test 的目錄，會被誤擋，階段 1 接受這個限制。
