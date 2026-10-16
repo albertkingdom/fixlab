@@ -4,6 +4,7 @@ Workspace 只認一個根目錄。工具傳進來的路徑一律先過 resolve_i
 call() 依名稱分派工具，永遠回傳 ToolResult、不拋例外，模型給怪參數時 loop 才不會崩潰。
 錯誤分兩類：路徑逃逸（PathBlocked）設 blocked 旗標，其餘（ToolError、OSError）只是 ok=False。
 tool_specs() 與 schemas() 是登記表的兩個唯讀視圖，分別給模型看與給 toolparse 驗證，清單只有一份。
+走訪檔案的工具（list_files、glob、grep、測試檔指紋）共用 SKIP_DIRS 與 iter_files()。
 """
 
 import os
@@ -12,8 +13,25 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
+# 走訪時跳過的目錄。list_files、glob、grep、測試檔指紋掃描與 CLI 的複製都用同一份，
+# 各自維護的話，改一處就會漏掉另一處。
+SKIP_DIRS = frozenset({".git", ".venv", "__pycache__", ".pytest_cache"})
+
 # schema 的 JSON 型別名稱 → Python 型別。bool 是 int 的子類別，整數檢查要另外排除。
 _JSON_TYPES = {"string": str, "integer": int, "boolean": bool}
+
+
+def iter_files(folder: Path):
+    """走訪 folder 底下所有一般檔案，跳過 SKIP_DIRS，不跟隨也不列出符號連結。順序不保證，要排序請自己排。"""
+    for entry in folder.iterdir():
+        # 這些工具在沙箱外以 Python 行程執行；工作目錄裡放一個指向外面的連結，就能讓它們讀到目錄外的內容。
+        if entry.is_symlink():
+            continue
+        if entry.is_dir():
+            if entry.name not in SKIP_DIRS:
+                yield from iter_files(entry)  # 子資料夾的檔案由同一個函式產生，原樣轉吐出去
+        else:
+            yield entry
 
 
 class ToolError(Exception):

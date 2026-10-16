@@ -175,3 +175,71 @@ def test_read_file_is_offered_to_the_model(rws):
     assert spec["name"] == "read_file"
     assert spec["parameters"]["required"] == ["path"]
     assert set(spec["parameters"]["properties"]) == {"path", "start_line", "end_line"}
+
+
+# ---- list_files：對應規格的 list_files shows the project layout ----
+
+
+def touch(root, *paths):
+    for rel in paths:
+        f = root / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text("x = 1\n")
+
+
+def lines_of(result):
+    return result.output.splitlines()
+
+
+# Scenario: Small project
+def test_list_files_small_project_sorted(rws):
+    touch(rws.root, "timelog/report.py", "tests/test_report.py", "timelog/parser.py")
+    r = rws.call("list_files", {})
+    assert r.ok and lines_of(r) == ["tests/test_report.py", "timelog/parser.py", "timelog/report.py"]
+
+
+# Scenario: Too many files
+def test_list_files_caps_at_200_and_counts_the_rest(rws):
+    touch(rws.root, *[f"pkg/mod_{i:03d}.py" for i in range(250)])
+    lines = lines_of(rws.call("list_files", {}))
+    assert len(lines) == 201
+    assert lines[0] == "pkg/mod_000.py" and lines[199] == "pkg/mod_199.py"
+    assert lines[200].startswith("[50 more entries omitted")
+
+
+# Scenario: Symbolic link inside the workspace
+def test_list_files_ignores_symbolic_links(rws):
+    touch(rws.root, "pkg/real.py")
+    (rws.root / "link_secret").symlink_to("../secret")  # 指向外面（連目標都不存在）
+    (rws.root / "link_file.py").symlink_to("pkg/real.py")
+    (rws.root / "link_dir").symlink_to("pkg", target_is_directory=True)
+    assert lines_of(rws.call("list_files", {})) == ["pkg/real.py"]
+
+
+# Scenario: Nothing to list
+def test_list_files_nothing_to_list(rws):
+    touch(rws.root, ".git/config", ".venv/lib/x.py", "pkg/__pycache__/x.pyc", ".pytest_cache/v/cache")
+    r = rws.call("list_files", {})
+    assert r.ok and r.output == "no files listed"
+
+
+def test_list_files_skips_cache_directories_at_any_depth(rws):
+    touch(rws.root, "pkg/a.py", "pkg/__pycache__/a.pyc", "pkg/sub/.pytest_cache/n")
+    assert lines_of(rws.call("list_files", {})) == ["pkg/a.py"]
+
+
+def test_list_files_subdirectory_paths_are_relative_to_the_workspace(rws):
+    touch(rws.root, "timelog/parser.py", "tests/test_report.py")
+    assert lines_of(rws.call("list_files", {"path": "timelog"})) == ["timelog/parser.py"]
+
+
+@pytest.mark.parametrize("path, message", [("nope", "directory not found"), ("a.py", "not a directory")])
+def test_list_files_bad_path_is_an_error(rws, path, message):
+    touch(rws.root, "a.py")
+    r = rws.call("list_files", {"path": path})
+    assert not r.ok and message in r.output and "blocked" not in r.flags
+
+
+def test_list_files_outside_workspace_is_blocked(rws):
+    r = rws.call("list_files", {"path": ".."})
+    assert not r.ok and r.flags == {"blocked": True}

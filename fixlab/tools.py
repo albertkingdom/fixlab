@@ -6,10 +6,11 @@
 
 from functools import partial
 
-from fixlab.workspace import ToolError, ToolResult, Workspace
+from fixlab.workspace import ToolError, ToolResult, Workspace, iter_files
 
 # 工具輸出一律有上限：輸出會留在對話歷史裡每一輪重送，是成本與小模型 context 的主要壓力。
 MAX_READ_CHARS = 20000
+MAX_LIST_ENTRIES = 200
 
 READ_FILE_DESCRIPTION = (
     "Read a text file in the working directory. Every line is prefixed with its line number. "
@@ -24,6 +25,13 @@ READ_FILE_SCHEMA = {
     },
     "required": ["path"],
 }
+LIST_FILES_DESCRIPTION = (
+    "List the files under a directory (default: the working directory), recursively, "
+    "one path per line, relative to the working directory. "
+    "Skips .git, .venv, __pycache__, .pytest_cache and symbolic links. "
+    f"At most {MAX_LIST_ENTRIES} entries are shown."
+)
+LIST_FILES_SCHEMA = {"properties": {"path": {"type": "string"}}, "required": []}
 
 
 def read_file(ws: Workspace, path: str, start_line: int | None = None, end_line: int | None = None) -> ToolResult:
@@ -64,6 +72,26 @@ def read_file(ws: Workspace, path: str, start_line: int | None = None, end_line:
     return ToolResult(output, True)
 
 
+def list_files(ws: Workspace, path: str = ".") -> ToolResult:
+    start = ws.resolve_inside(path)
+    if not start.exists():
+        raise ToolError(f"directory not found: {path!r}")
+    if not start.is_dir():
+        raise ToolError(f"{path!r} is not a directory; use read_file to read it")
+
+    # 相對於工作目錄（不是 start），模型拿去呼叫 read_file 時才不用再拼路徑。
+    names = sorted(p.relative_to(ws.root).as_posix() for p in iter_files(start))
+    if not names:
+        # 空結果要明確回報，模型才分得出「沒有檔案」與「呼叫失敗」。
+        return ToolResult("no files listed", True)
+
+    omitted = len(names) - MAX_LIST_ENTRIES
+    if omitted > 0:
+        names = names[:MAX_LIST_ENTRIES] + [f"[{omitted} more entries omitted; list a subdirectory to see them]"]
+    return ToolResult("\n".join(names), True)
+
+
 def register_tools(ws: Workspace) -> None:
     """把所有工具登記到 ws。之後每個工具的任務各加一行 ws.register(...)。"""
     ws.register("read_file", partial(read_file, ws), READ_FILE_SCHEMA, READ_FILE_DESCRIPTION)
+    ws.register("list_files", partial(list_files, ws), LIST_FILES_SCHEMA, LIST_FILES_DESCRIPTION)
