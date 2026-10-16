@@ -1,9 +1,9 @@
 # 第 1 篇：模型說要呼叫工具，程式怎麼接住
 
-> 對應任務：bootstrap-agent-core 的 2.1（tool call 解析）與 3.1（Workspace 路徑守門與分派）。
-> 完成度：兩個模組與測試都已完成（`pytest` 23 個通過）。把工具登記表轉成給模型看的清單（`tool_specs()`）是 3.2，還沒做。
+> 對應任務：bootstrap-agent-core 的 2.1、2.2（tool call 解析）與 3.1（Workspace 路徑守門與分派）。
+> 完成度：兩個模組與測試都已完成（`pytest` 21 個通過）。把工具登記表轉成給模型看的清單（`tool_specs()`）是 3.2，還沒做。
 
-agent 的核心是「模型決定下一步，程式負責執行」。模型只會回一段文字，程式要從那段文字裡認出「它想呼叫哪個工具、帶什麼參數」，再安全地執行。這一篇從最天真的寫法開始，看它怎麼壞，再一層一層加到現在的 `toolparse.py` 和 `workspace.py`。
+agent 的核心是「模型決定下一步，程式負責執行」。模型只會回一段訊息，程式要從裡面認出「它想呼叫哪個工具、帶什麼參數」，再安全地執行。這一篇從最天真的寫法開始，看它怎麼壞，再一層一層加到現在的 `toolparse.py` 和 `workspace.py`。中間還有一段我先做了、後來又砍掉的設計。
 
 ```
 模型的回覆 ──► 認出呼叫（解析） ──► 執行工具 ──► 結果送回給模型
@@ -28,10 +28,9 @@ def read_file(path):
 **解析**
 
 ```
-native                       → [('read_file', {'path': 'a.py'})]
-fallback（JSON 寫在文字裡）         → []
-bad JSON（三引號）                → []
-finished                     → []
+native                 → [('read_file', {'path': 'a.py'})]
+native 參數 JSON 壞掉      → 例外 JSONDecodeError: Expecting value: line 1 column 10 (char 9)
+finished               → []
 ```
 
 **執行**（工作目錄是 `ws/`，旁邊放了一個不該被讀到的 `secret.txt`，`ws/link_secret` 是指向它的符號連結）
@@ -48,52 +47,59 @@ bash({'command': 'ls'})                      → 例外 KeyError 'bash'
 
 三類問題：
 
-1. 解析：模型把 JSON 寫在文字裡時，什麼都取不到，而且和「模型說完了」長得一模一樣。
+1. 解析：模型給的參數 JSON 壞掉，整個 loop 就崩潰了。
 2. 守門：`../`、絕對路徑、符號連結都讀到了工作目錄外的檔案。
-3. 錯誤：任何一個怪參數或不存在的工具都是例外，整個 loop 會崩潰。
+3. 錯誤：任何一個怪參數或不存在的工具都是例外，一樣讓 loop 崩潰。
 
-## 解析：一層一層補
-
-我在前一個專案 code-agent-eval 的試跑（`docs/pilot-results.md`）裡看過這些失敗，不是想像出來的：
-
-- qwen2.5-coder:7b **從不使用**原生 `tool_calls`，把 JSON 寫在回覆文字裡。沒有備援解析時成功率 0%，加上備援後 100%（僅限單輪）。
-- 同一個模型有時用 Python 三引號或漏掉結尾引號，JSON 壞掉，原本的解析器什麼都取不到，loop 把這一步當成完成。
-- llama3.1:8b 會呼叫不存在的工具（`write_to_file`）並輸出壞 JSON，偵測器當時只認得已知工具名稱，一樣被誤判為完成。
-
-對應成四關：
+## 解析：兩關
 
 ```python
 def parse_message(message, tool_schemas):
-    # 第 1 關 原生：有 tool_calls 就只用它，不看文字
-    # 第 2 關 備援：沒有的話，掃文字裡的 JSON 物件，有 "name" 的就是候選
-    # 第 3 關 驗證：工具存在、必要參數齊全，不合法的移到 errors
-    # 第 4 關 壞呼叫檢查（只在備援路徑）：calls 與 errors 都空，但文字「像」在呼叫工具，補一筆錯誤
+    # 第 1 關 解碼：每個原生呼叫的參數是 JSON 字串，轉成 dict；轉不成就記一筆錯誤
+    # 第 2 關 驗證：工具名稱存在、必要參數齊全，不合法的移到 errors
     return ParseResult(calls, errors)
 ```
 
-第 4 關最關鍵，因為它讓「什麼都沒解析到」不再等於「模型說完了」。loop 對結果的判讀：
+沒有 `tool_calls` 的回覆就是純文字，文字裡就算有 JSON 也不理會。loop 對結果的判讀：
 
 | calls | errors | loop 怎麼做 |
 |---|---|---|
 | 有 | 無 | 執行 |
-| 無 | 無 | 模型說完了，結束 |
-| 無 | 有 | **不結束**，把錯誤回饋給模型再試一次 |
 | 有 | 有 | 執行合法的，並回報錯誤 |
+| 無 | 有 | **不結束**，把錯誤回饋給模型再試一次 |
+| 無 | 無 | 模型說完了，結束 |
 
-所以結束的判斷不能只看 `calls` 是否為空。「文字像在呼叫工具」有三種判斷：出現 `<tool_call>` 標籤、出現已知工具名稱、或出現 `{"name": ..., "arguments"|"parameters": ...}` 的形狀（最後這種是為了抓 llama3.1 編造的工具名稱）。
-
-同樣四個情境，換成現在的 `parse_message`（工具是 `read_file`，必要參數 `path`）：
+同樣的情境，換成現在的 `parse_message`（工具是 `read_file`，必要參數 `path`）：
 
 ```
-1 native         calls=[('read_file', {'path': 'a.py'}, 'native')] errors=[]
-2 fallback       calls=[('read_file', {'path': 'a.py'}, 'fallback')] errors=[]
-3a unknown tool  calls=[] errors=["unknown tool: 'bash'"]
-3b missing arg   calls=[] errors=["read_file: missing required argument(s) ['path']"]
-4a bad JSON      calls=[] errors=['fallback: tool call in content is not valid JSON']
-4b finished      calls=[] errors=[]
+1 native      calls=[('read_file', {'path': 'a.py'})] errors=[]
+2a text JSON  calls=[] errors=[]
+2b bad args   calls=[] errors=['bad arguments for read_file: Expecting value: line 1 column 10 (char 9)']
+3a unknown    calls=[] errors=["unknown tool: 'bash'"]
+3b missing    calls=[] errors=["read_file: missing required argument(s) ['path']"]
+4 finished    calls=[] errors=[]
 ```
 
-天真版本在 fallback 和 bad JSON 兩列是空的，現在 fallback 取到了呼叫，bad JSON 變成一筆錯誤，只有真正說完的 4b 保持空結果。3a 另外有一個作用：fixlab 沒有 shell 工具，模型想用 `bash` 在解析階段就被擋下，不會走到執行。
+- 2b：天真版本的例外，變成一筆錯誤文字，模型看得到、可以重送。
+- 3a：fixlab 沒有 shell 工具，模型想用 `bash` 在解析階段就被擋下，不會走到執行。
+- 2a 是刻意的：JSON 寫在文字裡不算呼叫，下一節說明為什麼。
+
+## 我曾經做過四關，後來砍掉
+
+第一版（commit `302bf7d`，從前一個專案 code-agent-eval 複製來的）有四關，多的兩關是：
+
+- 備援解析：沒有 `tool_calls` 時，掃回覆文字裡的 JSON，有 `"name"` 的就當候選。
+- 壞呼叫檢查：什麼都沒解析到、文字卻「像」在呼叫工具，補一筆錯誤，避免被當成「完成」。
+
+它們存在的理由是 code-agent-eval 的試跑（`docs/pilot-results.md`）：
+
+- qwen2.5-coder:7b 從不使用原生 `tool_calls`，20 題迴圈裡 96 次呼叫全靠備援，另有 33 次無效呼叫，只有 7/20 自行完成。
+- 同一個模型有時用 Python 三引號或漏掉結尾引號，原本的解析器取不到東西，loop 把這一步當成完成。
+- llama3.1:8b 會呼叫不存在的工具（`write_to_file`）並輸出壞 JSON。
+
+後來我決定拿掉，因為我們要用的模型根本用不到：同一份試跑裡，qwen3.5:9b 的 20 題迴圈是 74 次原生、0 次備援，gemma4:12b 的煙霧測試是 30 次全部原生。選定的模型上，這兩關從頭到尾不會被觸發，卻讓「結束判斷不能只看 calls 是否為空」這類規則變得複雜。
+
+取捨是：不使用原生格式的模型不再支援。這類模型把 JSON 寫在文字裡時，不會被偵測，看起來會是「第 1 步就宣告完成、沒呼叫任何工具」。之後 CLI 結束時會再跑一次 `run_tests`，並顯示 stop reason 與步數，所以不會被誤當成修好了。如果階段 3 要比較較弱的模型，可以用 `git show 302bf7d:fixlab/toolparse.py` 把舊版找回來。
 
 ## 執行：一層一層補
 
@@ -135,13 +141,14 @@ read_file({})                      ok=False flags={} output="error: read_file: m
 
 ## 怎麼驗證
 
-- `tests/test_toolparse.py`：解析規格的每個情境各一個測試函式。
+- `tests/test_toolparse.py`（7 個）：規格的每個情境各一個測試函式，包含「原生加文字 JSON 只取原生」「JSON 只在文字裡 → 無呼叫」「兩個原生呼叫依序回傳」「原生參數壞掉 → bad arguments」。
 - `tests/test_isolation.py`：路徑表六列（`../`、`sub/../../`、絕對路徑、`~`、符號連結、合法路徑），加上「找不到檔案不算 blocked」。
 - `tests/test_tools.py`：未知工具、型別錯誤、缺參數與多餘參數、作業系統錯誤變成結果而不是例外。
 
 ## 已知限制（照實記錄，沒有修）
 
-- **單引號 JSON 取不到**：`{'name': 'x'}` 既不會被解析，也不會觸發第 4 關補錯誤，會被當成模型說完了。這是從前一個專案帶過來的缺口。
+- **不支援文字模式的模型**：上面說明的取捨。這類模型的失敗不會被解析器抓到。
+- **原生參數只認 JSON 字串**：OpenAI 格式的 `arguments` 是字串。如果某個供應商回的是已解析好的物件，會被當成 "bad arguments"，模型會收到錯誤。階段 1 用到的 Ollama 與 OpenRouter 都是字串。
 - **驗證分在兩處**：`toolparse.validate` 只檢查工具存在與必要參數；多餘參數和型別是 `Workspace._check_args` 檢查。所以解析階段通過的呼叫，執行階段仍可能被退回。
 - **schema 只認三種型別**：`string`、`integer`、`boolean`。之後如果工具要收陣列或物件，要擴充。
 - **`~` 開頭的路徑訊息不準**：`~/.zprofile` 回的是「absolute paths are not allowed」，其實它不是絕對路徑。行為正確，訊息可以改得更準。
@@ -150,8 +157,8 @@ read_file({})                      ok=False flags={} output="error: read_file: m
 
 ## 參考來源與依據
 
-- `toolparse.py` 的邏輯與試跑證據來自我自己的前身專案 code-agent-eval（程式碼是自己寫的，複製後整理）。
-- 讀過高見龍 KeSi 連載的 Day 05（模型怎麼使用工具）與 Day 06（read_file），也看過其 repo（MIT，Copyright (c) 2026 Eddie Kao）。Day 06 的寫法是這篇「先寫天真版本再補」的敘事順序的靈感：他的第一版 `read_file` 加迴圈只有 110 行，之後才一天一天長大。他同樣把工具錯誤以文字回給模型、用 `resolve` 擋 `..` 與符號連結，做法與我們相近；Day 05 靠 Anthropic API 的 `strict` 模式約束參數，我們走 OpenAI 相容端點，不能依賴它，所以才自己寫備援解析與參數檢查。我們的設計依據是 code-agent-eval 的缺陷與試跑結果，不是這兩篇；「`blocked` 只留給安全攔截」是我們自己的需求，他的文章沒有這個區分。
+- `toolparse.py` 的前身與試跑證據來自我自己的前身專案 code-agent-eval（程式碼是自己寫的，複製後整理，再依試跑數字砍掉備援解析）。
+- 讀過高見龍 KeSi 連載的 Day 05（模型怎麼使用工具）與 Day 06（read_file），也看過其 repo（MIT，Copyright (c) 2026 Eddie Kao）。Day 06 的寫法是這篇「先寫天真版本再補」的敘事順序的靈感：他的第一版 `read_file` 加迴圈只有 110 行，之後才一天一天長大。他同樣把工具錯誤以文字回給模型、用 `resolve` 擋 `..` 與符號連結，做法與我們相近；Day 05 靠 Anthropic API 的 `strict` 模式約束參數，我們走 OpenAI 相容端點，不能依賴它，所以自己做參數檢查。我們的設計依據是 code-agent-eval 的缺陷與試跑結果，不是這兩篇；「`blocked` 只留給安全攔截」是我們自己的需求，他的文章沒有這個區分。
 
 ## 下一篇
 
