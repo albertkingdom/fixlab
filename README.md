@@ -220,7 +220,7 @@ fixlab /某個暫存目錄/timelog-try
 
 ## 規格與設計文件
 
-用 Spectra 管理，在 `docs/spectra/`：`specs/` 是行為規格，`changes/bootstrap-agent-core/` 是階段 1 的提案、設計（每個決定的替代方案與取捨，以及風險清單）和任務。
+用 Spectra 管理，在 `docs/spectra/`：`specs/` 是行為規格，`changes/archive/2026-10-17-bootstrap-agent-core/` 是階段 1 的提案、設計（每個決定的替代方案與取捨，以及風險清單）和任務。
 
 ## 參考來源
 
