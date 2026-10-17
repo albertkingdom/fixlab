@@ -9,6 +9,7 @@ loop 會把這種回覆當成模型說完了。不支援把工具呼叫寫在文
   第 1 關 解碼：每個原生呼叫的參數是 JSON 字串，轉成 dict；轉不成就記一筆錯誤。
       tool_calls=[read_file, '{"path": "a.py"}']  → calls=[read_file(path=a.py)]
       tool_calls=[read_file, '{"path": ']          → errors=["bad arguments for read_file: ..."]
+      tool_calls=[run_tests, '']                   → calls=[run_tests()]（空字串當成沒有參數）
       tool_calls=None，content='{"name": "read_file", ...}' → 什麼都沒有（文字不看）。
 
   第 2 關 驗證：工具名稱不在清單、或缺必要參數，就從 calls 移到 errors。
@@ -16,7 +17,7 @@ loop 會把這種回覆當成模型說完了。不支援把工具呼叫寫在文
       read_file 的參數是空的                        → errors=["read_file: missing required argument(s) ['path']"]
 
 輸出（ParseResult）給 loop 的用法：
-  calls 有 → 執行（errors 有就一併回報）；  calls 空、errors 有 → 不結束，把錯誤回饋給模型；
+  calls 有 → 執行（errors 有就在執行結果之後告訴模型哪些呼叫沒執行）；  calls 空、errors 有 → 不結束，把錯誤回饋給模型；
   兩者皆空 → 模型說完了，結束。
 """
 
@@ -39,6 +40,8 @@ class ParseResult:
 def _coerce_args(raw) -> dict:
     """參數是 JSON 字串（OpenAI 格式），轉成 dict；不是物件就 raise ValueError。"""
     if isinstance(raw, str):
+        if raw.strip() == "":
+            return {}  # 有些伺服器對沒有參數的工具送空字串而不是 "{}"；缺必要參數仍由第 2 關擋下
         value = json.loads(raw)  # JSONDecodeError 是 ValueError 的子類別
         if isinstance(value, dict):
             return value

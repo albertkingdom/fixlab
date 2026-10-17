@@ -98,6 +98,9 @@ def run_agent(
 
         # 4. 執行工具，結果加回對話
         round_failed = _run_tool_calls(ws, it, msg, messages, c, rec)
+        if it.errors:
+            # 同一個回覆裡有合法的、也有壞掉的呼叫：壞的沒有執行，要說一聲，否則模型會以為每個呼叫都做了。
+            messages.append({"role": "user", "content": _skipped_calls_notice(it)})
         trace({**rec, "event": "tool_calls"})
 
         # 5. 連續失敗保險：整輪的工具呼叫全部失敗才累計，只要有一個成功就歸零。
@@ -167,6 +170,12 @@ def _feedback(it: Interpretation) -> str:
         # 所以不能只叫它呼叫工具，要讓它知道直接說結論也可以。
         return "Your reply was empty. If you are finished, reply with a short final message; otherwise call a tool."
     return "Your tool call was invalid: " + "; ".join(it.errors) + ". Please call a tool with valid arguments."
+
+
+def _skipped_calls_notice(it: Interpretation) -> str:
+    """有合法呼叫被執行、但同一個回覆裡還有壞掉的呼叫時，要回給模型的那則 user 訊息。"""
+    return ("These tool calls were not run because they were invalid: " + "; ".join(it.errors) +
+            ". The other calls in your reply were run. Call the skipped ones again with valid arguments if you still need them.")
 
 
 def _step_record(step: int, latency: float, resp, it: Interpretation) -> dict:

@@ -171,6 +171,28 @@ def test_two_reads_in_one_reply_run_in_order_and_cost_one_step(ws):
     assert [m["tool_call_id"] for m in asked[1:]] == [c["id"] for c in asked[0]["tool_calls"]]
 
 
+# 規格沒有寫「同一個回覆裡有合法也有不合法的呼叫」：合法的照常執行，不合法的要告訴模型沒有執行
+def test_an_invalid_call_next_to_a_valid_one_is_reported_to_the_model(ws):
+    mixed = (None, [native("read_file", path="rules.py"), native("edit_file", path="rules.py")])  # 第二個缺參數
+    client = FakeClient([mixed, ("Done.", None)])
+    r = run_agent(client, "m", ws, TASK)
+
+    assert r.stop_reason == "done" and r.counters["parse_errors"] == 1
+    tail = client.sent[1][-3:]  # assistant 的呼叫、合法呼叫的結果、關於不合法呼叫的通知
+    assert [m["role"] for m in tail] == ["assistant", "tool", "user"]
+    assert "grace_days" in tail[1]["content"]  # 合法的那個有執行
+    assert "not run" in tail[2]["content"] and "missing required" in tail[2]["content"]
+
+
+def test_the_notice_about_an_invalid_call_does_not_hide_a_failing_round(ws):
+    # 合法的呼叫失敗、不合法的呼叫被丟掉：這一輪仍然算全部失敗
+    mixed = (None, [native("read_file", path="nope.py"), native("edit_file", path="rules.py")])
+    client = FakeClient([mixed] * 4)
+    r = run_agent(client, "m", ws, TASK)
+
+    assert r.stop_reason == "stuck" and r.steps == 3
+
+
 # ---- Transient provider errors are retried, timeouts are not ----
 
 @pytest.fixture

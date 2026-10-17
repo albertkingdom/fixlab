@@ -65,6 +65,19 @@ def test_native_bad_json_is_error_not_crash():
     assert r.calls == [] and "bad arguments" in r.errors[0]
 
 
+# 有些伺服器對沒有參數的工具送空字串，而不是 "{}"
+def test_blank_arguments_mean_no_arguments():
+    for blank in ["", "  ", "\n"]:
+        r = parse_message(msg(tool_calls=[tc("run_tests", blank)]), SCHEMAS)
+        assert [(c.name, c.arguments) for c in r.calls] == [("run_tests", {})], repr(blank)
+        assert r.errors == []
+
+
+def test_blank_arguments_still_fail_the_required_check():
+    r = parse_message(msg(tool_calls=[tc("read_file", "")]), SCHEMAS)
+    assert r.calls == [] and "missing required argument(s) ['path']" in r.errors[0]
+
+
 def test_ordinary_text_is_not_a_call():
     r = parse_message(msg(content="Done. Example: {'a': 1}"), SCHEMAS)
     assert r.calls == [] and r.errors == []
