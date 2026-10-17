@@ -6,7 +6,7 @@ call() 依名稱分派工具，永遠回傳 ToolResult、不拋例外，模型�
 read_only 函式決定，預設都不唯讀；修 bug 的入口傳入 looks_like_test_file，把測試檔鎖起來。
 錯誤分兩類：路徑逃逸與寫入唯讀檔案（PathBlocked）設 blocked 旗標，其餘（ToolError、OSError）只是 ok=False。
 tool_specs() 與 schemas() 是登記表的兩個唯讀視圖，分別給模型看與給 toolparse 驗證，清單只有一份。
-走訪檔案的工具（list_files、glob、grep、測試檔指紋）共用 SKIP_DIRS 與 iter_files()。
+走訪檔案的工具（list_files、grep、測試檔指紋）共用 SKIP_DIRS 與 iter_files()。
 """
 
 import os
@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePath
 from typing import Callable
 
-# 走訪時跳過的目錄。list_files、glob、grep、測試檔指紋掃描與 CLI 的複製都用同一份，
+# 走訪時跳過的目錄。list_files、grep、測試檔指紋掃描與 CLI 的快照都用同一份，
 # 各自維護的話，改一處就會漏掉另一處。
 SKIP_DIRS = frozenset({".git", ".venv", "__pycache__", ".pytest_cache"})
 
