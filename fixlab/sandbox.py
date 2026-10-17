@@ -121,6 +121,8 @@ def sandbox_paths(root: Path, python: str, project_root: Path, deny_read: tuple,
         "PROJECT": project_root,
         # 虛擬環境由 python 路徑往上兩層推得（.venv/bin/python → .venv）。python 本身刻意不解析：
         # 它是指向 Homebrew Python 的捷徑，解析後就找不到虛擬環境的套件了。
+        # KNOWN-ISSUE: 基底 Python 在家目錄底下（uv、pyenv）時，它的標準函式庫被上面的 HOME 規則擋住，run_tests 一啟動就失敗
+        # （dyld: Library not loaded）。2026-10-17 用 uv 的 Python 重現，關掉沙箱則正常。解法是放行基底 Python 的目錄，延後到階段 2。
         "VENV": Path(python).absolute().parent.parent,
         "TMP": tmp,
     }

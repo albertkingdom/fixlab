@@ -86,6 +86,8 @@ def run_agent(
         rec = _step_record(step, latency, resp, it)
 
         # 3. 沒有要執行的工具：回覆壞掉就回饋錯誤再給一次機會；否則就是模型宣告完成
+        #    KNOWN-ISSUE: 壞掉的回覆不累計連續失敗（規格如此），模型每輪都送壞呼叫時會跑滿 max_steps，
+        #    結束原因記成 max_steps 而不是 stuck，要看 parse_errors 才分得出來。階段 3 用 telemetry 校準後再決定要不要另外計數。
         if not it.calls:
             if it.errors:
                 messages.append({"role": "assistant", "content": msg.content or ""})

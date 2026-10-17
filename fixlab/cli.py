@@ -98,6 +98,7 @@ def print_step(record: dict) -> None:
 
 def take_snapshot(root: Path) -> dict[str, bytes]:
     """記下 root 底下每個檔案的內容：{相對路徑: bytes}。跳過清單與符號連結的規則跟 list_files 一樣。"""
+    # KNOWN-ISSUE: 每個檔案整個讀進記憶體；讀不了的檔案（例如沒有讀取權限）會讓入口丟出 PermissionError，印不出結果。
     snapshot = {}
     for path in iter_files(root):
         name = path.relative_to(root).as_posix()

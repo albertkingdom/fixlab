@@ -106,6 +106,8 @@ def read_file(ws: Workspace, path: str, start_line: int | None = None, end_line:
     if p.is_dir():
         raise ToolError(f"{path!r} is a directory, not a file; use list_files to see what it contains")
     data = p.read_bytes()
+    # KNOWN-ISSUE: splitlines 也會在 \x0c、\x1c-\x1e、\x85、\u2028 斷行，含這些字元的檔案，行號會和 Python 與 pytest 回溯的對不上
+    # （grep 一樣）。改成只用 \n、\r\n 斷行即可，延後。
     try:
         lines = data.decode("utf-8").splitlines()
     except UnicodeDecodeError:
@@ -226,6 +228,7 @@ def grep(ws: Workspace, pattern: str, path: str = ".") -> ToolResult:
     total = 0  # 符合的行數，包含超過上限而不顯示的
     stopped = False
     for name in sorted(files):
+        # KNOWN-ISSUE: 整個檔案先讀進記憶體再切行，超大的文字檔會佔很多記憶體，5 秒的上限在讀檔期間不會生效。
         try:
             text = files[name].read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
@@ -328,6 +331,8 @@ def run_tests(ws: Workspace, target: str = ".") -> ToolResult:
         tmpdir = Path(tmp).resolve()
         if sandbox_available():
             command = wrap_command(command, ws.root, ws.python, ws.project_root, ws.deny_read, tmpdir, ws.protect_tests)
+        # KNOWN-ISSUE: 逾時只殺最上層的 pytest，測試啟動的子行程會變孤兒繼續跑（沙箱限制它能做什麼，但不會讓它停）。
+        # 解法是 Popen 加 start_new_session=True，逾時後 os.killpg 整個行程群組。
         try:
             done = subprocess.run(command, cwd=ws.root, env=child_environment(tmpdir), stdin=subprocess.DEVNULL,
                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=RUN_TESTS_TIMEOUT_S)
@@ -342,6 +347,8 @@ def run_tests(ws: Workspace, target: str = ".") -> ToolResult:
     return ToolResult(clip_middle(text), True, {"tests_passed": passed, "timed_out": timed_out})
 
 
+# KNOWN-ISSUE: 被測的程式可以自己印一行假的摘要，再讓結束碼是 0（例如在 atexit 裡印出後 os._exit(0)），tests_passed 就是 True。
+# 2026-10-17 重現。根治在階段 3：計分用乾淨的環境重跑並比對測試案例清單；改讀 junitxml 沒用，被測的程式也能偽造那個檔。
 def has_a_passed_summary(text: str) -> bool:
     """輸出裡要有一行 pytest 的摘要，例如 "5 passed in 0.01s" 或 "5 passed, 1 warning in 0.01s"。
 
