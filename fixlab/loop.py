@@ -85,8 +85,7 @@ def run_agent(
         if not it.calls:
             if it.errors:
                 messages.append({"role": "assistant", "content": msg.content or ""})
-                messages.append({"role": "user", "content": "Your tool call was invalid: "
-                                 + "; ".join(it.errors) + ". Please call a tool with valid arguments."})
+                messages.append({"role": "user", "content": _feedback(it)})
                 trace({**rec, "event": "invalid_tool_call"})
                 continue
             trace({**rec, "event": "done"})
@@ -147,6 +146,15 @@ def _interpret_reply(resp, schemas: dict, max_tokens: int | None) -> Interpretat
     if empty:
         errors.append("empty response (no text and no tool call)")
     return Interpretation(calls=parsed.calls, errors=errors, empty=empty)
+
+
+def _feedback(it: Interpretation) -> str:
+    """回覆壞掉時，要回給模型的那則 user 訊息。"""
+    if it.empty:
+        # 空回覆常出現在模型其實已經做完、只差說一句結論的時候（兩次實跑都是這樣），
+        # 所以不能只叫它呼叫工具，要讓它知道直接說結論也可以。
+        return "Your reply was empty. If you are finished, reply with a short final message; otherwise call a tool."
+    return "Your tool call was invalid: " + "; ".join(it.errors) + ". Please call a tool with valid arguments."
 
 
 def _step_record(step: int, latency: float, resp, it: Interpretation) -> dict:

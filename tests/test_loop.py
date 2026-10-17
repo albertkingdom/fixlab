@@ -102,3 +102,16 @@ def test_system_prompt_is_the_same_for_every_tool_set():
     tool_names = ["read_file", "list_files", "glob", "grep", "edit_file", "write_file", "run_tests"]
     assert "solution.py" not in SYSTEM_PROMPT
     assert not [n for n in tool_names if n in SYSTEM_PROMPT]
+
+
+# Scenario: Empty reply
+def test_empty_reply_is_not_completion_and_the_model_may_just_finish(ws):
+    client = FakeClient([(None, None), ("Done.", None)])
+    r = run_agent(client, "m", ws, TASK)
+
+    assert r.stop_reason == "done" and r.steps == 2
+    assert r.counters["empty_responses"] == 1 and r.counters["parse_errors"] == 1
+    feedback = client.sent[1][-1]  # 第二次請求的最後一則訊息，就是回饋
+    assert feedback["role"] == "user"
+    assert "reply was empty" in feedback["content"] and "final message" in feedback["content"]
+
