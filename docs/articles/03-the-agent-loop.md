@@ -45,7 +45,7 @@ fixlab: stop_reason=done steps=2 counters={'parse_errors': 1}
 === 3 空回覆（沒有文字也沒有工具呼叫）
 naive : stopped after 1 request(s), final text: None
 fixlab: stop_reason=done steps=2 counters={'parse_errors': 1, 'empty_responses': 1}
-        the model was told: Your tool call was invalid: empty response (no text and no tool call). Please call a tool with valid arguments.
+        the model was told: Your reply was empty. If you are finished, reply with a short final message; otherwise call a tool.
 
 === 4 模型一直呼叫 read_file、不停下來
 naive : still running after 50 requests (I stopped it)
@@ -91,7 +91,7 @@ for step in 1..最大步數:
 
 | 情況 | 在哪裡發現 | 怎麼回饋 |
 |---|---|---|
-| 呼叫本身不合法：工具不存在、缺必填參數、JSON 壞掉、空回覆、被截斷 | 執行**之前**，檢查工具呼叫的程式 | 一則 **user** 訊息：`Your tool call was invalid: …` |
+| 呼叫本身不合法：工具不存在、缺必填參數、JSON 壞掉、空回覆、被截斷 | 執行**之前**，檢查工具呼叫的程式 | 一則 **user** 訊息：`Your tool call was invalid: …`（空回覆的措辭不同，見後記） |
 | 呼叫合法，但執行時失敗：檔案不存在、字串找不到…… | 執行**之中**，工具丟出錯誤 | 一則 **tool** 訊息：`error: …`，並標記為失敗 |
 
 上面的例 1、2、3 走第一條。第二條可以看第 4 篇（改檔工具的錯誤訊息）。
@@ -345,6 +345,7 @@ Let me fix the parser:
 
 - **他的做法**：互動式的對話介面，指令不帶任何參數，在你 `cd` 進去的目錄工作；每次寫入前問使用者；串流輸出；迴圈最多 20 圈（`MAX_TURNS = 20`），另有 `MAX_TOOL_FAILURES = 3`，一整輪的工具全部失敗才累計；連線錯誤轉成給「人」看的訊息（他的註解寫著「這裡的讀者是人，不是模型」）。
 - **採用的想法**：「連續失敗只算整輪全失敗」（這個專案的連續失敗保險還沒做，會照這個算法）。
+- **他的示範腳本做了類似的事**：他 Day 13 的示範（`examples/day13/demo.py`）會在結束後對原始檔案內容印 diff，註解寫「驗收要看的是 diff，不是只看 pytest 最後一行，把測試改掉也算一種作弊」，也會在結束後再跑一次 pytest。這跟這個專案的快照差異、結束後再跑一次測試是同樣的想法，不能排除我受了他的影響。差異是：他比對的是寫死在示範裡的原始檔案內容，只涵蓋示範的那幾個檔案；這個專案對任意目錄在執行前拍快照，涵蓋新增與刪除的檔案。
 - **沒有採用的**：對話介面、權限詢問、串流，都是階段 2 以後的事。`fixlab PATH` 是一次性執行，所以改用事後的快照差異，代替事前的詢問。他的連線錯誤是給人看的，這個專案裡可以挽回的錯誤是給模型看的回饋。
 - **一個要老實說的巧合**：這個專案的預設步數 20 和連續失敗上限 3，數字和他的 `MAX_TURNS = 20`、`MAX_TOOL_FAILURES = 3` 完全一樣。設計文件把 20 記為「沒有實測依據的初始值」，我無法排除自己是受他影響才選了同樣的數字，所以在這裡註明；階段 3 會用實際紀錄校準，不會沿用到最後。
 
@@ -402,6 +403,10 @@ RESULT: tests passed
 ```
 
 還有一個順序上的細節：先跑最後的測試，**再**拍「之後」的快照。這樣，測試程式在執行過程中動了什麼檔案（例如測試會寫出一個新檔），也會出現在差異比較裡。測試裡有一個專門檢查這件事。
+
+## 補充：空回覆的回饋措辭已改
+
+上面例 3 的輸出是改過之後的版本。原本的回饋是 `Your tool call was invalid: empty response ... Please call a tool with valid arguments.`。後來第一次完整的真模型修復（見 README 的實跑紀錄）裡，兩次空回覆都出現在模型已經驗證完畢、只差說一句結論的時候，這句回饋卻叫它「呼叫工具」，措辭有誤導，模型要再多回一次才給出結論。現在改成同時涵蓋兩種情況：`Your reply was empty. If you are finished, reply with a short final message; otherwise call a tool.`
 
 ## 下一篇
 
