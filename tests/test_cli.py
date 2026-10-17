@@ -61,6 +61,19 @@ def test_symlink_pointing_outside_is_blocked(project, tmp_path, capsys):
     assert "top-secret-value" not in tool_message
 
 
+def test_agent_cannot_edit_test_files(project, capsys):
+    before = take_snapshot(project)
+    client = FakeClient([
+        (None, [native("edit_file", path="tests/test_report.py", old_string="assert", new_string="pass")]),
+        ("Done.", None),
+    ])
+
+    run_fix(project, client)
+
+    assert "edit_file  ok=False  flags={'blocked': True}" in capsys.readouterr().err
+    assert take_snapshot(project) == before  # 測試檔沒被動到
+
+
 def test_default_task_can_be_overridden(project):
     default_client = FakeClient([("Done.", None)])
     run_fix(project, default_client)

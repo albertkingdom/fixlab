@@ -15,7 +15,7 @@ from openai import OpenAI
 
 from fixlab.loop import DEFAULT_MAX_STEPS, run_agent
 from fixlab.tools import register_tools
-from fixlab.workspace import Workspace, iter_files
+from fixlab.workspace import Workspace, iter_files, looks_like_test_file
 
 # 送給模型的任務文字維持英文。
 DEFAULT_TASK = "The tests fail under pytest. Find the cause and fix it."
@@ -52,7 +52,7 @@ def main(argv=None, client=None) -> int:
     print(f"editing in place: {root}", file=sys.stderr)
     before = take_snapshot(root)
 
-    ws = Workspace(root)
+    ws = Workspace(root, read_only=looks_like_test_file)  # 修 bug：測試檔是評分標準，模型不能改
     register_tools(ws)
     result = run_agent(client, model, ws, args.task, max_steps=args.max_steps,
                        request_extra={"max_tokens": args.max_tokens}, trace=print_step)

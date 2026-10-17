@@ -106,7 +106,7 @@ def list_files(ws: Workspace, path: str = ".") -> ToolResult:
 
 
 def edit_file(ws: Workspace, path: str, old_string: str, new_string: str) -> ToolResult:
-    p = ws.resolve_inside(path)
+    p = ws.resolve_writable(path)  # 路徑守門，加上測試檔保護；放在檢查檔案是否存在之前
     if not p.exists():
         raise ToolError(f"file not found: {path!r}")
     if p.is_dir():
