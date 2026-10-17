@@ -11,7 +11,7 @@ fixlab 目前只有規劃文件（AGENTS.md）。前身專案 code-agent-eval �
 **Goals:**
 
 - 任何一個含 pytest 測試、依賴只有標準函式庫的 Python 目錄，都能當成 agent 的工作目錄，包含位於 fixlab 專案目錄內的 workspace。
-- 七個工具足以完成「找出 bug 在哪個檔案、讀懂、局部修改、跑測試」的流程。
+- 六個工具足以完成「找出 bug 在哪個檔案、讀懂、局部修改、跑測試」的流程。
 - 測試檔不可被 agent 以任何工具或被測程式修改，且事後能偵測到被改過。
 - 子行程拿不到 API 金鑰、網路與工作目錄外的寫入。
 - 搬過來的行為由測試保護：原有的迴圈、解析、隔離測試依新介面改寫後全數通過。
@@ -28,7 +28,7 @@ fixlab 目前只有規劃文件（AGENTS.md）。前身專案 code-agent-eval �
 
 ### MVP 優先的實作順序，最小入口直接改指定目錄，結束時印快照 diff
 
-任務順序改成先做能端到端跑通的最小切片，分兩段：先做工具註冊、read_file、list_files，立刻接上迴圈核心與步數上限、最小入口 `fixlab`，用真模型對 timelog 做一次唯讀探索；再補 edit_file、受保護路徑只接 edit_file、run_tests 加環境變數白名單，用真模型實際修一次 timelog；最後才補 glob、grep、write_file、指紋、沙箱與迴圈保險。原因：原順序要到後段才有迴圈，最早的真實回饋要等很久；先跑通能提早發現工具輸出格式與提示詞的問題。迴圈與入口再提前到 edit_file 之前，是因為 read_file 的行號格式、截斷訊息與 list_files 的輸出對模型是否清楚，只有讓模型真的讀過才知道，單元測試看不出來。
+任務順序改成先做能端到端跑通的最小切片，分兩段：先做工具註冊、read_file、list_files，立刻接上迴圈核心與步數上限、最小入口 `fixlab`，用真模型對 timelog 做一次唯讀探索；再補 edit_file、受保護路徑只接 edit_file、run_tests 加環境變數白名單，用真模型實際修一次 timelog；最後才補 grep、write_file、指紋、沙箱與迴圈保險（glob 暫緩，見「glob 暫緩，先做 grep」）。原因：原順序要到後段才有迴圈，最早的真實回饋要等很久；先跑通能提早發現工具輸出格式與提示詞的問題。迴圈與入口再提前到 edit_file 之前，是因為 read_file 的行號格式、截斷訊息與 list_files 的輸出對模型是否清楚，只有讓模型真的讀過才知道，單元測試看不出來。
 
 環境變數白名單不等沙箱，跟 run_tests 一起上。依據是自己程式的已知缺陷：code-agent-eval 的 run_tests 把整個 os.environ 傳給子行程，而 smoke 會在 shell 匯出真的 API 金鑰；被執行的程式包含模型改寫過的檔案，只要印出環境，金鑰就會進入測試輸出、對話與 README 紀錄。
 
@@ -60,7 +60,7 @@ write_file 對「已存在」的檔案，要求本次 Workspace 生命週期中�
 
 ### 輸出一律有上限，格式固定
 
-read_file 每行加行號並可指定 start_line 與 end_line，以 splitlines 切行；行號格式（6 位靠右對齊、tab 分隔）的依據是 Claude Code 的 Read 工具與 `cat -n`，靠右對齊讓不同位數的行號之後，原文的縮排起點仍在同一欄，對縮排敏感的 Python 比較不易看錯；list_files 與 glob 最多 200 筆，依完整相對路徑的字串順序排序；grep 最多 100 行；測試輸出最多 4000 字元；任何輸出超過上限就截斷並註明總量。原因：工具輸出會留在對話歷史裡每一輪重送，是成本與小模型 context 的主要壓力；試跑中被截斷的回覆是小模型最大宗的失敗原因之一，所以截斷時一定要明講，模型才知道自己沒看到全部。
+read_file 每行加行號並可指定 start_line 與 end_line，以 splitlines 切行；行號格式（6 位靠右對齊、tab 分隔）的依據是 Claude Code 的 Read 工具與 `cat -n`，靠右對齊讓不同位數的行號之後，原文的縮排起點仍在同一欄，對縮排敏感的 Python 比較不易看錯；list_files 最多 200 筆，依完整相對路徑的字串順序排序；grep 最多 100 行；測試輸出最多 4000 字元；任何輸出超過上限就截斷並註明總量。原因：工具輸出會留在對話歷史裡每一輪重送，是成本與小模型 context 的主要壓力；試跑中被截斷的回覆是小模型最大宗的失敗原因之一，所以截斷時一定要明講，模型才知道自己沒看到全部。
 
 ### grep 自己實作，單行比對用 regex 套件加逾時
 
@@ -68,7 +68,15 @@ read_file 每行加行號並可指定 start_line 與 end_line，以 splitlines �
 
 ### 遍歷工具不跟隨符號連結，跳過清單共用
 
-list_files、glob、grep 與測試檔指紋掃描共用同一份跳過清單（.git、.venv、__pycache__、.pytest_cache），且一律不跟隨、不列出符號連結。原因：這些工具在沙箱外以 Python 行程執行，工作目錄裡放一個指向 ../secret 的連結，就能讓 grep 讀到工作目錄外的內容；單一的使用者路徑解析擋不住這種情況。替代方案：對每個走訪到的檔案都 resolve 並檢查；不選的原因：實作較繁、效能較差，而且測試專案本來就不需要符號連結。
+list_files、grep 與測試檔指紋掃描共用同一份跳過清單（.git、.venv、__pycache__、.pytest_cache），且一律不跟隨、不列出符號連結。原因：這些工具在沙箱外以 Python 行程執行，工作目錄裡放一個指向 ../secret 的連結，就能讓 grep 讀到工作目錄外的內容；單一的使用者路徑解析擋不住這種情況。替代方案：對每個走訪到的檔案都 resolve 並檢查；不選的原因：實作較繁、效能較差，而且測試專案本來就不需要符號連結。
+
+### glob 暫緩，先做 grep
+
+原本的範圍有 glob（依檔名樣式找檔案）。決定暫緩，不在這個變更實作。理由：list_files 是遞迴的，一次列出整棵樹，glob 只有在專案超過 200 筆、列檔案被截斷時才有用武之地；階段 1 的範例專案只有 6 個檔案，真模型的四次修復紀錄（2026-10-17）也沒有一次需要依檔名過濾。
+
+高見龍加 glob 的理由（〈讓 Agent 看見專案〉，2026-10-17 讀）是他的 list_files 一次只列一層，「一層一層用 list_files 走下去太慢了」；這個理由在遞迴列出的設計下不成立，是這個專案和他的差別。每多一個工具，每一步的輸入多約 100 到 150 token（真實紀錄第 1 步的輸入：2 個工具 528、3 個 672、4 個 778），也多一個小模型可能挑錯的選項。
+
+何時再做：list_files 的輸出被截斷、導致模型找不到檔案；或第二個範例專案與階段 3 的紀錄顯示模型需要依檔名過濾。屆時要把 glob 的規格需求補回來（這個變更已移除）。替代方案一：照原範圍實作；不選的原因：沒有實測依據。替代方案二：從範圍永久移除；不選的原因：大專案的情況還沒有證據，保留日後加回的空間。
 
 ### 唯讀檔案由 Workspace 的 read_only 函式決定，預設都能寫，修 bug 時鎖測試檔
 
@@ -112,9 +120,9 @@ Workspace 登記工具時只存 properties 與 required；tool_specs() 產生送
 
 - `run_agent(client, model, ws, task, max_steps=20, request_extra=None, trace=...)` 回傳 AgentResult，stop_reason 為 done、max_steps、error、stuck 之一。
 - `Workspace(root, python=sys.executable, read_only=nothing_is_read_only, deny_read=(), project_root=...)`；`read_only` 是 `(相對路徑) -> bool`，預設都能寫，`fixlab PATH` 傳入 `looks_like_test_file`；`ws.call(name, args)` 永遠回傳 ToolResult(output, ok, flags)，不拋例外。
-- 七個工具：read_file(path, start_line?, end_line?)、list_files(path?)、glob(pattern)、grep(pattern, path?)、edit_file(path, old_string, new_string)、write_file(path, content)、run_tests(target?)。
+- 六個工具：read_file(path, start_line?, end_line?)、list_files(path?)、grep(pattern, path?)、edit_file(path, old_string, new_string)、write_file(path, content)、run_tests(target?)。
 - read_file 輸出每行格式為 6 位右對齊行號、一個 tab、原文；空檔輸出 "(empty file)"；結尾換行不產生多餘的編號空行。
-- grep、glob、list_files 的路徑一律是相對於工作目錄的相對路徑，不跟隨符號連結。
+- grep、list_files 的路徑一律是相對於工作目錄的相對路徑，不跟隨符號連結。
 - run_tests 的指令固定如「run_tests 的 pytest 指令固定」所述，逾時 10 秒，輸出超過 4000 字元就留頭尾各 2000 字元、中間註明總量；旗標含 tests_passed、timed_out，必要時含 test_file_tampered。
 - `fixlab PATH`（fixlab/cli.py，smoke 用的最小入口）：指令格式是 `fixlab PATH`，不設子命令（互動模式是階段 2 的事，屆時再決定長相），`--task` 可換掉預設任務文字；入口是 `main(argv=None, client=None)`，argv 沒傳就讀終端機參數，client 沒傳才建 `OpenAI(timeout=600, max_retries=0)`，傳了就直接用（只供測試注入）。直接在 PATH 指到的目錄上跑 agent，不複製、不寫回：開始前在 stderr 印出該目錄的絕對路徑，並對 PATH 底下的檔案拍記憶體快照；每步在 stderr 印工具名稱、ok 與 flags；結束後在 PATH 上再跑一次 run_tests，並印 stop reason、步數、token 與快照對現況的 unified diff（涵蓋所有不在跳過清單的檔，含測試檔；沒有變動印 `no changes`）和測試輸出，最後一行是 `RESULT: tests passed` 或 `RESULT: tests FAILED`；先跑最後的測試、再拍「之後」的快照。退出碼：最後那次測試通過是 0，沒通過（含逾時）是 1。
 
@@ -129,10 +137,10 @@ Workspace 登記工具時只存 properties 與 required；tool_specs() 產生送
 
 **Acceptance criteria**
 
-- `pytest` 在 fixlab 根目錄全數通過，且不收集 tests/fixtures；測試涵蓋迴圈、解析、七個工具、隔離（路徑、測試檔保護、指紋、沙箱讀寫、環境變數、workspace 位於專案內、含特殊字元的 workspace 路徑、tests 目錄改名）。
+- `pytest` 在 fixlab 根目錄全數通過，且不收集 tests/fixtures；測試涵蓋迴圈、解析、六個工具、隔離（路徑、測試檔保護、指紋、沙箱讀寫、環境變數、workspace 位於專案內、含特殊字元的 workspace 路徑、tests 目錄改名）。
 - 範例專案 tests/fixtures/timelog 在未修復時 run_tests 恰有 1 個失敗，只改 parser 一處後通過；對「就地執行」與「複製到暫存目錄」兩種位置都成立。
 - 手動 smoke：先用 `cp -R` 把範例專案複製到暫存目錄，對那份複本執行 `fixlab`（它會直接修改指定的目錄，所以絕不對 tests/fixtures/timelog 本身執行），用 OpenAI 相容端點與一個模型跑一次。這是觀察不是通過門檻：修好與否都照實記錄 stop reason、步數、token、最終測試結果與 AGENTS.md 守則 3 的欄位，貼進 README；真模型這一次不納入自動測試。快照 diff 與 CLI 流程由 tests/test_cli.py 以假 client 驗證。
-- README 說明讀程式順序、七個工具、已知限制與「設計依據與參考來源」。
+- README 說明讀程式順序、六個工具、已知限制與「設計依據與參考來源」。
 
 **Scope boundaries**
 

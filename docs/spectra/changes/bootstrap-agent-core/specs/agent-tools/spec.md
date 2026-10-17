@@ -1,6 +1,6 @@
 ## Purpose
 
-The agent gets seven tools (read_file, list_files, glob, grep, edit_file, write_file, run_tests) to explore a multi-file Python project, make local edits, and run its tests. Every tool returns a bounded, predictable output so the conversation stays small and the model knows when it has not seen everything.
+The agent gets six tools (read_file, list_files, grep, edit_file, write_file, run_tests) to explore a multi-file Python project, make local edits, and run its tests. Every tool returns a bounded, predictable output so the conversation stays small and the model knows when it has not seen everything.
 
 ## ADDED Requirements
 
@@ -61,20 +61,6 @@ list_files SHALL list files under the given directory (default the workspace roo
 
 - **WHEN** the workspace contains only a .git directory and list_files is called without arguments
 - **THEN** the result has ok=true and the text "no files listed"
-
-### Requirement: glob finds files by name pattern
-
-glob SHALL return the relative paths of files whose path matches the given glob pattern (supporting `*`, `?`, and `**`), sorted in the same order as list_files, with the same skipped directories, the same refusal to follow symbolic links, and the same 200-entry cap. A pattern with no match SHALL return ok=true with the text "no files matched".
-
-#### Scenario: Recursive pattern
-
-- **WHEN** the workspace has tests/test_report.py and timelog/test_formatting.py and glob is called with pattern `**/test_*.py`
-- **THEN** the output lists both paths
-
-#### Scenario: No match
-
-- **WHEN** glob is called with pattern `*.rs`
-- **THEN** the result is ok=true and the output is "no files matched"
 
 ### Requirement: grep searches file contents
 
