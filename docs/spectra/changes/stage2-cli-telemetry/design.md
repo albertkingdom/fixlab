@@ -130,7 +130,7 @@
 
 依據是 AGENTS.md 的 telemetry 需求、階段 1 的程式缺口（上面 Context）與階段 1 設計文件留給階段 2 的項目。參考來源（只當參考，不當依據）：
 
-- 高見龍 KeSi（repo `dfa0cd0`，2026-10-17 clone）：沒有 JSONL 事件記錄；token 與費用記在記憶體裡的記帳物件，用 `/cost` 或每輪結束時印出，程式結束就沒了，所以事件記錄沒有可參考的做法。互動模式的斜線指令 `/exit`、`/reset`、`/cost` 是從 `kesi.py` 看到的；commit 標題有「add tool permission gate with session grants」與「keep history consistent on interrupt」，這個設計的 y／a／N 提示與中斷處理與它們想法相同，我沒有讀那兩個實作，不能排除受他影響。截斷訊息的做法、`confirm` 參數、`denied` 旗標與記錄格式是依 fixlab 自己的結構設計。
+- 高見龍 KeSi（repo `dfa0cd0`，2026-10-17 clone）：沒有 JSONL 事件記錄；token 與費用記在記憶體裡的記帳物件，用 `/cost` 或每輪結束時印出，程式結束就沒了，所以事件記錄沒有可參考的做法。互動模式的部分，設計時只看過 commit 標題與指令名稱（`/exit`、`/reset`、`/cost`、「permission gate with session grants」、「keep history consistent on interrupt」），y／a／N 提示、session 內一律放行與中斷處理的想法與它們相同，不能排除受他影響；實作完成後才讀了他的程式（`main`、`run_agent`、`check_permission`、`ask_user`、`seal_dangling_tool_use`、`stream_turn`）做對照，結果：（1）Ctrl-C 的處理原本不同（我丟掉整個任務），讀完後採用他的做法，見「中斷時保留已完成的部分」；（2）他的授權範圍更細（每個檔案、每個完整指令），這裡是整個工具，見 README 與第 14 篇的取捨；（3）他的畫面不顯示工具的結果，也沒有差異顯示（工具參數整個字典照印、沒有顏色），所以結果行、差異與顏色規則是依 fixlab 自己的需求設計。截斷訊息的做法、`confirm` 參數、`denied` 旗標與記錄格式是依 fixlab 自己的結構設計。
 - Claude Code 的行為：寫檔與執行指令前會問「這次允許、這個 session 一律允許、拒絕」三種，是 y／a／N 的來源（憑使用經驗，今天沒有重新查文件）。
 
 ## Implementation Contract

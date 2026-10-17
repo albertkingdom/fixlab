@@ -25,7 +25,7 @@
 - [x] 3.5 「互動模式的畫面呈現」：互動模式每個工具呼叫排成一組（標題行、改檔的 `-`／`+` 差異、問題、`✓`／`✗` 結果行），任務結束印一行用量當結尾，答案前後空一行，全部印到標準輸出，顏色只在終端機且沒設 `NO_COLOR` 時才開；畫面邏輯放在 fixlab/display.py，`Workspace` 子類別在呼叫前後印出；一次性模式的輸出不變。對應 Tool calls are shown as readable blocks（讀加確認的改檔、被拒絕、測試失敗、長的改動）、Each task ends with a footer line（三步、卡住）與 Colors only on a terminal（被擷取、`NO_COLOR`），並改寫 The model's final reply is shown。驗證：tests/test_display.py 對純格式函式每個情境一個測試，tests/test_interactive.py 用整段輸出比對一次完整的互動（去掉耗時），既有的一次性測試不改動也通過。
 
 - [ ] 3.6 用真終端機與真模型各跑一次互動 session 並記錄（觀察，不是通過門檻）：先要求修 timelog 的 bug（逐一回答權限提示，包含一次拒絕和一次 `a`），再用 `add a docstring to that function` 這類指涉前一句話的指令，最後 `/reset` 與 `/exit`；記錄提示字元、換行、Ctrl-C 的手感、事件檔的內容，以及被擋下的呼叫仍會先問的情況是否常發生（對應設計文件 Risks）。驗證：結果寫進設計文件的 Risks 或補成後續任務（手動審閱）。
-- [ ] 3.7 寫第 13、14 篇教學文章：docs/articles/13-interactive-session.md（互動模式：為什麼 `run_agent` 要能接續對話、最後的回覆為什麼要加進對話、中斷為什麼要截回長度、`/reset`）與 docs/articles/14-permissions.md（權限提示：為什麼做成 Workspace 的 `confirm` 參數而不是放進迴圈、y／a／N、拒絕為什麼算失敗、被擋下的呼叫仍會先問），附 3.4 的真實操作紀錄與已知限制、參考來源（KeSi 的斜線指令與權限把關只讀了 commit 標題與指令名稱，照實寫）；格式同第 12 篇。驗證：內容審閱，文中數字與程式及輸出一致；完成後各在程式所在的 commit 打輕量 tag `article-13`、`article-14`（只建在本機）。
+- [x] 3.7 寫第 13、14 篇教學文章：docs/articles/13-interactive-session.md（互動模式：為什麼 `run_agent` 要能接續對話、最後的回覆為什麼要加進對話、中斷為什麼要截回長度、`/reset`）與 docs/articles/14-permissions.md（權限提示：為什麼做成 Workspace 的 `confirm` 參數而不是放進迴圈、y／a／N、拒絕為什麼算失敗、被擋下的呼叫仍會先問），附 3.4 的真實操作紀錄與已知限制、參考來源（KeSi 的斜線指令與權限把關只讀了 commit 標題與指令名稱，照實寫）；格式同第 12 篇。驗證：內容審閱，文中數字與程式及輸出一致；完成後各在程式所在的 commit 打輕量 tag `article-13`、`article-14`（只建在本機）。
 
 ## 4. 文件與收尾
 
