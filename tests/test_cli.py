@@ -412,3 +412,20 @@ def test_the_printed_diff_never_lists_the_event_file(project, capsys):
     out = capsys.readouterr().out
     assert ".fixlab" not in out and "events.jsonl" not in out
 
+
+# ── One-shot mode never asks（對應 tool-permissions 規格）──────────────────
+
+
+# Scenario: Unattended run
+def test_one_shot_never_asks_and_nothing_is_denied(project, home, monkeypatch):
+    def no_input(prompt=""):
+        raise AssertionError("one-shot mode must not ask the user anything")
+
+    monkeypatch.setattr("builtins.input", no_input)
+    exit_code = run_fix(project, FakeClient(FIX_SCRIPT))
+
+    assert exit_code == 0
+    flags = [call["flags"] for line in event_lines(home) if line["event"] == "trace"
+             for call in line["record"].get("tool_calls", [])]
+    assert all("denied" not in f for f in flags)
+

@@ -79,8 +79,10 @@ def main(argv=None, client=None) -> int:
         print(f"log: {log.path}", file=sys.stderr)
     log.write("run_start", **run_conditions(args, model, root, meta, mode))
 
-    # 修 bug：測試檔是評分標準，模型不能改，被執行的程式也不能改
-    ws = Workspace(root, read_only=looks_like_test_file, protect_tests=True)
+    # 修 bug：測試檔是評分標準，模型不能改，被執行的程式也不能改。
+    # 互動模式使用者在場，寫檔與跑測試前問一聲；一次性執行沒有人可以問，沿用預設（全部放行）。
+    options = {"confirm": make_asker()} if args.interactive else {}
+    ws = Workspace(root, read_only=looks_like_test_file, protect_tests=True, **options)
     register_tools(ws)
     try:
         if args.interactive:
@@ -174,6 +176,47 @@ def run_task(client, model: str, ws: Workspace, args, log: EventLog, session: li
         print("this task was discarded because the request failed")
     # 互動模式使用者在場，想驗證可以直接叫模型跑測試，所以沒有最後的測試結果與檔案變動
     log.write("task_end", task=number, **task_result_fields(result), final_tests=None, changed_files=None)
+
+
+# 會改檔或執行程式的工具才問；讀取類工具直接放行
+ASKED_TOOLS = ("edit_file", "write_file", "run_tests")
+SHOWN_CHARS = 200  # 問題裡每段字串最多顯示幾個字元
+
+
+def make_asker():
+    """回傳互動模式的確認函式 confirm(工具名稱, 參數) -> bool。「一律放行」的記錄放在這個函式自己的 always 裡，
+    只在這個 session 內有效（/reset 不會清掉它），而且只對同一個工具。"""
+    always = set()
+
+    def ask(name: str, args: dict) -> bool:
+        if name not in ASKED_TOOLS or name in always:
+            return True
+        print(describe_call(name, args))
+        try:
+            answer = input("Allow? [y]es / [a]lways for this tool / [N]o: ")
+        except EOFError:  # 輸入結束了，沒有人可以同意：拒絕
+            return False
+        answer = answer.strip().lower()
+        if answer == "a":
+            always.add(name)
+            return True
+        return answer == "y"  # 其他一律拒絕，包括空白
+
+    return ask
+
+
+def describe_call(name: str, args: dict) -> str:
+    """問題前面那一行摘要：這個呼叫要動什麼。"""
+    if name == "edit_file":
+        return f"edit_file {args['path']}: replace {shown(args['old_string'])} with {shown(args['new_string'])}"
+    if name == "write_file":
+        return f"write_file {args['path']} ({len(args['content'])} characters)"
+    return f"run_tests {args.get('target', '.')}"
+
+
+def shown(text: str) -> str:
+    """最多顯示 SHOWN_CHARS 個字元；用 repr 顯示，換行才看得見。"""
+    return repr(text if len(text) <= SHOWN_CHARS else text[:SHOWN_CHARS] + "…")
 
 
 def summary_line(result) -> str:

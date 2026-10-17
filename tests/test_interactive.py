@@ -170,7 +170,7 @@ def test_a_task_can_use_the_tools_and_edit_the_project(session, project):
         (None, [native("edit_file", path="timelog/parser.py", old_string=BUGGY, new_string=FIXED)]),
         ("Fixed.", None),
     ])
-    session(client, ["fix it"])
+    session(client, ["fix it", "y"])  # edit_file 會先問，回答 y 才執行
 
     assert FIXED in (project / "timelog" / "parser.py").read_text()
 
@@ -241,4 +241,112 @@ def test_a_task_that_runs_out_of_steps_keeps_its_messages(session):
 
     roles = [m["role"] for m in client.sent[1]]
     assert roles == ["system", "user", "assistant", "tool", "user"]  # 工具呼叫與結果都還在
+
+
+# ── 權限提示：對應 tool-permissions 規格 ─────────────────────────────────
+
+from test_fixture import BUGGY, FIXED  # noqa: E402  edit_file 要用的舊字串與新字串
+
+PARSER = "timelog/parser.py"
+
+
+def an_edit():
+    return native("edit_file", path=PARSER, old_string=BUGGY, new_string=FIXED)
+
+
+def parser_text(project):
+    return (project / "timelog" / "parser.py").read_text()
+
+
+# Scenario: Reading is not asked
+def test_reading_tools_run_without_a_question(session, capsys):
+    client = FakeClient([(None, [native("read_file", path=PARSER), native("list_files"), native("grep", pattern="re")]),
+                         ("Done.", None)])
+    session(client, ["look around"])
+
+    assert "Allow?" not in capsys.readouterr().out
+    assert [m["role"] for m in client.sent[1][-4:]] == ["assistant", "tool", "tool", "tool"]  # 三個讀取都執行了
+
+
+# Example: answers
+@pytest.mark.parametrize("answer, runs", [
+    ("y", True), ("a", True), ("n", False), ("", False), ("yes please", False), ("Y", True), (" y ", True),
+])
+def test_answers_to_the_question(session, project, capsys, answer, runs):
+    session(FakeClient([(None, [an_edit()]), ("Done.", None)]), ["fix it", answer])
+
+    assert (FIXED in parser_text(project)) is runs
+    assert "Allow? [y]es / [a]lways for this tool / [N]o: " in capsys.readouterr().out
+
+
+def test_end_of_input_at_the_question_denies_the_call(session, project):
+    session(FakeClient([(None, [an_edit()]), ("Done.", None)]), ["fix it"])  # 輸入在問題這裡用完
+    assert BUGGY in parser_text(project)
+
+
+def test_a_denied_call_tells_the_model_the_user_declined(session):
+    client = FakeClient([(None, [an_edit()]), ("OK, leaving it.", None)])
+    session(client, ["fix it", "n"])
+
+    tool_result = client.sent[1][-1]
+    assert tool_result["role"] == "tool" and tool_result["content"].startswith("error: the user declined this call")
+
+
+# Scenario: Always applies per tool
+def test_always_applies_to_that_tool_only(session, project, capsys):
+    client = FakeClient([
+        (None, [an_edit()]),                                              # 問，回答 a
+        (None, [native("edit_file", path=PARSER, old_string=FIXED, new_string=BUGGY)]),  # 不再問
+        (None, [native("write_file", path="notes.txt", content="x")]),    # 另一個工具，還是要問，回答 n
+        ("Done.", None),
+    ])
+    session(client, ["fix it", "a", "n"])
+
+    assert capsys.readouterr().out.count("Allow?") == 2           # 只問了 edit_file 一次、write_file 一次
+    assert BUGGY in parser_text(project)                           # 第二個 edit_file 在沒問的情況下執行了（改回去）
+    assert not (project / "notes.txt").exists()                    # write_file 被拒絕
+
+
+# Scenario: Long strings are cut
+def test_long_strings_are_cut_in_the_summary(session, capsys):
+    long_edit = native("edit_file", path=PARSER, old_string="x" * 500, new_string="y")
+    session(FakeClient([(None, [long_edit]), ("Done.", None)]), ["fix it", "n"])
+
+    out = capsys.readouterr().out
+    assert "x" * 200 in out and "x" * 201 not in out
+
+
+def test_the_summary_names_the_tool_and_what_it_will_touch(session, capsys):
+    client = FakeClient([(None, [native("write_file", path="notes.txt", content="hello")]),
+                         (None, [native("run_tests", target="tests")]),
+                         (None, [native("run_tests")]), ("Done.", None)])
+    session(client, ["go", "n", "n", "n"])
+
+    out = capsys.readouterr().out
+    assert "write_file notes.txt (5 characters)" in out
+    assert "run_tests tests" in out and "run_tests ." in out
+
+
+def test_the_edit_summary_shows_the_path_and_both_strings(session, capsys):
+    session(FakeClient([(None, [an_edit()]), ("Done.", None)]), ["fix it", "n"])
+
+    out = capsys.readouterr().out
+    assert PARSER in out and "re.match" in out and "re.findall" in out
+
+
+# Ctrl-C 在問題上：當作中斷，丟掉這個任務
+def test_ctrl_c_at_the_question_discards_the_task(session, project, capsys):
+    client = FakeClient([(None, [an_edit()]), ("Next done.", None)])
+    session(client, ["fix it", KeyboardInterrupt(), "next"])
+
+    assert INTERRUPT_MESSAGE in capsys.readouterr().out
+    assert BUGGY in parser_text(project)
+    assert client.sent[1] == [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": "next"}]
+
+
+def test_three_refused_rounds_in_a_row_end_the_task_as_stuck(session, capsys):
+    client = FakeClient([(None, [an_edit()])] * 3)
+    session(client, ["fix it", "n", "n", "n"])
+
+    assert "stop reason: stuck" in capsys.readouterr().out
 
