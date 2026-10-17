@@ -9,6 +9,7 @@ tool_specs() 與 schemas() 是登記表的兩個唯讀視圖，分別給模型�
 走訪檔案的工具（list_files、grep、測試檔指紋）共用 SKIP_DIRS 與 iter_files()。
 """
 
+import hashlib
 import os
 import sys
 from dataclasses import dataclass, field
@@ -18,6 +19,11 @@ from typing import Callable
 # 走訪時跳過的目錄。list_files、grep、測試檔指紋掃描與 CLI 的快照都用同一份，
 # 各自維護的話，改一處就會漏掉另一處。
 SKIP_DIRS = frozenset({".git", ".venv", "__pycache__", ".pytest_cache"})
+
+def file_digest(data: bytes) -> str:
+    """檔案內容的指紋。write_file 靠它確認「模型讀過之後，檔案有沒有被別人改過」。"""
+    return hashlib.sha256(data).hexdigest()
+
 
 # schema 的 JSON 型別名稱 → Python 型別。bool 是 int 的子類別，整數檢查要另外排除。
 _JSON_TYPES = {"string": str, "integer": int, "boolean": bool}
@@ -94,9 +100,10 @@ class Workspace:
         self.read_only = read_only
         self.python = python  # run_tests 用哪個直譯器；不 resolve，venv 的 python 是符號連結，解析後會找不到套件
         self._tools: dict[str, Tool] = {}
-        # 模型「整檔、未截斷」讀過的檔案（解析後的真實路徑）。write_file 覆寫既有檔案前要查它，
-        # 避免模型憑空改寫沒看過的內容；edit_file 成功後會把該檔移除。
-        self.files_read: set[Path] = set()
+        # 模型「整檔、未截斷」讀過的檔案：解析後的真實路徑 → 讀的當下的內容指紋。write_file 覆寫既有檔案前要查它：
+        # 沒有記錄，代表模型沒看過；指紋和現在的內容不一樣，代表讀過之後被別人改了（例如使用者在編輯器裡改）。
+        # 兩種情況都不能整檔覆寫，不然會憑空改寫、或蓋掉別人的修改。edit_file 成功後會把該檔移除。
+        self.files_read: dict[Path, str] = {}
 
     def register(self, name: str, func: Callable[..., ToolResult], schema: dict, description: str = "") -> None:
         self._tools[name] = Tool(func, schema, description)

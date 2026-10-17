@@ -591,3 +591,122 @@ def test_grep_is_offered_to_the_model(rws):
     spec = {s["function"]["name"]: s["function"] for s in rws.tool_specs()}["grep"]
     assert spec["parameters"]["required"] == ["pattern"]
     assert set(spec["parameters"]["properties"]) == {"pattern", "path"}
+
+
+# ---- write_file：對應規格的 write_file creates files and guards overwrites ----
+
+
+def write(w, path, content):
+    return w.call("write_file", {"path": path, "content": content})
+
+
+# Scenario: Create a new file
+def test_write_creates_a_new_file_and_its_parent_directories(rws):
+    r = write(rws, "notes/deep/summary.txt", "hello\n")
+    assert r.ok and r.output == "created notes/deep/summary.txt (6 characters)"
+    assert (rws.root / "notes" / "deep" / "summary.txt").read_text() == "hello\n"
+
+
+# Scenario: Overwrite without reading
+def test_write_refuses_to_overwrite_a_file_that_was_never_read(rws):
+    target = write_parser(rws.root, "x = 1\n")
+    r = write(rws, "timelog/parser.py", "x = 2\n")
+    assert not r.ok and "read the file first" in r.output and "blocked" not in r.flags
+    assert target.read_text() == "x = 1\n"
+
+
+# Scenario: Overwrite after a full read
+def test_write_overwrites_after_a_full_read(rws):
+    target = write_parser(rws.root, "x = 1\n")
+    read(rws, "timelog/parser.py")
+    r = write(rws, "timelog/parser.py", "x = 2\n")
+    assert r.ok and r.output == "overwrote timelog/parser.py (6 characters)"
+    assert target.read_text() == "x = 2\n"
+
+
+# Scenario: Partial read does not count
+def test_write_does_not_accept_a_partial_read(rws):
+    target = write_parser(rws.root, "a = 1\nb = 2\nc = 3\n")
+    read(rws, "timelog/parser.py", start_line=1, end_line=2)
+    assert not write(rws, "timelog/parser.py", "x = 2\n").ok
+    assert target.read_text() == "a = 1\nb = 2\nc = 3\n"
+
+
+# Scenario: Truncated read does not count
+def test_write_does_not_accept_a_truncated_read(rws):
+    big = rws.root / "big.txt"
+    big.write_text("".join(f"{i:04d} {'x' * 70}\n" for i in range(1000)))  # 超過 20000 字元，讀會被截斷
+    read(rws, "big.txt")
+    r = write(rws, "big.txt", "replaced\n")
+    assert not r.ok and "read the file first" in r.output
+    assert big.read_text().startswith("0000 ")
+
+
+# Scenario: Edit makes the earlier read stale
+def test_write_after_an_edit_needs_a_new_read(rws):
+    write_parser(rws.root, "x = 1\n")
+    read(rws, "timelog/parser.py")
+    assert edit(rws, "timelog/parser.py", "x = 1", "x = 5").ok
+    r = write(rws, "timelog/parser.py", "x = 9\n")
+    assert not r.ok and "read the file first" in r.output
+
+
+# Scenario: File changed behind the model's back
+def test_write_refuses_when_the_file_changed_after_it_was_read(rws):
+    target = write_parser(rws.root, "x = 1\n")
+    read(rws, "timelog/parser.py")
+    target.write_text("x = 1\n# 使用者在編輯器裡加的註解\n")  # 讀過之後，被別人改了
+    r = write(rws, "timelog/parser.py", "x = 2\n")
+    assert not r.ok and "changed since you read it" in r.output and "read the file first" in r.output
+    assert "使用者" in target.read_text()  # 別人的修改沒有被蓋掉
+    # 重新讀過之後就可以了
+    read(rws, "timelog/parser.py")
+    assert write(rws, "timelog/parser.py", "x = 2\n").ok
+
+
+def test_a_successful_write_counts_as_having_read_the_file(rws):
+    write_parser(rws.root, "x = 1\n")
+    read(rws, "timelog/parser.py")
+    assert write(rws, "timelog/parser.py", "x = 2\n").ok
+    assert write(rws, "timelog/parser.py", "x = 3\n").ok  # 模型知道自己剛寫了什麼，不用再讀
+
+
+def test_a_new_file_created_by_write_can_be_overwritten_again(rws):
+    assert write(rws, "new.txt", "one\n").ok
+    assert write(rws, "new.txt", "two\n").ok
+    assert (rws.root / "new.txt").read_text() == "two\n"
+
+
+def test_a_failed_read_records_nothing(rws):
+    assert not read(rws, "missing.py").ok
+    (rws.root / "pkg").mkdir()
+    assert not read(rws, "pkg").ok
+    assert rws.files_read == {}
+
+
+def test_write_to_a_directory_is_an_error(rws):
+    (rws.root / "pkg").mkdir()
+    r = write(rws, "pkg", "x")
+    assert not r.ok and "directory" in r.output
+
+
+def test_write_content_that_cannot_be_encoded_creates_nothing(rws):
+    r = write(rws, "new.txt", "\ud800")  # 孤立的 surrogate 不能編成 UTF-8
+    assert not r.ok and "UTF-8" in r.output
+    assert not (rws.root / "new.txt").exists()
+
+
+def test_write_outside_the_workspace_is_blocked(rws):
+    r = write(rws, "../evil.txt", "x")
+    assert not r.ok and r.flags == {"blocked": True}
+
+
+def test_write_keeps_windows_line_endings_as_given(rws):
+    assert write(rws, "crlf.txt", "a\r\nb\r\n").ok
+    assert (rws.root / "crlf.txt").read_bytes() == b"a\r\nb\r\n"
+
+
+def test_write_file_is_offered_to_the_model(rws):
+    spec = {s["function"]["name"]: s["function"] for s in rws.tool_specs()}["write_file"]
+    assert spec["parameters"]["required"] == ["path", "content"]
+    assert "read all of it" in spec["description"]

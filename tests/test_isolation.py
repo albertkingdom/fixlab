@@ -189,3 +189,53 @@ def test_run_tests_writes_no_bytecode_into_the_workspace(tmp_path):
     w = workspace_with_test(tmp_path, "def test_ok():\n    assert True\n")
     w.call("run_tests", {})
     assert not list(w.root.rglob("__pycache__"))
+
+
+# ---- write_file 也要過同一個唯讀判定（Test files cannot be written 對 write_file 同樣成立）----
+
+
+def write(w, path):
+    return w.call("write_file", {"path": path, "content": "x = 2\n"})
+
+
+# Scenario: Protected and unprotected relative paths（write_file 那一欄）
+@pytest.mark.parametrize("rel, protected", PROTECTED_TABLE)
+def test_write_file_protected_path_table(pws, rel, protected):
+    pws.call("read_file", {"path": rel})  # 先整檔讀過，排除「沒讀過」這個理由，只看唯讀判定
+    r = write(pws, rel)
+    content = (pws.root / rel).read_text()
+    if protected:
+        assert not r.ok and r.flags == {"blocked": True}
+        assert content == "x = 1\n"
+    else:
+        assert r.ok and "blocked" not in r.flags
+        assert content == "x = 2\n"
+
+
+def test_write_file_cannot_create_a_new_test_file(pws):
+    r = write(pws, "tests/new_helper.py")  # 這是建立新檔，不是覆寫；沒有保護的話模型就能放進一個假的測試輔助檔
+    assert not r.ok and r.flags == {"blocked": True}
+    assert not (pws.root / "tests" / "new_helper.py").exists()
+
+
+def test_read_only_check_comes_before_the_read_first_check(pws):
+    r = write(pws, "tests/test_report.py")  # 沒讀過，也是唯讀：回報的是唯讀，不是「先讀」
+    assert r.flags == {"blocked": True} and "read-only" in r.output
+
+
+def test_a_symlink_to_a_test_file_cannot_be_used_to_overwrite_it(pws):
+    (pws.root / "timelog" / "alias.py").symlink_to(pws.root / "tests" / "test_report.py")
+    pws.call("read_file", {"path": "timelog/alias.py"})
+    r = write(pws, "timelog/alias.py")
+    assert not r.ok and r.flags == {"blocked": True}
+    assert (pws.root / "tests" / "test_report.py").read_text() == "x = 1\n"
+
+
+def test_default_workspace_lets_write_file_overwrite_test_files(tmp_path):
+    root = tmp_path / "ws"
+    (root / "tests").mkdir(parents=True)
+    (root / "tests" / "test_a.py").write_text("x = 1\n")
+    w = Workspace(root)  # 沒有傳 read_only
+    register_tools(w)
+    w.call("read_file", {"path": "tests/test_a.py"})
+    assert write(w, "tests/test_a.py").ok

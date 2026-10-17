@@ -11,7 +11,7 @@ from functools import partial
 
 import regex
 
-from fixlab.workspace import ToolError, ToolResult, Workspace, iter_files
+from fixlab.workspace import ToolError, ToolResult, Workspace, file_digest, iter_files
 
 # 工具輸出一律有上限：輸出會留在對話歷史裡每一輪重送，是成本與小模型 context 的主要壓力。
 MAX_READ_CHARS = 20000
@@ -78,6 +78,13 @@ GREP_DESCRIPTION = (
     f"At most {MAX_GREP_LINES} lines are shown, and each line is shortened to {MAX_GREP_SHOWN_CHARS} characters."
 )
 GREP_SCHEMA = {"properties": {"pattern": {"type": "string"}, "path": {"type": "string"}}, "required": ["pattern"]}
+WRITE_FILE_DESCRIPTION = (
+    "Create a new file, or replace the whole content of an existing file. Missing parent directories are created. "
+    "To change only part of a file, use edit_file instead. "
+    "An existing file can only be replaced after you have read all of it with read_file "
+    "(a partial or cut-off read does not count), and not if it changed since you read it."
+)
+WRITE_FILE_SCHEMA = {"properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]}
 
 
 def read_file(ws: Workspace, path: str, start_line: int | None = None, end_line: int | None = None) -> ToolResult:
@@ -86,8 +93,9 @@ def read_file(ws: Workspace, path: str, start_line: int | None = None, end_line:
         raise ToolError(f"file not found: {path!r}")
     if p.is_dir():
         raise ToolError(f"{path!r} is a directory, not a file; use list_files to see what it contains")
+    data = p.read_bytes()
     try:
-        lines = p.read_text(encoding="utf-8").splitlines()
+        lines = data.decode("utf-8").splitlines()
     except UnicodeDecodeError:
         # 解碼失敗不是 OSError，不處理的話會一路拋出去，讓 loop 崩潰。
         raise ToolError(f"not a UTF-8 text file: {path!r}") from None
@@ -114,7 +122,7 @@ def read_file(ws: Workspace, path: str, start_line: int | None = None, end_line:
 
     # 只有沒帶行範圍、也沒被截斷的讀取，才算模型看過整個檔案。
     if start_line is None and end_line is None and not truncated:
-        ws.files_read.add(p)
+        ws.files_read[p] = file_digest(data)  # 連同讀的當下的內容指紋一起記
     return ToolResult(output, True)
 
 
@@ -177,7 +185,7 @@ def edit_file(ws: Workspace, path: str, old_string: str, new_string: str) -> Too
     except UnicodeEncodeError:
         raise ToolError("new_string cannot be encoded as UTF-8") from None
     p.write_bytes(data)
-    ws.files_read.discard(p)  # 模型沒看過編輯後的全文，之後要用 write_file 覆寫得重新讀
+    ws.files_read.pop(p, None)  # 模型沒看過編輯後的全文，之後要用 write_file 覆寫得重新讀
     return ToolResult(f"edited {path}", True)
 
 
@@ -255,6 +263,42 @@ def count_occurrences(text: str, piece: str) -> int:
     return count
 
 
+def write_file(ws: Workspace, path: str, content: str) -> ToolResult:
+    p = ws.resolve_writable(path)  # 路徑守門，加上唯讀檢查；放在檢查檔案是否存在之前，不存在的測試檔路徑也擋
+    try:
+        data = content.encode("utf-8")  # 先編碼，失敗時還沒動任何東西
+    except UnicodeEncodeError:
+        raise ToolError("content cannot be encoded as UTF-8") from None
+
+    if p.exists():
+        if p.is_dir():
+            raise ToolError(f"{path!r} is a directory, not a file")
+        check_overwrite_allowed(ws, p, path)
+        action = "overwrote"
+    else:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        action = "created"
+
+    p.write_bytes(data)
+    ws.files_read[p] = file_digest(data)  # 模型知道自己剛寫了什麼，之後不用再讀就能再覆寫
+    return ToolResult(f"{action} {path} ({len(content)} characters)", True)
+
+
+def check_overwrite_allowed(ws: Workspace, p, path: str) -> None:
+    """覆寫既有檔案前：模型必須整檔讀過它，而且讀過之後內容沒有變。不行就丟 ToolError。"""
+    recorded = ws.files_read.get(p)
+    if recorded is None:
+        raise ToolError(
+            f"{path!r} already exists. You must read the file first with read_file "
+            "(the whole file; a partial or cut-off read does not count) before overwriting it."
+        )
+    if file_digest(p.read_bytes()) != recorded:
+        del ws.files_read[p]  # 記錄已經過期，留著沒有意義
+        raise ToolError(
+            f"{path!r} has changed since you read it. You must read the file first again before overwriting it."
+        )
+
+
 def run_tests(ws: Workspace, target: str = ".") -> ToolResult:
     # 目標先過路徑守門（跑出工作目錄 → blocked），再用相對於工作目錄的路徑交給 pytest。
     relative_target = ws.resolve_inside(target).relative_to(ws.root).as_posix()
@@ -304,4 +348,5 @@ def register_tools(ws: Workspace) -> None:
     ws.register("list_files", partial(list_files, ws), LIST_FILES_SCHEMA, LIST_FILES_DESCRIPTION)
     ws.register("edit_file", partial(edit_file, ws), EDIT_FILE_SCHEMA, EDIT_FILE_DESCRIPTION)
     ws.register("grep", partial(grep, ws), GREP_SCHEMA, GREP_DESCRIPTION)
+    ws.register("write_file", partial(write_file, ws), WRITE_FILE_SCHEMA, WRITE_FILE_DESCRIPTION)
     ws.register("run_tests", partial(run_tests, ws), RUN_TESTS_SCHEMA, RUN_TESTS_DESCRIPTION)
