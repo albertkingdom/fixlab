@@ -1,0 +1,27 @@
+## 1. 迴圈與 Workspace 的基礎
+
+依「每步紀錄補截斷與原始呼叫數」等設計決定，這一組先補好後面都會用到的零件；每項都不改變階段 1 的對外行為，既有的 260 個測試要原封不動通過。
+
+- [ ] 1.1 「每步紀錄補截斷與原始呼叫數」：trace 紀錄多 `truncated` 與 `reply_tool_calls`，對應 Step records show truncation and the original call count 的三個情境（被截斷的回覆、一個合法加一個不合法的呼叫、沒有工具的回覆）。驗證：tests/test_loop.py 新增三個測試；黃金 trace 比對整筆紀錄，會因新欄位而失敗，用 UPDATE_GOLDEN=1 重新產生一次，git diff 只能多出 `truncated` 與 `reply_tool_calls`，`requests` 部分不變。
+- [ ] 1.2 「寫入唯讀檔案的嘗試用 protected_write 旗標」：寫入唯讀檔案被擋時旗標是 `blocked` 加 `protected_write`，路徑逃逸只有 `blocked`，對應 Writes to read-only files are flagged 的三個情境（edit_file 改測試檔、write_file 新建測試檔、`../outside.py`）。驗證：tests/test_isolation.py 新增三個測試；既有的十列與二十列表格測試仍通過；黃金 trace 被擋下那一步多一個 `protected_write`，重新產生後 git diff 只能多出這個旗標，並更新 `test_golden_covers_the_intended_cases` 的旗標斷言。
+- [ ] 1.3 「run_agent 接續既有 messages，結束時補上最後的回覆」：`run_agent(..., messages=None)` 的三種情況與 `done` 時追加最後的 assistant 回覆，對應 A run can continue an existing conversation 的三個情境（預設不變、空 list 被填入、第二個任務接續）。驗證：tests/test_loop.py 新增三個測試；黃金 trace 的 `requests` 部分與之前完全相同（`test_golden_trace` 在這項完成時只有 `trace` 部分因 1.1、1.2 而不同）。
+- [ ] 1.4 「權限提示做成 Workspace 的 confirm 參數」與「被拒絕的呼叫算失敗，旗標獨立為 denied」：`Workspace(confirm=...)` 在工具存在且參數合法之後、執行之前詢問，拒絕時回 `ok=false` 與 `denied` 旗標且不執行；迴圈把 `denied` 計入 `denied_calls` 並算失敗。對應 A Workspace can require confirmation（預設放行、拒絕不動檔案、不合法的呼叫不詢問）與 Denied calls count as failures（連續三次拒絕 `stuck`、拒絕後成功歸零）共五個情境。驗證：tests/test_isolation.py 三個測試、tests/test_loop.py 兩個測試。
+
+## 2. 事件記錄
+
+- [ ] 2.1 新增 fixlab/telemetry.py 的 `EventLog`，實作「事件檔：每次執行一個 JSONL，四種事件」與「事件檔寫入失敗不中斷執行」：對應 One event file per run（預設位置與名稱、重名加後綴、自訂目錄）、Four event types（行的欄位與 `ts` 格式）、Each line is written immediately（不關檔就讀得到每一行）與 Logging failures never stop the run（OSError 只警告一次，後面靜默略過）。驗證：tests/test_telemetry.py，每個情境一個測試，時間用固定值注入。
+- [ ] 2.2 一次性 `fixlab PATH` 寫事件檔：入口建立 `EventLog`，依序寫 `run_start`（模式 `once`、條件欄位）、`task_start`、每筆 trace、`task_end`，並在 stderr 印 `log: <路徑>`；`task_end` 帶 `final_tests` 與 `changed_files`（快照比較要多提供結構化的新增、修改、刪除清單，供事件檔與印出的 diff 共用）。對應 One-shot results go in task_end 的兩個情境與 Four event types 的一次性情境；`request_error` 也會以 `trace` 寫出。驗證：tests/test_cli.py 以假 client 跑 timelog 副本，解析事件檔檢查事件順序與欄位；既有的 test_cli 測試（stdout、退出碼、diff）不改動也通過。
+- [ ] 2.3 「執行條件用 --meta 記錄，不自動偵測」與「事件檔放在使用者家目錄，不放進被修的目錄」：新增 `--meta KEY=VALUE`（可重複）與 `--log-dir`，預設 `~/.fixlab/runs`；`--meta` 缺 `=`、日誌目錄在 PATH 之內（含 PATH 是家目錄、符號連結）都以退出碼 2 結束且不建檔。對應 Experiment conditions come from --meta（兩個值、缺等號）與 The event log stays outside the target directory（目錄在 PATH 裡、PATH 是家目錄、diff 不含日誌）。驗證：tests/test_cli.py 新增對應測試；測試一律傳暫存的 `--log-dir`，不寫真的家目錄。
+- [ ] 2.4 用真模型跑一次一次性修復並檢視事件檔（觀察，不是通過門檻）：用 OpenRouter 的一個模型對 timelog 的暫存副本執行，記錄事件檔的實際內容是否讓階段 3 的統計算得出來（步數、token、延遲、旗標、`changed_files`），缺欄位或太大就記進設計文件的 Risks 或補成後續任務；模型能力問題只記錄。驗證：事件檔每行可解析，`task_end` 的 token 與入口印出的相同（手動審閱）。
+
+## 3. 互動模式與權限提示
+
+- [ ] 3.1 「互動模式用 -i，不設子命令；斜線指令只有 /reset 與 /exit」並保留對話：`fixlab PATH -i` 顯示 `fixlab> `，空行忽略，`/exit`、Ctrl-D、提示字元上的 Ctrl-C 以 0 離開，`/reset` 清空對話並印 `conversation cleared`，其他行是任務；同一個 session 內每個任務接續前面的對話，不自動再跑一次測試，每個任務各寫 `task_start` 與 `task_end`（`final_tests` 與 `changed_files` 為 null）。對應 Interactive mode is entered with -i（沒有 `-i` 不變、缺模型退出碼 2）、The conversation is kept for the session（後續請求帶前面的訊息、新 session 是空的）、Slash commands and empty lines（重設後任務序號繼續、空行不送請求）與 No automatic final test run in interactive mode。驗證：tests/test_interactive.py 以注入的輸入與假 client 對應每個情境各一個測試。
+- [ ] 3.2 「中斷時丟棄該任務新增的訊息」：Ctrl-C 打斷執行中的任務時，把對話截回任務開始前的長度，印出提示，寫 `stop_reason` 為 `interrupted` 的 `task_end`，回到提示字元，下一個任務的請求裡沒有缺少結果的 `tool_calls`。對應 Interrupting a task discards its messages。驗證：tests/test_interactive.py 讓假 client 在第二次請求時丟出 `KeyboardInterrupt`，檢查訊息長度、提示文字與下一個請求。
+- [ ] 3.3 互動模式的提示函式：只對 `edit_file`、`write_file`、`run_tests` 提問，摘要格式與 `Allow? [y]es / [a]lways for this tool / [N]o: `，回答 `y`、`a`、其他一律拒絕（含空行與輸入結束），`a` 只對同一個工具在這個 session 內有效，字串最多顯示 200 字元；一次性模式不傳 `confirm`。對應 Interactive mode asks before changing files or running tests（讀取不問、回答對照表、always 依工具、長字串截斷）與 One-shot mode never asks（標準輸入關閉照常跑）。驗證：tests/test_interactive.py 與 tests/test_cli.py 各情境一個測試，輸入用注入的函式。
+- [ ] 3.4 用真終端機與真模型各跑一次互動 session 並記錄（觀察，不是通過門檻）：先要求修 timelog 的 bug（逐一回答權限提示，包含一次拒絕和一次 `a`），再用 `add a docstring to that function` 這類指涉前一句話的指令，最後 `/reset` 與 `/exit`；記錄提示字元、換行、Ctrl-C 的手感、事件檔的內容，以及被擋下的呼叫仍會先問的情況是否常發生（對應設計文件 Risks）。驗證：結果寫進設計文件的 Risks 或補成後續任務（手動審閱）。
+
+## 4. 文件與收尾
+
+- [ ] 4.1 更新 README.md 與 AGENTS.md：README 的狀態表加 tag 欄並把階段 2 改為完成，新增 `-i`、`--log-dir`、`--meta` 的用法與權限提示說明、事件檔位置與四種事件的欄位說明（並註明不要隨意分享事件檔）、已知限制（單一 session 歷史無上限、被擋下的呼叫仍會先問、中斷後檔案可能已被修改），參考來源補上「設計依據與參考來源」那一節列的 KeSi 與 Claude Code 項目；AGENTS.md 的目錄結構補上 fixlab/telemetry.py。驗證：內容審閱，README 的指令在全新的 venv 裡照做能跑起 `pytest` 與 `fixlab --help`。
+- [ ] 4.2 全部驗收後打 tag：在 .venv 內 `pytest` 全數通過、`spectra validate stage2-cli-telemetry` 無錯誤後，commit 並建立 git tag `stage-2`（只建在本機）。驗證：`git tag --list stage-2` 有輸出，且 tag 指向的 commit 上 pytest 通過。
