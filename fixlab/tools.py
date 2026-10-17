@@ -6,7 +6,10 @@
 
 import os
 import subprocess
+import time
 from functools import partial
+
+import regex
 
 from fixlab.workspace import ToolError, ToolResult, Workspace, iter_files
 
@@ -14,6 +17,11 @@ from fixlab.workspace import ToolError, ToolResult, Workspace, iter_files
 MAX_READ_CHARS = 20000
 MAX_LIST_ENTRIES = 200
 MAX_TEST_OUTPUT_CHARS = 4000
+MAX_GREP_LINES = 100
+MAX_GREP_MATCH_CHARS = 2000  # 每行只比對前這麼多字元，壓縮過的超長一行不會拖垮比對
+MAX_GREP_SHOWN_CHARS = 200   # 輸出時每行最多顯示這麼多字元；100 行長行會把上下文塞滿
+GREP_LINE_TIMEOUT_S = 1      # 比對一行的時間上限，擋災難性回溯
+GREP_TOTAL_TIMEOUT_S = 5     # 整個搜尋的時間上限。這幾個秒數做成模組常數，測試可以改短
 RUN_TESTS_TIMEOUT_S = 10  # 做成模組常數，測試無窮迴圈的案例時可以改短，不用真的等 10 秒
 
 # 測試子行程唯一能看到的環境變數。用白名單：金鑰的名字無法窮舉（OPENAI_KEY、STRIPE_SK、GH_PAT……），
@@ -61,6 +69,15 @@ RUN_TESTS_DESCRIPTION = (
     f"Output longer than {MAX_TEST_OUTPUT_CHARS} characters is shortened: the start and the end are kept."
 )
 RUN_TESTS_SCHEMA = {"properties": {"target": {"type": "string"}}, "required": []}
+GREP_DESCRIPTION = (
+    "Search file contents with a regular expression (Python syntax). "
+    "Returns matching lines as path:line_number:text, sorted by path. "
+    "path is an optional file or directory inside the working directory (default: the whole project). "
+    "The search is case-sensitive; start the pattern with (?i) to ignore case. "
+    "Skips .git, .venv, __pycache__, .pytest_cache, symbolic links and files that are not UTF-8 text. "
+    f"At most {MAX_GREP_LINES} lines are shown, and each line is shortened to {MAX_GREP_SHOWN_CHARS} characters."
+)
+GREP_SCHEMA = {"properties": {"pattern": {"type": "string"}, "path": {"type": "string"}}, "required": ["pattern"]}
 
 
 def read_file(ws: Workspace, path: str, start_line: int | None = None, end_line: int | None = None) -> ToolResult:
@@ -164,6 +181,70 @@ def edit_file(ws: Workspace, path: str, old_string: str, new_string: str) -> Too
     return ToolResult(f"edited {path}", True)
 
 
+def grep(ws: Workspace, pattern: str, path: str = ".") -> ToolResult:
+    if pattern == "":
+        raise ToolError("pattern must not be empty")
+    try:
+        matcher = regex.compile(pattern)
+    except regex.error as e:
+        raise ToolError(f"invalid regular expression: {e}") from None
+
+    start = ws.resolve_inside(path)
+    if not start.exists():
+        raise ToolError(f"path not found: {path!r}")
+
+    # 單一檔案就搜它；資料夾就走訪，順序依完整相對路徑的字串，輸出才可預測。
+    files = {}
+    if start.is_file():
+        files[start.relative_to(ws.root).as_posix()] = start
+    else:
+        for file in iter_files(start):
+            files[file.relative_to(ws.root).as_posix()] = file
+
+    deadline = time.monotonic() + GREP_TOTAL_TIMEOUT_S
+    shown = []
+    total = 0  # 符合的行數，包含超過上限而不顯示的
+    stopped = False
+    for name in sorted(files):
+        try:
+            text = files[name].read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue  # 不是文字檔，或讀不了：略過
+        for number, line in enumerate(text.splitlines(), start=1):
+            try:
+                found = matcher.search(line[:MAX_GREP_MATCH_CHARS], timeout=GREP_LINE_TIMEOUT_S)
+            except TimeoutError:
+                raise ToolError(
+                    f"pattern too slow: matching one line took more than {GREP_LINE_TIMEOUT_S}s "
+                    f"({name}:{number}). Use a simpler pattern."
+                ) from None
+            if found:
+                total += 1
+                if len(shown) < MAX_GREP_LINES:
+                    shown.append(f"{name}:{number}:{shorten(line)}")
+            if time.monotonic() > deadline:
+                stopped = True
+                break
+        if stopped:
+            break
+
+    lines = list(shown)
+    if total > len(shown):
+        lines.append(f"[{total - len(shown)} more matches omitted; use a more specific pattern or path]")
+    if stopped:
+        lines.append(f"[search stopped after {GREP_TOTAL_TIMEOUT_S}s; the results above may be incomplete]")
+    if not lines:
+        # 空結果明確回報，模型才分得出「沒找到」與「呼叫失敗」。
+        return ToolResult("no matches", True)
+    return ToolResult("\n".join(lines), True)
+
+
+def shorten(line: str) -> str:
+    if len(line) <= MAX_GREP_SHOWN_CHARS:
+        return line
+    return line[:MAX_GREP_SHOWN_CHARS] + "..."
+
+
 def count_occurrences(text: str, piece: str) -> int:
     """piece 在 text 裡出現幾次，重疊的也算："aa" 在 "aaa" 裡是 2 次（str.count 只會回 1）。"""
     count = 0
@@ -222,4 +303,5 @@ def register_tools(ws: Workspace) -> None:
     ws.register("read_file", partial(read_file, ws), READ_FILE_SCHEMA, READ_FILE_DESCRIPTION)
     ws.register("list_files", partial(list_files, ws), LIST_FILES_SCHEMA, LIST_FILES_DESCRIPTION)
     ws.register("edit_file", partial(edit_file, ws), EDIT_FILE_SCHEMA, EDIT_FILE_DESCRIPTION)
+    ws.register("grep", partial(grep, ws), GREP_SCHEMA, GREP_DESCRIPTION)
     ws.register("run_tests", partial(run_tests, ws), RUN_TESTS_SCHEMA, RUN_TESTS_DESCRIPTION)

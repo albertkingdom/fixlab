@@ -1,6 +1,7 @@
 # 工具分派測試：對應 agent-tools 規格的 Tool errors never crash the loop。
 # 另外驗證登記表的兩個視圖：給模型的 tool_specs() 與給 toolparse 驗證的 schemas()，以及 read_file 的行為。
 import sys
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -474,3 +475,119 @@ def test_run_tests_is_offered_to_the_model(rws):
     spec = {s["function"]["name"]: s["function"] for s in rws.tool_specs()}["run_tests"]
     assert spec["parameters"]["required"] == []
     assert set(spec["parameters"]["properties"]) == {"target"}
+
+
+# ---- grep：對應規格的 grep searches file contents ----
+
+
+def grep(w, pattern, **args):
+    return w.call("grep", {"pattern": pattern, **args})
+
+
+# Scenario: Find a definition
+def test_grep_finds_a_definition(tws):
+    r = grep(tws, "def parse_duration")
+    assert r.ok and r.output == "timelog/parser.py:7:def parse_duration(text):"
+
+
+def test_grep_results_are_sorted_by_path_then_line(rws):
+    touch(rws.root, "b/two.py", "a/one.py")
+    (rws.root / "a" / "one.py").write_text("x = 1\nx = 2\n")
+    (rws.root / "b" / "two.py").write_text("x = 3\n")
+    assert grep(rws, "x =").output.splitlines() == ["a/one.py:1:x = 1", "a/one.py:2:x = 2", "b/two.py:1:x = 3"]
+
+
+# Scenario: Invalid pattern
+def test_grep_invalid_pattern_is_an_error(rws):
+    r = grep(rws, "(")
+    assert not r.ok and "invalid regular expression" in r.output and "blocked" not in r.flags
+
+
+def test_grep_empty_pattern_is_an_error(rws):
+    r = grep(rws, "")
+    assert not r.ok and "must not be empty" in r.output
+
+
+# Scenario: Output cap
+def test_grep_shows_100_lines_and_counts_the_rest(rws):
+    (rws.root / "many.txt").write_text("hit\n" * 120)
+    lines = grep(rws, "hit").output.splitlines()
+    assert len(lines) == 101
+    assert lines[0] == "many.txt:1:hit" and lines[99] == "many.txt:100:hit"
+    assert lines[100].startswith("[20 more matches omitted")
+
+
+# Scenario: Catastrophic backtracking
+def test_grep_gives_up_on_a_pattern_that_backtracks_forever(rws):
+    # (a+)+$ 是經典例子，但 regex 套件對它有最佳化，40 個 a 一下子就比完；(a|aa)+$ 才會真的卡住（見設計文件）
+    (rws.root / "slow.txt").write_text("a" * 40 + "!\n")
+    started = time.monotonic()
+    r = grep(rws, "(a|aa)+$")
+    assert time.monotonic() - started < 5
+    assert not r.ok and "pattern too slow" in r.output
+
+
+# Scenario: Symbolic link to a file outside the workspace
+def test_grep_does_not_read_through_symbolic_links(rws):
+    (rws.root.parent / "secret").write_text("password\n")
+    (rws.root / "link_secret").symlink_to("../secret")
+    assert grep(rws, "password").output == "no matches"
+    r = grep(rws, "password", path="link_secret")  # 明確指定連結本身，路徑守門會擋
+    assert not r.ok and r.flags == {"blocked": True}
+
+
+def test_grep_skips_files_that_are_not_utf8_text(rws):
+    (rws.root / "blob.bin").write_bytes(b"needle \xff\xfe\x00")
+    (rws.root / "note.txt").write_text("needle\n")
+    assert grep(rws, "needle").output == "note.txt:1:needle"
+
+
+def test_grep_skips_ignored_directories(rws):
+    touch(rws.root, ".git/config", "pkg/__pycache__/x.py", "pkg/real.py")
+    for rel in (".git/config", "pkg/__pycache__/x.py", "pkg/real.py"):
+        (rws.root / rel).write_text("needle\n")
+    assert grep(rws, "needle").output == "pkg/real.py:1:needle"
+
+
+def test_grep_can_be_limited_to_a_directory_or_a_file(tws):
+    assert grep(tws, "text", path="tests").output == "no matches"
+    assert grep(tws, "def parse_duration", path="timelog/parser.py").output == "timelog/parser.py:7:def parse_duration(text):"
+
+
+def test_grep_path_errors(rws):
+    assert not grep(rws, "x", path="nope").ok and "path not found" in grep(rws, "x", path="nope").output
+    r = grep(rws, "x", path="..")
+    assert not r.ok and r.flags == {"blocked": True}
+
+
+# Scenario: 整體時間上限（測試中把上限縮短來驗證）
+def test_grep_stops_after_the_overall_time_limit(rws, monkeypatch):
+    monkeypatch.setattr("fixlab.tools.GREP_TOTAL_TIMEOUT_S", 0)
+    (rws.root / "many.txt").write_text("hit\n" * 50)
+    r = grep(rws, "hit")
+    assert r.ok and "search stopped after 0s" in r.output
+    assert r.output.startswith("many.txt:1:hit")  # 已經找到的結果還在
+    assert len(r.output.splitlines()) < 50
+
+
+def test_grep_shortens_long_lines_in_the_output(rws):
+    (rws.root / "long.txt").write_text("needle " + "x" * 500 + "\n")
+    shown = grep(rws, "needle").output
+    assert shown == "long.txt:1:needle " + "x" * 193 + "..."  # 前 200 字元加 ...
+
+
+def test_grep_only_matches_the_first_2000_characters_of_a_line(rws):
+    (rws.root / "wide.txt").write_text("x" * 2500 + "needle\n")
+    assert grep(rws, "needle").output == "no matches"
+
+
+def test_grep_is_case_sensitive_unless_asked_otherwise(rws):
+    (rws.root / "a.txt").write_text("Hello\n")
+    assert grep(rws, "hello").output == "no matches"
+    assert grep(rws, "(?i)hello").output == "a.txt:1:Hello"
+
+
+def test_grep_is_offered_to_the_model(rws):
+    spec = {s["function"]["name"]: s["function"] for s in rws.tool_specs()}["grep"]
+    assert spec["parameters"]["required"] == ["pattern"]
+    assert set(spec["parameters"]["properties"]) == {"pattern", "path"}
