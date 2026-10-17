@@ -62,7 +62,7 @@ The Workspace is created with `looks_like_test_file` as its rule.
 
 ### Requirement: Tests run in a sandbox
 
-run_tests SHALL run pytest under macOS sandbox-exec with no network access, with reads denied for the user's home directory, the whole project directory of fixlab, and every extra deny_read directory except the workspace itself and the Python virtual environment, and with writes allowed only inside the workspace, a private temporary directory created for that run, and /dev. Every path given to the sandbox SHALL be a real path with symbolic links resolved, because the sandbox compares real paths (on macOS `/var` is a link to `/private/var`). On a platform without sandbox-exec, run_tests SHALL run pytest without a sandbox, and the command-line entry SHALL print a status line saying whether the sandbox is on. A Workspace SHALL have a `protect_tests` option, off by default, because writing tests is a normal task for a general-purpose agent; the command-line entry `fixlab PATH` turns it on together with `looks_like_test_file`. When it is on, the sandbox SHALL deny, inside the workspace, every write (create, overwrite, delete, truncate, rename, move, change of permissions) to a path whose location relative to the workspace root follows the same naming rules as `looks_like_test_file`, compared case-insensitively, and to the directories named `tests` or `test` themselves, so those directories cannot be renamed or moved either. The denial SHALL hold when the write goes through a symbolic link or a hard link to such a file. The option is independent of the read-only rule: a custom read-only rule is enforced by the tool layer only. Folders above the workspace root that are named `tests` SHALL have no effect. The workspace path in the sandbox's regular-expression rule SHALL be quoted by the sandbox's own `regex-quote` on a parameter, so regular-expression special characters in the path have no effect. The sandbox profile text SHALL contain no literal workspace, project, home, or deny_read paths; they SHALL be passed as parameters.
+run_tests SHALL run pytest under macOS sandbox-exec with no network access, with reads denied for the user's home directory, the whole project directory of fixlab, and every extra deny_read directory except the workspace itself and the Python virtual environment, and with writes allowed only inside the workspace, a private temporary directory created for that run, and /dev. Every path given to the sandbox SHALL be a real path with symbolic links resolved, because the sandbox compares real paths (on macOS `/var` is a link to `/private/var`). On a platform without sandbox-exec, run_tests SHALL run pytest without a sandbox, and the command-line entry SHALL print a status line saying whether the sandbox is on. A Workspace SHALL have a `protect_tests` option, off by default, because writing tests is a normal task for a general-purpose agent; the command-line entry `fixlab PATH` turns it on together with `looks_like_test_file`. When it is on, the sandbox SHALL deny, inside the workspace, every write (create, overwrite, delete, truncate, rename, move, change of permissions) to a path whose location relative to the workspace root follows the same naming rules as `looks_like_test_file`, compared case-insensitively, and to the directories named `tests` or `test` themselves, so those directories cannot be renamed or moved either. The denial SHALL hold when the write goes through a symbolic link to such a file, and creating a hard link to such a file SHALL fail; a hard link made before the run, outside the sandbox, is not covered. The sandbox SHALL also deny writes to every `__pycache__` directory (pytest loads cached bytecode, so a forged .pyc would replace a test), and SHALL deny deleting, renaming or moving any directory inside the workspace, because renaming a folder that holds tests and copying back a version without them would make the tests disappear from the collection. The price is that code under test cannot remove or rename directories in the workspace. Modification of pytest from inside the pytest process itself, by the code under test, is outside what the sandbox can prevent. The option is independent of the read-only rule: a custom read-only rule is enforced by the tool layer only. Folders above the workspace root that are named `tests` SHALL have no effect. The workspace path in the sandbox's regular-expression rule SHALL be quoted by the sandbox's own `regex-quote` on a parameter, so regular-expression special characters in the path have no effect. The sandbox profile text SHALL contain no literal workspace, project, home, or deny_read paths; they SHALL be passed as parameters.
 
 #### Scenario: Network access
 
@@ -119,12 +119,14 @@ The workspace has `protect_tests` on and contains tests/test_report.py, tests/he
 | create a hard link to the test file, then write through it        | PermissionError |
 | append to timelog/parser.py                                       | succeeds        |
 | create tests.py or contest.py                                     | succeeds        |
-| rename the folder timelog to timelog2 (known gap)                 | succeeds        |
+| rename the folder timelog to timelog2                             | PermissionError |
+| create and then remove an empty folder                            | PermissionError |
+| write a file inside a `__pycache__` folder                        | PermissionError |
 
 #### Scenario: Sandbox and tool layer agree
 
 - **WHEN** a path relative to the workspace is tried for writing in a workspace with `protect_tests` on, for each of tests/a.py, test/a.py, Tests/a.py, pkg/tests/data.json, a/b/test_c.py, x_test.py, X_TEST.PY, conftest.py, pkg/conftest.py, tests.py, contest.py, testing/a.py, pkg/attests/a.py, latest.py, timelog/parser.py and notes/test.txt
-- **THEN** the sandbox denies the write exactly when `looks_like_test_file` marks the path
+- **THEN** the sandbox denies the write exactly when `looks_like_test_file` marks the path; the paths foo_testxpy and conftestxpy (no real dot) are not denied. The sandbox is deliberately a little stricter in two places: a file named test or tests (a regular expression cannot tell a file from a folder) and anything under `__pycache__`
 
 #### Scenario: Test protection is off by default
 
@@ -140,6 +142,16 @@ The workspace has `protect_tests` on and contains tests/test_report.py, tests/he
 
 - **WHEN** `fixlab PATH` runs and the model inserts into timelog/parser.py code that rewrites tests/test_report.py to `assert True`, then the tests run
 - **THEN** tests/test_report.py is unchanged and the result line says tests FAILED
+
+#### Scenario: Hiding tests by renaming a parent folder
+
+- **WHEN** the workspace has `protect_tests` on, a failing tests lives in timelog/test_inner.py, and code under test renames timelog to .old and copies it back without the test_ files
+- **THEN** the rename fails with PermissionError and the next run_tests still reports the failure
+
+#### Scenario: Forged bytecode
+
+- **WHEN** the workspace has `protect_tests` on, timelog/formatting_test.py has a failing test, and code under test writes a bytecode file for it into timelog/__pycache__ that holds a passing version
+- **THEN** the write fails with PermissionError and the next run_tests still reports `1 failed`
 
 #### Scenario: Workspace path with regular-expression characters
 
