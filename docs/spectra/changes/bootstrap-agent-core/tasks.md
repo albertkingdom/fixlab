@@ -28,7 +28,7 @@
 ## 4. 補齊其餘工具
 
 - [x] 4.1 實作 grep：依「grep 自己實作，單行比對用 regex 套件加逾時」，grep searches file contents 輸出 路徑:行號:內容、單行只比對前 2000 字元、略過不是合法 UTF-8 的檔、單行 1 秒與整體 5 秒的時間上限（整體超過回 ok=true、已找到的結果與 "search stopped after 5s"）、不跟隨符號連結、上限 100 行、無效正規表示式回 ok=false。驗證：tests/test_tools.py 的找定義、無效 pattern、120 筆只回 100 行、`(a|aa)+$` 在 5 秒內回 "pattern too slow"（`(a+)+$` 在 regex 套件下不會逾時，見設計文件）、符號連結不被讀取、非 UTF-8 檔被略過、整體上限（測試中把上限縮短來驗證）七個情境。
-- [ ] 4.2 實作 write_file 並接上受保護路徑判定：依「write_file 覆寫既有檔案前必須先讀過」，write_file creates files and guards overwrites 新檔直接建立（含父目錄），覆寫既有檔需在 files_read 中，成功後記錄該檔，失敗的讀取不記錄；註冊時就接上受保護路徑判定函式，Test files cannot be written 對 write_file 同樣成立，寫入被擋時設 blocked 且檔案不變。原因：write_file 一註冊，模型就能覆寫測試檔造成假通過，保護不能晚於工具。驗證：tests/test_tools.py 的建立新檔、未讀就覆寫、整檔讀後覆寫、部分讀取不算、截斷讀取不算、edit 後讀取過期六個情境；tests/test_isolation.py 對 write_file 跑完整的十列表格。
+- [x] 4.2 實作 write_file 並接上受保護路徑判定：依「write_file 覆寫既有檔案前必須先讀過」，write_file creates files and guards overwrites 新檔直接建立（含父目錄），覆寫既有檔需在 files_read 中，而且目前的內容指紋和讀的當下相同（files_read 改成路徑對應 sha256，讀過之後被別人改了就拒絕），成功後記錄該檔，失敗的讀取不記錄；註冊時就接上受保護路徑判定函式，Test files cannot be written 對 write_file 同樣成立，寫入被擋時設 blocked 且檔案不變。原因：write_file 一註冊，模型就能覆寫測試檔造成假通過，保護不能晚於工具。驗證：tests/test_tools.py 的建立新檔、未讀就覆寫、整檔讀後覆寫、部分讀取不算、截斷讀取不算、edit 後讀取過期、讀過之後被外部改動共七個情境；tests/test_isolation.py 對 write_file 跑完整的十列表格。
 
 ## 5. 隔離與沙箱
 

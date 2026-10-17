@@ -117,7 +117,7 @@ edit_file SHALL replace old_string with new_string in the given file only when o
 
 ### Requirement: write_file creates files and guards overwrites
 
-write_file SHALL create the file, including missing parent directories, when it does not exist. When the file already exists, write_file SHALL succeed only if the file is recorded as fully read, meaning a read_file call without a line range and without truncation returned it earlier and no successful edit_file has changed it since; otherwise it SHALL return ok=false with a message containing "read the file first" and leave the file unchanged. A successful write_file SHALL record the written file as fully read. A failed read_file call SHALL NOT record anything.
+write_file SHALL create the file, including missing parent directories, when it does not exist. When the file already exists, write_file SHALL succeed only if the file is recorded as fully read, meaning a read_file call without a line range and without truncation returned it earlier, no successful edit_file has changed it since, and its content on disk is still identical to what that read_file call returned (a fingerprint of the content is recorded at read time); otherwise it SHALL return ok=false with a message containing "read the file first" and leave the file unchanged. A successful write_file SHALL record the written file as fully read. A failed read_file call SHALL NOT record anything.
 
 #### Scenario: Create a new file
 
@@ -148,6 +148,11 @@ write_file SHALL create the file, including missing parent directories, when it 
 
 - **WHEN** read_file was called on report.py, edit_file changed report.py, and then write_file is called on report.py
 - **THEN** the result is ok=false and the message contains "read the file first"
+
+#### Scenario: File changed behind the model's back
+
+- **WHEN** read_file was called on report.py without a line range, then the file was changed on disk by something other than the tools, and then write_file is called on report.py
+- **THEN** the result is ok=false, the message contains "changed since you read it" and "read the file first", and the file keeps the other change
 
 ### Requirement: run_tests runs pytest in the workspace
 
