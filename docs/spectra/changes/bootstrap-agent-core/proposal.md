@@ -7,7 +7,7 @@ fixlab 要做的是能實際修多檔 bug 的 CLI coding agent，但目前專案
 - 建立 Python 專案骨架（套件 fixlab、pyproject.toml、pytest 測試目錄）。pyproject 設定 norecursedirs 排除 tests/fixtures，fixlab 自己的 pytest 才不會收集範例專案裡故意失敗的測試。
 - 從自己的前身專案 code-agent-eval 逐模組搬入並整理三個核心：agent 迴圈、tool call 解析、工具與隔離。搬過來後拿掉單次生成模式與 LeetCode 式題目訊息，改成接受任意一段「任務文字」。
 - 工具集從三個擴充為六個：read_file（輸出行號、可指定行範圍）、list_files、grep、edit_file（唯一字串替換）、write_file（建立新檔；覆寫既有檔案前必須先整檔讀過）、run_tests（固定的 pytest 指令，不讀專案外的設定）。
-- 隔離補強：受保護的測試檔改以「相對工作目錄的路徑」判定並涵蓋整組指紋；沙箱同時在作業系統層擋住測試檔寫入與測試目錄改名，並預設擋住讀取使用者家目錄（只放行工作目錄與虛擬環境）；子行程只拿白名單環境變數；遍歷類工具不跟隨符號連結；grep 單行比對加逾時防災難性回溯。
+- 隔離補強：受保護的測試檔改以「相對工作目錄的路徑」判定，由建立 Workspace 的人決定要不要鎖（測試檔指紋偵測暫緩到階段 3）；沙箱同時在作業系統層擋住測試檔寫入與測試目錄改名，並預設擋住讀取使用者家目錄（只放行工作目錄與虛擬環境）；子行程只拿白名單環境變數；遍歷類工具不跟隨符號連結；grep 單行比對加逾時防災難性回溯。
 - 迴圈增加「連續整輪工具全失敗 3 次就停」的保險（新 stop reason stuck），步數上限預設從 8 提高到 20。
 - blocked 旗標只保留給「路徑逃逸」與「寫入受保護檔案」，其他工具錯誤只是 ok=false。
 - 加入一個自寫的小型範例專案 timelog（工時紀錄解析，bug 藏在 parser 的正規表示式，失敗的測試經由 report 呼叫它），用來測試工具與做一次真模型的手動 smoke run。
@@ -21,6 +21,7 @@ fixlab 要做的是能實際修多檔 bug 的 CLI coding agent，但目前專案
 - 不做 telemetry 的檔案格式與彙整報告（階段 2）；迴圈只保留既有的 trace 回呼介面。
 - 不做 benchmark 題庫與隱藏測試評分（階段 3）。
 - 不提供任意 shell 或 run_command 工具；不提供 git 操作。
+- 不實作測試檔指紋偵測（偵測測試檔被工具以外的方式竄改），暫緩到階段 3：它是評測用的量測，不是產品功能；預設不鎖任何檔案時指紋是空的，通用用法碰不到；階段 3 才有人讀它的結果。理由與真實的作弊示範見 design 的「測試檔指紋暫緩到階段 3」。
 - 不實作 glob（依檔名樣式找檔案），暫緩：list_files 是遞迴的，一次列出整棵樹，階段 1 的範例專案與四次真模型紀錄都沒有需要依檔名過濾；理由與何時再做見 design 的「glob 暫緩，先做 grep」。
 - 不做 Anthropic 格式轉接層，只支援 OpenAI 相容 API。
 - 不做驗證器的抽換介面；階段 1 的驗證只有 pytest，直接寫在 run_tests 裡。
@@ -37,7 +38,7 @@ fixlab 要做的是能實際修多檔 bug 的 CLI coding agent，但目前專案
 - `agent-loop`: 由模型決定下一步與何時完成的迴圈；步數上限、連續失敗上限、暫時性錯誤重試、每步 trace。
 - `tool-call-parsing`: 把模型回覆解析成合法的工具呼叫，只解析原生 tool_calls；文字裡的 JSON 一律視為純文字。
 - `agent-tools`: 六個檔案與測試工具的行為與輸出格式（行號、截斷上限、唯一字串替換、先讀後寫、固定的 pytest 指令）。
-- `workspace-isolation`: 路徑限制、測試檔保護與整組指紋、macOS 沙箱、子行程環境變數白名單。
+- `workspace-isolation`: 路徑限制、測試檔保護、macOS 沙箱、子行程環境變數白名單。
 
 ### Modified Capabilities
 

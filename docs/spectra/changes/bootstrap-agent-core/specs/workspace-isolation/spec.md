@@ -60,33 +60,9 @@ The Workspace is created with `looks_like_test_file` as its rule.
 - **WHEN** a Workspace is created with a rule that marks only tests/test_report.py
 - **THEN** edit_file on tests/test_report.py is blocked, while edit_file on tests/helpers.py is allowed
 
-### Requirement: Tampering with test files is detected
-
-When a Workspace is created it SHALL compute one SHA-256 fingerprint over the sorted relative paths and contents of all files that the Workspace's read-only rule marks, skipping the directories .git, .venv, __pycache__, and .pytest_cache and not following symbolic links. After every run_tests call it SHALL compute the fingerprint again and SHALL set the flag `test_file_tampered` when it differs, including when a marked file was added, deleted, or changed. A Workspace with the default rule marks no files, so it SHALL never set the flag.
-
-#### Scenario: Test changed behind the tools' back
-
-- **WHEN** a read-only file tests/test_report.py is modified on disk by code run outside the sandbox between the two fingerprints
-- **THEN** the run_tests result has the flag `test_file_tampered` set
-
-#### Scenario: Nothing changed
-
-- **WHEN** no read-only file changed and run_tests is called
-- **THEN** the flag `test_file_tampered` is not set
-
-#### Scenario: Read-only file deleted
-
-- **WHEN** tests/helpers.py is deleted before run_tests is called
-- **THEN** the flag `test_file_tampered` is set
-
-#### Scenario: Compiled cache files are ignored
-
-- **WHEN** a file __pycache__/test_report.cpython-314-pytest-9.1.1.pyc appears after a test run
-- **THEN** the flag `test_file_tampered` is not set
-
 ### Requirement: Tests run in a sandbox
 
-run_tests SHALL run pytest under macOS sandbox-exec with no network access, with reads denied for the user's home directory, the whole project directory of fixlab, and every extra deny_read directory except the workspace itself and the Python virtual environment, and with writes allowed only inside the workspace and /dev. When the Workspace uses `looks_like_test_file`, the sandbox SHALL deny, inside the workspace, writes to every path that rule marks and renaming or moving a directory named `tests` or `test`, using the same case-insensitive rules as the tool layer. The sandbox derives its rules from `looks_like_test_file` only; a custom read-only rule is enforced by the tool layer and the fingerprint but not by the sandbox. The workspace path used in the sandbox's regular-expression rules SHALL have every regular-expression special character escaped. The sandbox profile text SHALL contain no literal workspace, project, home, or deny_read paths; they SHALL be passed as parameters.
+run_tests SHALL run pytest under macOS sandbox-exec with no network access, with reads denied for the user's home directory, the whole project directory of fixlab, and every extra deny_read directory except the workspace itself and the Python virtual environment, and with writes allowed only inside the workspace and /dev. When the Workspace uses `looks_like_test_file`, the sandbox SHALL deny, inside the workspace, writes to every path that rule marks and renaming or moving a directory named `tests` or `test`, using the same case-insensitive rules as the tool layer. The sandbox derives its rules from `looks_like_test_file` only; a custom read-only rule is enforced by the tool layer but not by the sandbox. The workspace path used in the sandbox's regular-expression rules SHALL have every regular-expression special character escaped. The sandbox profile text SHALL contain no literal workspace, project, home, or deny_read paths; they SHALL be passed as parameters.
 
 #### Scenario: Network access
 
@@ -113,7 +89,7 @@ run_tests SHALL run pytest under macOS sandbox-exec with no network access, with
 #### Scenario: Overwriting a test file from code under test
 
 - **WHEN** code under test tries to open tests/test_report.py for writing during run_tests
-- **THEN** the write fails with PermissionError and `test_file_tampered` is not set
+- **THEN** the write fails with PermissionError
 
 #### Scenario: Creating a new file in a tests directory
 
