@@ -1,6 +1,6 @@
 # agent 迴圈的單元測試：用寫好劇本的假模型驗證 agent-loop 規格，不需要真的 LLM。
-# 這個檔案目前只涵蓋任務文字、模型自己決定、步數上限、提示文字。
-# 重試、截斷、連續失敗、trace 的情境等迴圈保險完成後再補。
+# 這個檔案目前涵蓋任務文字、模型自己決定、步數上限、提示文字、連續失敗保險。
+# 重試、截斷、trace 的情境等迴圈保險完成後再補。
 import json
 from types import SimpleNamespace as NS
 
@@ -8,7 +8,7 @@ import pytest
 
 from fixlab.loop import SYSTEM_PROMPT, run_agent
 from fixlab.tools import register_tools
-from fixlab.workspace import ToolResult, Workspace
+from fixlab.workspace import ToolResult, Workspace, looks_like_test_file
 
 TASK = "The tests under tests/ fail. Find the cause and fix it."
 
@@ -115,3 +115,85 @@ def test_empty_reply_is_not_completion_and_the_model_may_just_finish(ws):
     assert feedback["role"] == "user"
     assert "reply was empty" in feedback["content"] and "final message" in feedback["content"]
 
+
+
+# ---- 連續失敗保險：對應規格的 Consecutive failing rounds stop the loop ----
+
+def missing_file():
+    return native("read_file", path="nope.py")
+
+
+def a_listing():
+    return native("list_files")
+
+
+# Scenario: Three failing rounds in a row
+def test_three_failing_rounds_in_a_row_stop_the_loop(ws):
+    client = FakeClient([(None, [missing_file()])] * 4)
+    r = run_agent(client, "m", ws, TASK)
+
+    assert r.stop_reason == "stuck" and r.steps == 3
+    assert r.counters["stuck_failures"] == 3
+    assert len(client.replies) == 1  # 第四個回覆沒有被用到
+
+
+# Scenario: A success resets the counter
+def test_a_success_resets_the_counter(ws):
+    client = FakeClient([(None, [missing_file()]), (None, [a_listing()]), (None, [missing_file()]),
+                         (None, [missing_file()]), ("Done.", None)])
+    r = run_agent(client, "m", ws, TASK)
+
+    assert r.stop_reason == "done" and "stuck_failures" not in r.counters
+
+
+# Scenario: Mixed round counts as success
+def test_a_round_with_one_success_counts_as_a_success(ws):
+    client = FakeClient([(None, [missing_file()]), (None, [missing_file()]),
+                         (None, [missing_file(), a_listing()]),  # 一個失敗、一個成功：歸零
+                         (None, [missing_file()]), ("Done.", None)])
+    r = run_agent(client, "m", ws, TASK)
+
+    assert r.stop_reason == "done" and "stuck_failures" not in r.counters
+
+
+def test_two_failing_calls_in_one_round_count_once(ws):
+    client = FakeClient([(None, [missing_file(), missing_file()]), (None, [missing_file(), missing_file()]),
+                         ("Done.", None)])
+    r = run_agent(client, "m", ws, TASK)
+
+    assert r.stop_reason == "done" and "stuck_failures" not in r.counters
+
+
+# Scenario: Invalid reply between failures
+def test_an_invalid_reply_neither_resets_nor_increments(ws):
+    invalid = (None, [native("edit_file", path="rules.py")])  # 缺少必要的參數
+    client = FakeClient([(None, [missing_file()]), invalid, (None, [missing_file()]),
+                         (None, [missing_file()]), ("never used", None)])
+    r = run_agent(client, "m", ws, TASK)
+
+    assert r.stop_reason == "stuck" and r.steps == 4
+    assert r.counters["parse_errors"] == 1 and r.counters["stuck_failures"] == 3
+
+
+# Scenario: Blocked calls count as failures
+def test_blocked_calls_count_as_failures(tmp_path):
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_report.py").write_text("def test_a():\n    assert True\n")
+    w = Workspace(tmp_path, read_only=looks_like_test_file)
+    register_tools(w)
+    blocked = native("write_file", path="tests/test_report.py", content="x")
+    client = FakeClient([(None, [blocked])] * 4)
+
+    r = run_agent(client, "m", w, TASK)
+
+    assert r.stop_reason == "stuck" and r.steps == 3
+    assert r.counters["blocked_calls"] == 3
+
+
+# Scenario: Failing tests are not tool failures
+def test_failing_tests_are_not_tool_failures(ws):
+    client = FakeClient([(None, [native("run_tests")])] * 3 + [("Done.", None)])
+    r = run_agent(client, "m", ws, TASK)
+
+    assert r.stop_reason == "done" and r.steps == 4
+    assert "stuck_failures" not in r.counters

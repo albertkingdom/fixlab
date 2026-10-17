@@ -113,6 +113,16 @@ def test_fixed_project_shows_passing_tests_and_only_the_fix_in_the_diff(project,
     assert out.count("--- a/") == 1 and "--- a/timelog/parser.py" in out  # 差異裡只有 parser.py
 
 
+def test_a_model_that_keeps_failing_is_stopped_and_the_result_says_so(project, capsys):
+    client = FakeClient([(None, [native("read_file", path="nope.py")])] * 4)
+
+    code = run_fix(project, client)
+
+    out = capsys.readouterr().out
+    assert "stop reason: stuck  steps: 3" in out
+    assert out.rstrip().splitlines()[-1] == "RESULT: tests FAILED" and code == 1
+
+
 @pytest.mark.skipif(not sandbox_available(), reason="sandbox-exec is only available on macOS")
 def test_a_source_edit_that_rewrites_the_tests_cannot_fake_a_pass(project, capsys):
     cheat = 'import pathlib\npathlib.Path("tests/test_report.py").write_text("def test_ok():\\n    assert True\\n")\n'

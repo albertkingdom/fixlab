@@ -23,13 +23,16 @@ When you are confident the fix is correct, reply with a short final message WITH
 # 多檔探索比單檔多很多步。20 是初始值，沒有實測依據，階段 3 用 telemetry 的步數分佈校準。
 DEFAULT_MAX_STEPS = 20
 
+# 連續幾輪「這一輪的工具呼叫全部失敗」就判定模型卡住了。3 是初始值，沒有實測依據，階段 3 用 telemetry 校準。
+MAX_FAILING_ROUNDS = 3
+
 # 遇到限流（429）或伺服器暫時錯誤時，依序等這些秒數再重試。放在模組層，測試可以把它改成 0。
 RETRY_DELAYS_S = (5, 15, 30, 60, 120, 180, 300, 300)
 
 
 @dataclass
 class AgentResult:
-    stop_reason: str  # "done"（模型宣告完成）| "max_steps"（步數用完）| "error"（請求失敗）
+    stop_reason: str  # "done"（模型宣告完成）| "max_steps"（步數用完）| "stuck"（連續失敗）| "error"（請求失敗）
     steps: int
     counters: dict = field(default_factory=dict)  # 各種事件的次數，例如 parse_errors、tests_passed
     prompt_tokens: int = 0
@@ -56,6 +59,7 @@ def run_agent(
     messages = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": task}]
     res = AgentResult(stop_reason="max_steps", steps=0)
     c = res.counters
+    failing_rounds = 0  # 連續幾輪「有執行工具、而且全部失敗」
     t_start = time.perf_counter()
 
     for step in range(1, max_steps + 1):
@@ -93,8 +97,16 @@ def run_agent(
             break
 
         # 4. 執行工具，結果加回對話
-        _run_tool_calls(ws, it, msg, messages, c, rec)
+        round_failed = _run_tool_calls(ws, it, msg, messages, c, rec)
         trace({**rec, "event": "tool_calls"})
+
+        # 5. 連續失敗保險：整輪的工具呼叫全部失敗才累計，只要有一個成功就歸零。
+        #    沒有執行工具的輪（回覆壞掉）走不到這裡，所以既不累計也不歸零。
+        failing_rounds = failing_rounds + 1 if round_failed else 0
+        if failing_rounds >= MAX_FAILING_ROUNDS:
+            c["stuck_failures"] = failing_rounds
+            res.stop_reason = "stuck"
+            break
 
     res.seconds = round(time.perf_counter() - t_start, 2)
     return res
@@ -168,15 +180,19 @@ def _step_record(step: int, latency: float, resp, it: Interpretation) -> dict:
             "parse_errors": it.errors, "tool_calls": []}
 
 
-def _run_tool_calls(ws: Workspace, it: Interpretation, msg, messages: list, counters: dict, rec: dict) -> None:
-    """執行工具、把結果加回對話、記錄旗標。"""
+def _run_tool_calls(ws: Workspace, it: Interpretation, msg, messages: list, counters: dict, rec: dict) -> bool:
+    """執行工具、把結果加回對話、記錄旗標。回傳這一輪是不是「每個工具呼叫都失敗」（ok=False，被擋下也算）。
+
+    測試沒過不算失敗：run_tests 把失敗的測試也當成功回傳（模型需要看那些資訊），結果放在旗標裡。"""
     # 先把這一輪的呼叫寫進對話歷史（assistant 訊息），每個呼叫配一個 id，結果再用同一個 id 接在後面。
     ids = [f"call_{uuid.uuid4().hex[:8]}" for _ in it.calls]
     messages.append({"role": "assistant", "content": msg.content or "", "tool_calls": [
         {"id": i, "type": "function", "function": {"name": x.name, "arguments": json.dumps(x.arguments)}}
         for i, x in zip(ids, it.calls)]})
+    any_succeeded = False
     for i, x in zip(ids, it.calls):
         result = ws.call(x.name, x.arguments)
+        any_succeeded = any_succeeded or result.ok
         messages.append({"role": "tool", "tool_call_id": i, "content": result.output})
         for flag, val in result.flags.items():
             if val:  # 例如 tests_passed、blocked（被擋下）
@@ -185,6 +201,7 @@ def _run_tool_calls(ws: Workspace, it: Interpretation, msg, messages: list, coun
                                   "args": {k: (v if len(str(v)) < 2000 else str(v)[:2000] + "...")
                                            for k, v in x.arguments.items()},
                                   "ok": result.ok, "flags": result.flags, "output": result.output[:2000]})
+    return not any_succeeded
 
 
 def _count(counters: dict, key: str, n: int = 1) -> None:
