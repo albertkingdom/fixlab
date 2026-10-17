@@ -72,3 +72,13 @@ Interactive mode SHALL NOT run the project's tests after a task on its own. The 
 
 - **WHEN** a task finishes with stop reason `done`
 - **THEN** fixlab prints the stop reason, steps and tokens for the task and returns to the prompt, and no `RESULT:` line is printed
+
+### Requirement: The model's final reply is shown
+
+When a task ends with stop reason `done`, interactive mode SHALL print the model's final message on standard output before the summary line, because that message is the answer the user asked for. For other stop reasons there is no final message to print.
+
+#### Scenario: A task finishes
+
+- **WHEN** the model ends a task with the reply "Fixed parse_duration."
+- **THEN** standard output contains `Fixed parse_duration.` followed by the line starting with `stop reason: done`
+

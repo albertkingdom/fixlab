@@ -1,9 +1,10 @@
-"""fixlab 的最小入口（smoke 用，不是階段 2 的正式 CLI）。
+"""fixlab 的入口，兩種模式，共用同一套檢查、工作目錄、工具與事件檔。
 
-流程：檢查參數與金鑰 → 對 PATH 拍快照 → 跑 agent（過程寫進事件檔）→ 自己再跑一次測試 → 印結果與快照 diff。
+一次性（fixlab PATH）：檢查參數與金鑰 → 對 PATH 拍快照 → 跑 agent → 自己再跑一次測試 → 印結果與快照 diff。
 最後那次測試不聽模型怎麼說，結果決定結束碼：0 是測試通過，1 是沒通過，2 是輸入有誤。
-agent 直接修改 PATH，不複製、不寫回；一次性執行沒有人在旁邊授權，所以改成事後審查，
-diff 涵蓋測試檔，竄改看得到。因為直接改 PATH，請對有備份或已 commit 的目錄使用。
+一次性執行沒有人在旁邊授權，所以改成事後審查，diff 涵蓋測試檔，竄改看得到。
+互動（fixlab PATH -i）：一次讀一行當任務，同一個 session 內保留對話；使用者在場，不自動再跑測試。
+agent 直接修改 PATH，不複製、不寫回，請對有備份或已 commit 的目錄使用。兩種模式的過程都寫進事件檔。
 """
 
 import argparse
@@ -35,7 +36,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", help="model name (default: $FIXLAB_MODEL)")
     parser.add_argument("--max-steps", type=int, default=DEFAULT_MAX_STEPS)
     parser.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS)
-    parser.add_argument("--task", default=DEFAULT_TASK, help="replace the default task text")
+    parser.add_argument("-i", "--interactive", action="store_true",
+                        help="read tasks from the keyboard and keep the conversation between them")
+    parser.add_argument("--task", default=DEFAULT_TASK, help="replace the default task text (one-shot only)")
     parser.add_argument("--log-dir", help="where event logs go (default: ~/.fixlab/runs)")
     parser.add_argument("--meta", action="append", default=[], metavar="KEY=VALUE",
                         help="record an experiment condition in the event log, e.g. quantization=Q4_K_M (repeatable)")
@@ -68,17 +71,28 @@ def main(argv=None, client=None) -> int:
         return fail(f"the log directory {log_dir} is inside the target {root}; use --log-dir to put it elsewhere")
     print(f"editing in place: {root}", file=sys.stderr)
     print(f"sandbox: {sandbox_status()}", file=sys.stderr)  # 沙箱是安全功能，沒開要讓使用者看得到
-    before = take_snapshot(root)
 
+    mode = "interactive" if args.interactive else "once"
     log = EventLog(log_dir, model)
     if log.path is not None:
         print(f"log: {log.path}", file=sys.stderr)
-    log.write("run_start", **run_conditions(args, model, root, meta))
-    log.write("task_start", task=1, text=args.task)
+    log.write("run_start", **run_conditions(args, model, root, meta, mode))
 
     # 修 bug：測試檔是評分標準，模型不能改，被執行的程式也不能改
     ws = Workspace(root, read_only=looks_like_test_file, protect_tests=True)
     register_tools(ws)
+    try:
+        if args.interactive:
+            return run_interactive(client, model, ws, args, log)
+        return run_once(client, model, ws, root, args, log)
+    finally:
+        log.close()
+
+
+def run_once(client, model: str, ws: Workspace, root: Path, args, log: EventLog) -> int:
+    """一次性：跑一個任務，結束後自己再跑一次測試，印結果與快照 diff。"""
+    before = take_snapshot(root)
+    log.write("task_start", task=1, text=args.task)
     result = run_agent(client, model, ws, args.task, max_steps=args.max_steps,
                        request_extra={"max_tokens": args.max_tokens}, trace=trace_to(log, task=1))
 
@@ -87,15 +101,12 @@ def main(argv=None, client=None) -> int:
     final = ws.call("run_tests", {})
     after = take_snapshot(root)
 
-    log.write("task_end", task=1, stop_reason=result.stop_reason, steps=result.steps, counters=result.counters,
-              prompt_tokens=result.prompt_tokens, completion_tokens=result.completion_tokens, seconds=result.seconds,
+    log.write("task_end", task=1, **task_result_fields(result),
               final_tests={"tests_passed": final.flags.get("tests_passed", False),
                            "timed_out": final.flags.get("timed_out", False)},
               changed_files=changed_files(before, after))
-    log.close()
 
-    print(f"stop reason: {result.stop_reason}  steps: {result.steps}  "
-          f"tokens: {result.prompt_tokens} prompt + {result.completion_tokens} completion")
+    print(summary_line(result))
     print("\nchanges since start:")
     print(diff_report(before, after))
     print("\nfinal test run:")
@@ -109,6 +120,53 @@ def main(argv=None, client=None) -> int:
     else:
         print("RESULT: tests FAILED")
     return 0 if passed else 1
+
+
+def run_interactive(client, model: str, ws: Workspace, args, log: EventLog) -> int:
+    """互動：一次讀一行，每一行是一個任務；同一個 session 內的任務共用一份對話。"""
+    session = []  # 這個 session 的對話；/reset 清空，結束就沒了，不存檔
+    task_number = 0
+    while True:
+        try:
+            line = input("fixlab> ").strip()
+        except (EOFError, KeyboardInterrupt):  # Ctrl-D 或在提示字元上按 Ctrl-C：離開
+            print()  # 提示字元後面沒有換行，補一個，shell 的提示字元才不會接在後面
+            return 0
+        if not line:
+            continue
+        if line == "/exit":
+            return 0
+        if line == "/reset":
+            session.clear()
+            print("conversation cleared")
+            continue
+        task_number += 1
+        run_task(client, model, ws, args, log, session, task_number, line)
+
+
+def run_task(client, model: str, ws: Workspace, args, log: EventLog, session: list, number: int, text: str) -> None:
+    log.write("task_start", task=number, text=text)
+    result = run_agent(client, model, ws, text, messages=session, max_steps=args.max_steps,
+                       request_extra={"max_tokens": args.max_tokens}, trace=trace_to(log, number))
+    if result.stop_reason == "done":
+        reply = session[-1]["content"]  # 迴圈把模型最後的回覆放在對話最後面：那就是使用者要的答案
+        if reply:
+            print(reply)
+    print(summary_line(result))
+    # 互動模式使用者在場，想驗證可以直接叫模型跑測試，所以沒有最後的測試結果與檔案變動
+    log.write("task_end", task=number, **task_result_fields(result), final_tests=None, changed_files=None)
+
+
+def summary_line(result) -> str:
+    return (f"stop reason: {result.stop_reason}  steps: {result.steps}  "
+            f"tokens: {result.prompt_tokens} prompt + {result.completion_tokens} completion")
+
+
+def task_result_fields(result) -> dict:
+    """task_end 事件裡兩種模式共有的欄位。"""
+    return {"stop_reason": result.stop_reason, "steps": result.steps, "counters": result.counters,
+            "prompt_tokens": result.prompt_tokens, "completion_tokens": result.completion_tokens,
+            "seconds": result.seconds}
 
 
 def fail(message: str) -> int:
@@ -133,10 +191,10 @@ def is_inside(folder: Path, root: Path) -> bool:
     return real == root or root in real.parents
 
 
-def run_conditions(args, model: str, root: Path, meta: dict) -> dict:
+def run_conditions(args, model: str, root: Path, meta: dict, mode: str) -> dict:
     """run_start 事件的內容：這次執行的條件。只放程式本來就知道的；量化方式之類 API 不會告訴我們的，之後由 --meta 補。"""
     return {
-        "schema": 1, "mode": "once", "model": model, "base_url": os.environ.get("OPENAI_BASE_URL"),
+        "schema": 1, "mode": mode, "model": model, "base_url": os.environ.get("OPENAI_BASE_URL"),
         "path": str(root), "max_steps": args.max_steps, "max_tokens": args.max_tokens,
         "sandbox": sandbox_status(), "fixlab_commit": fixlab_commit(),
         "python": platform.python_version(), "openai": openai.__version__, "meta": meta,
