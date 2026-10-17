@@ -31,7 +31,9 @@ RUN_TESTS_TIMEOUT_S = 10  # 做成模組常數，測試無窮迴圈的案例時�
 # 啟動 pytest 的程式。不用 `python -m pytest`：-m 會把工作目錄放在模組搜尋路徑的最前面，
 # 工作目錄裡的 pytest.py 或 _pytest/ 就會取代真的 pytest（被測的程式可以偽造「1 passed」）。
 # 改成 -P（不自動加入工作目錄），先載入真的 pytest，再把工作目錄加到最後面，讓測試仍然找得到專案的模組。
-START_PYTEST = "import os, sys; sys.path.append(os.getcwd()); import pytest; sys.exit(pytest.main(sys.argv[1:]))"
+# 已知缺口（code review，記在 design.md）：pytest 啟動後自動載入 plugin 時，工作目錄已經在搜尋路徑上，
+# 根目錄放一個 trio.py 之類的檔案仍能騙過去；根治靠階段 3 的「用乾淨的環境重跑計分」，不靠在這裡一條條堵。
+START_PYTEST = "import os, sys, pytest; sys.path.append(os.getcwd()); sys.exit(pytest.main(sys.argv[1:]))"
 
 # 測試子行程從父行程繼承的環境變數。用白名單：金鑰的名字無法窮舉（OPENAI_KEY、STRIPE_SK、GH_PAT……），
 # 而且被執行的程式包含模型改寫過的檔案，只要印出環境，金鑰就會進入測試輸出與對話。
@@ -330,7 +332,7 @@ def run_tests(ws: Workspace, target: str = ".") -> ToolResult:
             done = subprocess.run(command, cwd=ws.root, env=child_environment(tmpdir), stdin=subprocess.DEVNULL,
                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=RUN_TESTS_TIMEOUT_S)
             output, timed_out = done.stdout, False
-            passed = done.returncode == 0 and ends_with_a_passed_summary(done.stdout.decode("utf-8", errors="replace"))
+            passed = done.returncode == 0 and has_a_passed_summary(done.stdout.decode("utf-8", errors="replace"))
         except subprocess.TimeoutExpired as e:
             output, timed_out, passed = e.stdout or b"", True, False
     text = output.decode("utf-8", errors="replace")
@@ -340,10 +342,13 @@ def run_tests(ws: Workspace, target: str = ".") -> ToolResult:
     return ToolResult(clip_middle(text), True, {"tests_passed": passed, "timed_out": timed_out})
 
 
-def ends_with_a_passed_summary(text: str) -> bool:
-    """pytest 最後一行要有 "N passed"。只看結束碼 0 不夠：被測的程式可以在 pytest 開始前用 os._exit(0) 結束，什麼都沒跑。"""
-    lines = [line for line in text.splitlines() if line.strip()]
-    return bool(lines) and re.search(r"\d+ passed", lines[-1]) is not None
+def has_a_passed_summary(text: str) -> bool:
+    """輸出裡要有一行 pytest 的摘要，例如 "5 passed in 0.01s" 或 "5 passed, 1 warning in 0.01s"。
+
+    只看結束碼 0 不夠：被測的程式可以在 pytest 開始前用 os._exit(0) 結束，什麼都沒跑。
+    不限定是最後一行：專案可能在結束時多印東西（atexit），測試明明通過卻被判失敗。
+    這擋的是意外與簡單的偽造；程式自己印一行假的摘要擋不住（見 design.md）。"""
+    return re.search(r"^\d+ passed\b.* in [\d.]+s\b", text, re.MULTILINE) is not None
 
 
 def child_environment(tmpdir: Path) -> dict:

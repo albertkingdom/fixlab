@@ -560,6 +560,7 @@ SAME_VERDICT_PATHS = [
     "conftest.py", "pkg/conftest.py",
     "tests.py", "contest.py", "testing/a.py", "pkg/attests/a.py", "latest.py", "timelog/parser.py", "notes/test.txt",
     "foo_testxpy", "conftestxpy",   # 點必須是真正的點，不是「任意字元」
+    "notes/test_notes.txt",   # test_ 開頭不限 .py
 ]
 
 
@@ -572,7 +573,8 @@ def test_sandbox_and_tool_layer_agree_on_which_paths_are_test_files(tmp_path, re
     assert probe(w, action) == expected, rel
 
 
-# 沙箱比工具層多保護的地方（刻意的）：名叫 test 或 tests 的檔案（正規表示式分不出是檔案還是資料夾），以及 __pycache__
+# 沙箱比工具層多保護的地方（刻意的）：名叫 test、tests 或 test_ 開頭的檔案或資料夾（正規表示式分不出是檔案還是資料夾；
+# 所以不能「新建」test_data 這種資料夾，但已經存在的 test_data 裡面可以寫），以及 __pycache__
 @macos_only
 @pytest.mark.parametrize("rel", ["bin/test", "bin/tests", "timelog/__pycache__/x.pyc"])
 def test_the_sandbox_protects_a_little_more_than_the_tool_layer(tmp_path, rel):
@@ -580,6 +582,16 @@ def test_the_sandbox_protects_a_little_more_than_the_tool_layer(tmp_path, rel):
     w = protected_workspace(tmp_path / "ws")
     action = f"p = {rel!r}; d = __import__('os').path.dirname(p); d and __import__('os').makedirs(d, exist_ok=True); open(p, 'w').write('x')"
     assert probe(w, action) == "denied"
+
+
+# 同一類的另一個例子：不能新建名叫 test_data 的資料夾，但已經存在的 test_data 裡面可以寫（工具層一向允許新建）
+@macos_only
+def test_a_folder_starting_with_test_underscore_cannot_be_created_but_an_existing_one_can_be_written(tmp_path):
+    w = protected_workspace(tmp_path / "ws")
+    assert not looks_like_test_file("test_data/sample.json")
+    assert probe(w, "__import__('os').mkdir('test_data')") == "denied"
+    (w.root / "test_data").mkdir()    # 在沙箱外預先建好
+    assert probe(w, "open('test_data/sample.json', 'w').write('{}')") == "ok"
 
 
 # 預設不保護：通用的用法裡，補測試是正常的任務

@@ -477,7 +477,7 @@ def test_run_tests_is_offered_to_the_model(rws):
     assert set(spec["parameters"]["properties"]) == {"target"}
 
 
-# ---- run_tests 的結果不能被被測的程式偽造（code review 發現）----
+# ---- run_tests 擋住意外與簡單的偽造結果（code review 發現；同一行程內的蓄意竄改擋不住，見 design）----
 
 def failing_project(rws):
     write_test(rws, "test_bad.py", "from timelog import parser\n\ndef test_bad():\n    assert 1 == 2\n")
@@ -518,6 +518,22 @@ def test_workspace_modules_can_still_be_imported_by_the_tests(rws):
     (rws.root / "timelog" / "__init__.py").write_text("")
     (rws.root / "timelog" / "parser.py").write_text("x = 1\n")
     assert run_tests(rws).flags["tests_passed"] is True
+
+
+def test_a_passing_project_that_prints_after_pytest_finishes_is_still_a_pass(rws):
+    write_test(rws, "test_ok.py", "from timelog import parser\n\ndef test_ok():\n    assert parser.x == 1\n")
+    (rws.root / "timelog").mkdir()
+    (rws.root / "timelog" / "__init__.py").write_text("")
+    (rws.root / "timelog" / "parser.py").write_text("import atexit\nx = 1\natexit.register(lambda: print('bye'))\n")
+    r = run_tests(rws)
+    assert r.output.strip().splitlines()[-1] == "bye"
+    assert r.flags["tests_passed"] is True
+
+
+def test_a_line_that_only_mentions_passed_is_not_a_summary(rws):
+    failing_project(rws)
+    (rws.root / "timelog" / "parser.py").write_text("print('all tests passed')\nimport os\nos._exit(0)\n")
+    assert run_tests(rws).flags["tests_passed"] is False
 
 
 def test_a_run_where_every_test_is_skipped_is_not_a_pass(rws):
