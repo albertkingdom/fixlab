@@ -64,7 +64,7 @@ list_files SHALL list files under the given directory (default the workspace roo
 
 ### Requirement: grep searches file contents
 
-grep SHALL search text files under the given path (default the workspace root) with a regular expression and return matching lines as `relative/path:line_number:line_text`, in path then line order. It SHALL skip the same directories as list_files, SHALL NOT follow symbolic links, SHALL skip files that are not valid UTF-8 text, and SHALL match only the first 2000 characters of each line. It SHALL return at most 100 lines with a note stating how many matches were omitted. An invalid regular expression SHALL return ok=false with a message containing "invalid regular expression". Matching a single line SHALL be limited to 1 second and the whole search to 5 seconds; when a limit is hit the result SHALL be ok=false with a message containing "pattern too slow" for the per-line limit, or ok=true with the matches found so far and a note "search stopped after 5s" for the overall limit.
+grep SHALL search text files under the given path (default the workspace root) with a regular expression and return matching lines as `relative/path:line_number:line_text`, in path then line order. It SHALL skip the same directories as list_files, SHALL NOT follow symbolic links, SHALL skip files that are not valid UTF-8 text, and SHALL match only the first 2000 characters of each line. Each line in the output SHALL be shortened to 200 characters with `...` appended when it is longer. It SHALL return at most 100 lines with a note stating how many matches were omitted, and `no matches` when nothing matches. An invalid regular expression SHALL return ok=false with a message containing "invalid regular expression". Matching a single line SHALL be limited to 1 second and the whole search to 5 seconds; when a limit is hit the result SHALL be ok=false with a message containing "pattern too slow" for the per-line limit, or ok=true with the matches found so far and a note "search stopped after 5s" for the overall limit.
 
 #### Scenario: Find a definition
 
@@ -83,13 +83,18 @@ grep SHALL search text files under the given path (default the workspace root) w
 
 #### Scenario: Catastrophic backtracking
 
-- **WHEN** a file has a line of 40 "a" characters followed by "!" and grep is called with pattern `(a+)+$`
+- **WHEN** a file has a line of 40 "a" characters followed by "!" and grep is called with pattern `(a|aa)+$` (the classic `(a+)+$` is not used because the `regex` package optimises it and finishes at once)
 - **THEN** the call returns within 5 seconds with ok=false and a message containing "pattern too slow"
 
 #### Scenario: Symbolic link to a file outside the workspace
 
 - **WHEN** the workspace contains a symbolic link link_secret to ../secret and the target file contains the word "password"
 - **THEN** grep with pattern `password` returns no match from link_secret
+
+#### Scenario: Long lines are shortened
+
+- **WHEN** a matching line is 500 characters long
+- **THEN** the output line shows its first 200 characters followed by `...`
 
 ### Requirement: edit_file replaces one unique string
 
