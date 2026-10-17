@@ -62,7 +62,7 @@ The Workspace is created with `looks_like_test_file` as its rule.
 
 ### Requirement: Tests run in a sandbox
 
-run_tests SHALL run pytest under macOS sandbox-exec with no network access, with reads denied for the user's home directory, the whole project directory of fixlab, and every extra deny_read directory except the workspace itself and the Python virtual environment, and with writes allowed only inside the workspace, a private temporary directory created for that run, and /dev. Every path given to the sandbox SHALL be a real path with symbolic links resolved, because the sandbox compares real paths (on macOS `/var` is a link to `/private/var`). On a platform without sandbox-exec, run_tests SHALL run pytest without a sandbox, and the command-line entry SHALL print a status line saying whether the sandbox is on. When the Workspace uses `looks_like_test_file`, the sandbox SHALL deny, inside the workspace, writes to every path that rule marks and renaming or moving a directory named `tests` or `test`, using the same case-insensitive rules as the tool layer. The sandbox derives its rules from `looks_like_test_file` only; a custom read-only rule is enforced by the tool layer but not by the sandbox. The workspace path used in the sandbox's regular-expression rules SHALL have every regular-expression special character escaped. The sandbox profile text SHALL contain no literal workspace, project, home, or deny_read paths; they SHALL be passed as parameters.
+run_tests SHALL run pytest under macOS sandbox-exec with no network access, with reads denied for the user's home directory, the whole project directory of fixlab, and every extra deny_read directory except the workspace itself and the Python virtual environment, and with writes allowed only inside the workspace, a private temporary directory created for that run, and /dev. Every path given to the sandbox SHALL be a real path with symbolic links resolved, because the sandbox compares real paths (on macOS `/var` is a link to `/private/var`). On a platform without sandbox-exec, run_tests SHALL run pytest without a sandbox, and the command-line entry SHALL print a status line saying whether the sandbox is on. A Workspace SHALL have a `protect_tests` option, off by default, because writing tests is a normal task for a general-purpose agent; the command-line entry `fixlab PATH` turns it on together with `looks_like_test_file`. When it is on, the sandbox SHALL deny, inside the workspace, every write (create, overwrite, delete, truncate, rename, move, change of permissions) to a path whose location relative to the workspace root follows the same naming rules as `looks_like_test_file`, compared case-insensitively, and to the directories named `tests` or `test` themselves, so those directories cannot be renamed or moved either. The denial SHALL hold when the write goes through a symbolic link or a hard link to such a file. The option is independent of the read-only rule: a custom read-only rule is enforced by the tool layer only. Folders above the workspace root that are named `tests` SHALL have no effect. The workspace path in the sandbox's regular-expression rule SHALL be quoted by the sandbox's own `regex-quote` on a parameter, so regular-expression special characters in the path have no effect. The sandbox profile text SHALL contain no literal workspace, project, home, or deny_read paths; they SHALL be passed as parameters.
 
 #### Scenario: Network access
 
@@ -88,28 +88,70 @@ run_tests SHALL run pytest under macOS sandbox-exec with no network access, with
 
 #### Scenario: Overwriting a test file from code under test
 
-- **WHEN** code under test tries to open tests/test_report.py for writing during run_tests
-- **THEN** the write fails with PermissionError
+- **WHEN** the workspace has `protect_tests` on and code under test tries to open tests/test_report.py for writing during run_tests
+- **THEN** the write fails with PermissionError and the file is unchanged
 
 #### Scenario: Creating a new file in a tests directory
 
-- **WHEN** code under test tries to create tests/new_helper.py for writing during run_tests
-- **THEN** the write fails with PermissionError
+- **WHEN** the workspace has `protect_tests` on and code under test tries to create tests/new_helper.py for writing during run_tests
+- **THEN** the write fails with PermissionError and the file does not exist
 
 #### Scenario: Renaming the tests directory
 
-- **WHEN** code under test tries to rename the tests directory to t2 during run_tests
-- **THEN** the rename fails with PermissionError and tests/helpers.py is still in place
+- **WHEN** the workspace has `protect_tests` on and code under test tries to rename the tests directory to t2 during run_tests
+- **THEN** the rename fails with PermissionError, tests/helpers.py is still in place and t2 does not exist
+
+#### Scenario: Other ways to change a test file
+
+The workspace has `protect_tests` on and contains tests/test_report.py, tests/helpers.py and timelog/parser.py. Each row is tried in a fresh workspace.
+
+| Action by code under test during run_tests                        | Result          |
+| ----------------------------------------------------------------- | --------------- |
+| delete tests/helpers.py                                           | PermissionError |
+| create a folder tests/sub                                         | PermissionError |
+| truncate tests/test_report.py                                     | PermissionError |
+| change the permissions of tests/test_report.py                    | PermissionError |
+| create test_x.py, TEST_Y.PY, foo_test.py or conftest.py           | PermissionError |
+| create timelog/test_inner.py                                      | PermissionError |
+| rename tests/test_report.py to plain.txt                          | PermissionError |
+| rename timelog/parser.py to test_p.py                             | PermissionError |
+| create a symbolic link to the test file, then write through it    | PermissionError |
+| create a hard link to the test file, then write through it        | PermissionError |
+| append to timelog/parser.py                                       | succeeds        |
+| create tests.py or contest.py                                     | succeeds        |
+| rename the folder timelog to timelog2 (known gap)                 | succeeds        |
+
+#### Scenario: Sandbox and tool layer agree
+
+- **WHEN** a path relative to the workspace is tried for writing in a workspace with `protect_tests` on, for each of tests/a.py, test/a.py, Tests/a.py, pkg/tests/data.json, a/b/test_c.py, x_test.py, X_TEST.PY, conftest.py, pkg/conftest.py, tests.py, contest.py, testing/a.py, pkg/attests/a.py, latest.py, timelog/parser.py and notes/test.txt
+- **THEN** the sandbox denies the write exactly when `looks_like_test_file` marks the path
+
+#### Scenario: Test protection is off by default
+
+- **WHEN** a Workspace is created without `protect_tests` and code under test creates tests/new_test.py during run_tests
+- **THEN** the file is created
+
+#### Scenario: A folder named tests above the workspace
+
+- **WHEN** the workspace is .../tests/fixtures/x with `protect_tests` on, and code under test appends to timelog/parser.py
+- **THEN** the write succeeds, while appending to tests/test_report.py still fails with PermissionError
+
+#### Scenario: A source edit that rewrites the tests cannot fake a pass
+
+- **WHEN** `fixlab PATH` runs and the model inserts into timelog/parser.py code that rewrites tests/test_report.py to `assert True`, then the tests run
+- **THEN** tests/test_report.py is unchanged and the result line says tests FAILED
 
 #### Scenario: Workspace path with regular-expression characters
 
-- **WHEN** the workspace directory is named "a+b(c)" and code under test tries to open tests/test_report.py for writing during run_tests
-- **THEN** the write fails with PermissionError
+- **WHEN** the workspace has `protect_tests` on, its directory is named "a+b(c)", and code under test tries to open tests/test_report.py for writing during run_tests
+- **THEN** the write fails with PermissionError, while appending to timelog/parser.py succeeds
 
 #### Scenario: Workspace inside the project directory
 
-- **WHEN** the workspace is tests/fixtures/timelog inside the fixlab project directory
+- **WHEN** the workspace is a folder inside the fixlab project directory (the tests use a temporary one, so the real fixture is never written)
 - **THEN** reads of AGENTS.md at the project root fail with PermissionError, reads of timelog/parser.py succeed, and writing timelog/parser.py succeeds
+- **WHEN** run_tests runs in place on tests/fixtures/timelog, which only reads
+- **THEN** the output contains no PermissionError and ends with `1 failed, 4 passed`
 
 #### Scenario: Workspace given as a symbolic link
 
