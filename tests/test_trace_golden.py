@@ -8,7 +8,7 @@
     UPDATE_GOLDEN=1 pytest tests/test_trace_golden.py
 重新產生後要看 git diff，確認每一處變動都是你要的。
 
-_normalize 的寫法沿用自己先前的評測實驗，去掉每次執行都會變的部分。
+_normalize 負責去掉每次執行都會變的部分：呼叫 id、pytest 耗時、暫存目錄路徑、耗時欄位。
 """
 
 import json
