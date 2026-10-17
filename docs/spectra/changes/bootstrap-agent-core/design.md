@@ -26,15 +26,17 @@ fixlab 目前只有規劃文件（AGENTS.md）。前身專案 code-agent-eval �
 
 ## Decisions
 
-### MVP 優先的實作順序，最小入口在暫存複本上跑
+### MVP 優先的實作順序，最小入口直接改指定目錄，結束時印快照 diff
 
-任務順序改成先做能端到端跑通的最小切片，分兩段：先做工具註冊、read_file、list_files，立刻接上迴圈核心與步數上限、最小入口 `fixlab fix`，用真模型對 timelog 做一次唯讀探索；再補 edit_file、受保護路徑只接 edit_file、run_tests 加環境變數白名單，用真模型實際修一次 timelog；最後才補 glob、grep、write_file、指紋、沙箱與迴圈保險。原因：原順序要到後段才有迴圈，最早的真實回饋要等很久；先跑通能提早發現工具輸出格式與提示詞的問題。迴圈與入口再提前到 edit_file 之前，是因為 read_file 的行號格式、截斷訊息與 list_files 的輸出對模型是否清楚，只有讓模型真的讀過才知道，單元測試看不出來。
+任務順序改成先做能端到端跑通的最小切片，分兩段：先做工具註冊、read_file、list_files，立刻接上迴圈核心與步數上限、最小入口 `fixlab`，用真模型對 timelog 做一次唯讀探索；再補 edit_file、受保護路徑只接 edit_file、run_tests 加環境變數白名單，用真模型實際修一次 timelog；最後才補 glob、grep、write_file、指紋、沙箱與迴圈保險。原因：原順序要到後段才有迴圈，最早的真實回饋要等很久；先跑通能提早發現工具輸出格式與提示詞的問題。迴圈與入口再提前到 edit_file 之前，是因為 read_file 的行號格式、截斷訊息與 list_files 的輸出對模型是否清楚，只有讓模型真的讀過才知道，單元測試看不出來。
 
 環境變數白名單不等沙箱，跟 run_tests 一起上。依據是自己程式的已知缺陷：code-agent-eval 的 run_tests 把整個 os.environ 傳給子行程，而 smoke 會在 shell 匯出真的 API 金鑰；被執行的程式包含模型改寫過的檔案，只要印出環境，金鑰就會進入測試輸出、對話與 README 紀錄。
 
-取捨：沙箱完成前仍沒有網路與家目錄限制，所以最小入口只改暫存複本，複製用 `copytree(symlinks=True)`（預設會跟隨符號連結，把目錄外的內容複製進來），這段期間只對自己寫的 fixture 執行。沒有沙箱與指紋，被測程式也能改複本裡的測試檔，所以 `--apply` 只在每個要寫回的檔都不是受保護路徑、原檔不是符號連結、原檔內容與複製當下相同時才寫，任何一個不符合就整個中止；diff 則涵蓋包含測試檔在內的所有檔。`fixlab fix` 只是 smoke 用的最小入口，不代表階段 2 的 CLI 設計。
+取捨：`fixlab PATH` 直接修改 PATH 指到的目錄，不複製、不寫回。它是一次性執行，跑的時候沒有人在旁邊，不能在每次寫入前問使用者（權限提示是階段 2 的事），所以改成事後審查：跑 agent 之前，用 iter_files 對 PATH 底下的檔案拍一份記憶體快照（相對路徑對應檔案的 bytes）；結束後再掃一次，用 difflib 印出新增、刪除與修改的檔案的 unified diff，範圍涵蓋測試檔，沒有任何變動就印 `no changes`，不能以 UTF-8 解碼的檔只印 `binary file changed`。沙箱與指紋完成前，被測程式也能改測試檔，這份 diff 是這段期間唯一看得到竄改的地方。沙箱完成前仍沒有網路與家目錄限制，所以這段期間只對自己寫的 fixture 的手動複本執行：跑之前先用 `cp -R` 把 tests/fixtures/timelog 複製到暫存目錄再當 PATH，絕不對 tests/fixtures/timelog 本身執行，否則會修掉 benchmark 的 bug，讓 test_fixture.py 失敗。快照的記憶體用量正比於專案大小，階段 1 只跑小型 fixture；快照到結束之間使用者自己做的修改也會被算進 diff；符號連結不列入快照，所以連結被改指向不會出現在 diff 裡。`fixlab` 只是 smoke 用的最小入口，不代表階段 2 的 CLI 設計。
 
 替代方案：另開 fixlab-mvp 專案或 spike 分支；不選的原因：會複製已完成的 workspace、toolparse 與 fixture，之後合併回來還要重寫一次。
+
+替代方案（最小入口如何修改檔案）：一是先複製到暫存目錄，只改複本，再用 `--apply` 寫回；不選的原因：使用者之後要就地修自己的 repo，複製與寫回要多寫一段程式，還要測三個寫回條件（不是受保護路徑、原檔不是符號連結、原檔內容未變），而階段 2 有了權限提示之後這段保護就不需要。二是結束後只用 `git diff`；不選的原因：它會把使用者原本未提交的修改一起列出，分不清哪些是這次 agent 改的，新增的檔預設不顯示，而且要求 PATH 是 git repo。快照 diff 只反映這一次執行；git 仍是使用者自己的還原手段。
 
 ### 複製自己的程式並整理，不做共用套件
 
@@ -102,7 +104,7 @@ Workspace 登記工具時只存 properties 與 required；tool_specs() 產生送
 
 ### 設計依據與參考來源
 
-每個決定的依據必須是三類之一：自己 pilot 的實驗結果（docs 與 code-agent-eval/docs/pilot-results.md）、自己程式碼的已知缺陷、Claude Code 工具的實際行為。外部文章只列為「參考來源」，註明讀過什麼、採用了哪個想法，不當作設計依據，也不複製其程式碼或題目結構。已讀過的參考：高見龍的 KeSi 連載（kaochenlong.com，Day 01–18，並讀過 repo），影響了：連續失敗計數只算「整輪全失敗」、環境變數洩漏列為風險、成本與 token 量測的重視。範例專案 timelog 的領域、bug 類型（解析邏輯而非比較運算子）與檔案結構都是自己設計，刻意不沿用他實驗題的骨架。沙箱規則最初寫在 code-agent-eval 時參考過 KeSi 的 sandbox_spec，註解標為 MIT。已於 2026-10-16 查證其 repo（github.com/kaochenlong/KeSi）的 LICENSE 為 MIT，Copyright (c) 2026 Eddie Kao；5.2 動工前仍要比對 code-agent-eval 的沙箱規則與其 sandbox_spec 的相似程度，有沿用的部分附上版權聲明，README 也要註明。另讀過同一作者的〈讓 Agent 看見專案〉：採用的想法只有「空結果要明確回報，讓模型分得出沒找到與沒執行成功」，並列出 .env 外洩風險；其 list_files 只列一層、fixlab 選遞迴，理由是 benchmark 專案小，一次看到全部結構比較省步數。〈用 ripgrep 搜尋程式碼〉也讀過，尚未決定是否改用 rg，決定時再補上採用了哪些想法。替代方案：不寫來源。不選的原因：面試時必須能說清楚哪些是自己的設計、哪些是參考。
+每個決定的依據必須是三類之一：自己 pilot 的實驗結果（docs 與 code-agent-eval/docs/pilot-results.md）、自己程式碼的已知缺陷、Claude Code 工具的實際行為。外部文章只列為「參考來源」，註明讀過什麼、採用了哪個想法，不當作設計依據，也不複製其程式碼或題目結構。已讀過的參考：高見龍的 KeSi 連載（kaochenlong.com，Day 01–18，並讀過 repo），影響了：連續失敗計數只算「整輪全失敗」、環境變數洩漏列為風險、成本與 token 量測的重視。範例專案 timelog 的領域、bug 類型（解析邏輯而非比較運算子）與檔案結構都是自己設計，刻意不沿用他實驗題的骨架。沙箱規則最初寫在 code-agent-eval 時參考過 KeSi 的 sandbox_spec，註解標為 MIT。已於 2026-10-16 查證其 repo（github.com/kaochenlong/KeSi）的 LICENSE 為 MIT，Copyright (c) 2026 Eddie Kao；5.2 動工前仍要比對 code-agent-eval 的沙箱規則與其 sandbox_spec 的相似程度，有沿用的部分附上版權聲明，README 也要註明。另讀過同一作者的〈讓 Agent 看見專案〉：採用的想法只有「空結果要明確回報，讓模型分得出沒找到與沒執行成功」，並列出 .env 外洩風險；其 list_files 只列一層、fixlab 選遞迴，理由是 benchmark 專案小，一次看到全部結構比較省步數。〈用 ripgrep 搜尋程式碼〉也讀過，尚未決定是否改用 rg，決定時再補上採用了哪些想法。最小入口直接修改指定目錄、結束時印快照 diff：依據是自己的限制（一次性執行沒有人在旁邊授權，沙箱與指紋尚未完成）與 Claude Code 的行為（官方文件，2026-10-17 查證：`/diff` 的 Current 視圖讀 git，逐輪視圖與 `/rewind` 用編輯工具自己記下的快照，Bash 造成的變動不在追蹤範圍，checkpoint 不取代版本控制）。採用的想法：用快照回答「這一次改了什麼」；又因為 run_tests 會執行任意程式，快照涵蓋整棵樹，而不只是編輯工具改的檔。另讀過 KeSi 的 kesi.py（clone，commit dfa0cd0，2026-10-17）：它直接在目前目錄工作，寫入前用 y／a／N 權限提示，用 sha256 防止覆蓋被外部改過的檔，沒有結束後的 diff；fixlab 不採用權限提示，那是階段 2 的事。替代方案：不寫來源。不選的原因：面試時必須能說清楚哪些是自己的設計、哪些是參考。
 
 ## Implementation Contract
 
@@ -114,14 +116,14 @@ Workspace 登記工具時只存 properties 與 required；tool_specs() 產生送
 - read_file 輸出每行格式為 6 位右對齊行號、一個 tab、原文；空檔輸出 "(empty file)"；結尾換行不產生多餘的編號空行。
 - grep、glob、list_files 的路徑一律是相對於工作目錄的相對路徑，不跟隨符號連結。
 - run_tests 的指令固定如「run_tests 的 pytest 指令固定」所述，逾時 10 秒，輸出超過 4000 字元就截斷並加註；旗標含 tests_passed、timed_out，必要時含 test_file_tampered。
-- `fixlab fix PATH`（fixlab/cli.py，smoke 用的最小入口）：把 PATH 以 `copytree(symlinks=True)` 複製到暫存目錄（略過共用跳過清單），用 OpenAI 相容端點（`OpenAI(timeout=600, max_retries=0)`）在複本上跑 agent，每步在 stderr 印工具名稱、ok 與 flags；結束後在複本上再跑一次 run_tests，並印 stop reason、步數、token 與涵蓋所有檔（含測試檔）的 unified diff。預設不動 PATH；`--apply` 只在每個要寫回的檔都不是受保護路徑、原檔不是符號連結、原檔內容與複製當下相同時才寫回。
+- `fixlab PATH`（fixlab/cli.py，smoke 用的最小入口）：指令格式是 `fixlab PATH`，不設子命令（互動模式是階段 2 的事，屆時再決定長相），`--task` 可換掉預設任務文字；入口是 `main(argv=None, client=None)`，argv 沒傳就讀終端機參數，client 沒傳才建 `OpenAI(timeout=600, max_retries=0)`，傳了就直接用（只供測試注入）。直接在 PATH 指到的目錄上跑 agent，不複製、不寫回：開始前在 stderr 印出該目錄的絕對路徑，並對 PATH 底下的檔案拍記憶體快照；每步在 stderr 印工具名稱、ok 與 flags；結束後在 PATH 上再跑一次 run_tests，並印 stop reason、步數、token 與快照對現況的 unified diff（涵蓋所有不在跳過清單的檔，含測試檔；沒有變動印 `no changes`）。
 
 **Failure modes**
 
 - 路徑在工作目錄外、絕對路徑、以 ~ 開頭、跟隨符號連結後跑出工作目錄、run_tests 的 target 在工作目錄外：ok=false 並設 blocked。
 - 寫入受保護檔案：ok=false 並設 blocked，檔案不變。
 - 其他工具錯誤（找不到檔案、read_file 讀到非 UTF-8 檔或行範圍不合理、edit_file 的次數不是 1、覆寫沒整檔讀過的檔案、無效正規表示式、grep 太慢）：ok=false，不設 blocked。
-- `--apply` 遇到任何不符合寫回條件的檔：整個中止、不寫任何檔並說明原因。複本裡的符號連結不跟隨（read_file 被擋）。沒設 OPENAI_API_KEY：結束並給清楚的錯誤訊息。
+- `fixlab` 遇到 PATH 不是目錄、沒設 OPENAI_API_KEY（使用注入的 client 時不檢查）、沒給 --model 也沒設 FIXLAB_MODEL：以退出碼 2 結束並給清楚的錯誤訊息。PATH 裡指向目錄外的符號連結不跟隨（read_file 被擋，設 blocked）。
 - 連續 3 次「有執行工具且全失敗」的回合：迴圈以 stuck 結束，counters 記錄 stuck_failures。
 - 回覆被截斷、空回覆、原生呼叫的參數 JSON 壞掉：行為與 code-agent-eval 相同（回饋給模型，不算完成，也不影響連續失敗計數）。
 
@@ -129,17 +131,18 @@ Workspace 登記工具時只存 properties 與 required；tool_specs() 產生送
 
 - `pytest` 在 fixlab 根目錄全數通過，且不收集 tests/fixtures；測試涵蓋迴圈、解析、七個工具、隔離（路徑、測試檔保護、指紋、沙箱讀寫、環境變數、workspace 位於專案內、含特殊字元的 workspace 路徑、tests 目錄改名）。
 - 範例專案 tests/fixtures/timelog 在未修復時 run_tests 恰有 1 個失敗，只改 parser 一處後通過；對「就地執行」與「複製到暫存目錄」兩種位置都成立。
-- 手動 smoke：先把範例專案複製到暫存目錄，對那個複本執行 `fixlab fix`（絕不對 tests/fixtures/timelog 本身用 `--apply`），用 OpenAI 相容端點與一個模型跑一次。這是觀察不是通過門檻：修好與否都照實記錄 stop reason、步數、token、最終測試結果與 AGENTS.md 守則 3 的欄位，貼進 README；真模型這一次不納入自動測試。`--apply` 的寫回條件與複製規則由 tests/test_cli.py 以假 client 驗證。
+- 手動 smoke：先用 `cp -R` 把範例專案複製到暫存目錄，對那份複本執行 `fixlab`（它會直接修改指定的目錄，所以絕不對 tests/fixtures/timelog 本身執行），用 OpenAI 相容端點與一個模型跑一次。這是觀察不是通過門檻：修好與否都照實記錄 stop reason、步數、token、最終測試結果與 AGENTS.md 守則 3 的欄位，貼進 README；真模型這一次不納入自動測試。快照 diff 與 CLI 流程由 tests/test_cli.py 以假 client 驗證。
 - README 說明讀程式順序、七個工具、已知限制與「設計依據與參考來源」。
 
 **Scope boundaries**
 
-- In：fixlab 套件、tests、範例專案、smoke 用的最小入口 `fixlab fix`（fixlab/cli.py）、README、AGENTS.md 與 docs/spectra/config.yaml 的現況與原創性規則更新。
+- In：fixlab 套件、tests、範例專案、smoke 用的最小入口 `fixlab`（fixlab/cli.py）、README、AGENTS.md 與 docs/spectra/config.yaml 的現況與原創性規則更新。
 - Out：正式 CLI（互動模式、權限提示、規格）、telemetry 檔案、benchmark、評分、shell 工具、多 agent、connector。
 
 ## Risks / Trade-offs
 
-- [MVP 階段 run_tests 在沙箱完成前直接執行被測程式（含模型改寫過的檔案），沒有網路與家目錄限制；被測程式可讀家目錄的機密檔，也能改複本裡的測試檔] → 環境變數白名單已隨 run_tests 一起上，API 金鑰不會進子行程；最小入口只改暫存複本，`--apply` 有三個寫回條件；沙箱任務完成前，只對自己寫的 fixture 執行並人工看過 diff，不對別人的 repo 跑。
+- [MVP 階段 run_tests 在沙箱完成前直接執行被測程式（含模型改寫過的檔案），沒有網路與家目錄限制；被測程式可讀家目錄的機密檔，也能改測試檔；`fixlab` 直接修改 PATH，沒有複本可退] → 環境變數白名單已隨 run_tests 一起上，API 金鑰不會進子行程；結束時印涵蓋測試檔的快照 diff，竄改看得到；沙箱任務完成前，只對自己寫的 fixture 的手動複本執行並人工看過 diff，不對別人的 repo 跑；還原靠使用者自己的 git 或備份。
+- [快照 diff 把執行前的檔案內容全放在記憶體，且快照到結束之間使用者自己的修改也會算進去；符號連結不在快照內] → 階段 1 只跑小型 fixture 的手動複本，可以接受；對大型 repo 或需要精確還原時，階段 2 再評估（例如只快照模型碰過的檔，或改用 git）。
 - [不使用原生 tool_calls 的模型（例如 qwen2.5-coder:7b）把 JSON 寫在文字裡，會被當成純文字，看起來是模型第 1 步就完成] → 刻意不支援；CLI 結束時再跑一次 run_tests 並顯示 stop reason 與步數，README 註明支援的模型要有原生 tool calling。
 - [白名單環境變數讓某些專案的測試跑不起來] → 階段 1 只服務自己寫的題目；階段 2 若要跑別人的 repo，再加可設定的白名單。
 - [sandbox-exec 已被 Apple 標為棄用，且只有 macOS] → 在 README 與 AGENTS.md 明講；沙箱介面保持單一模組，之後可換成 Docker。
@@ -154,7 +157,7 @@ Workspace 登記工具時只存 properties 與 required；tool_specs() 產生送
 - [SBPL 的正規表示式與 Python 的 re 不完全相同，跳脫字元集合可能漏掉] → 以含 +、(、)、.、[ 的目錄名做測試；若有遺漏，保護會悄悄失效，所以測試要實際嘗試寫入受保護檔案而不只檢查規則文字。
 - [code-agent-eval 的沙箱規則最初參考 KeSi 的 sandbox_spec，兩者可能有相似的段落；KeSi 為 MIT，要求保留版權聲明] → 授權已查證；5.2 動工前逐段比對，有沿用就附 Copyright (c) 2026 Eddie Kao 與 MIT 聲明；README 註明參考來源。
 - [read_file 超過 20000 字元時硬切在第 20000 個字元，可能切在一行中間，結尾說明沒有告訴模型最後完整的是第幾行] → 說明已寫明總字元數並建議用行範圍讀剩下的；3.7 觀察模型遇到截斷時會不會讀錯那半行、會不會改用行範圍，若會就改成切在整行並在說明裡給下一個 start_line。
-- [行號靠右補空白的格式沒有和不補空白的版本比較過，對小模型是否真的比較清楚只是推測] → 依據是 Claude Code 的 Read 工具與 `cat -n`；3.7 與 3.13 看模型引用行號和縮排時有沒有出錯，沒有證據顯示格式有問題就不調整。
+- [行號靠右補空白的格式沒有和不補空白的版本比較過，對小模型是否真的比較清楚只是推測] → 依據是 Claude Code 的 Read 工具與 `cat -n`；3.7 與 3.12 看模型引用行號和縮排時有沒有出錯，沒有證據顯示格式有問題就不調整。
 - [「list_files 遞迴一次看到全部結構比較省步數」只是假設，沒有和只列一層的版本比較過] → 3.7 記錄模型探索 timelog 用了幾步、有沒有重複列同一目錄；上面那條關於 200 筆上限的風險一併看。
 - [list_files 的 path 明確指向被跳過的目錄（例如 `.git`、`.venv`）時，會列出裡面的檔案，規格沒有定義] → 跳過清單只作用在往下走訪時，明確指定視為使用者要看；輸出仍受 200 筆上限限制。若 3.7 看到模型浪費步數去翻這些目錄，再決定要不要拒絕。
 

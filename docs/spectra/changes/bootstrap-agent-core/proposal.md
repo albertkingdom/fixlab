@@ -12,12 +12,12 @@ fixlab 要做的是能實際修多檔 bug 的 CLI coding agent，但目前專案
 - blocked 旗標只保留給「路徑逃逸」與「寫入受保護檔案」，其他工具錯誤只是 ok=false。
 - 加入一個自寫的小型範例專案 timelog（工時紀錄解析，bug 藏在 parser 的正規表示式，失敗的測試經由 report 呼叫它），用來測試工具與做一次真模型的手動 smoke run。
 - 補上「設計依據與參考來源」：每個設計決定的依據寫成自己的實驗結果或 Claude Code 的行為；外部文章只列為參考來源，且 AGENTS.md 與 Spectra 設定加入「不得複製他人專案的程式碼或題目結構」。
-- 實作順序採 MVP 優先：先做工具註冊、read_file、list_files、edit_file（含受保護路徑）、run_tests（含環境變數白名單）、迴圈核心與步數上限，加上 smoke 用的最小入口 `fixlab fix PATH`（在暫存複本上跑、印 diff、`--apply` 在三個條件都符合時才寫回），用真模型修一次 timelog；之後才補 glob、grep、write_file、指紋、沙箱與迴圈保險。
+- 實作順序採 MVP 優先：先做工具註冊、read_file、list_files、edit_file（含受保護路徑）、run_tests（含環境變數白名單）、迴圈核心與步數上限，加上 smoke 用的最小入口 `fixlab PATH`（直接修改指定目錄，結束時印執行前快照對現況的 diff），用真模型修一次 timelog；之後才補 glob、grep、write_file、指紋、沙箱與迴圈保險。
 - 完成後打 git tag stage-1。
 
 ## Non-Goals
 
-- 不做正式的 CLI、互動模式與權限提示（階段 2）；階段 1 只有 smoke 驗證用的最小入口 `fixlab fix`，不新增 spec 需求。
+- 不做正式的 CLI、互動模式與權限提示（階段 2）；階段 1 只有 smoke 驗證用的最小入口 `fixlab`，不新增 spec 需求。
 - 不做 telemetry 的檔案格式與彙整報告（階段 2）；迴圈只保留既有的 trace 回呼介面。
 - 不做 benchmark 題庫與隱藏測試評分（階段 3）。
 - 不提供任意 shell 或 run_command 工具；不提供 git 操作。
