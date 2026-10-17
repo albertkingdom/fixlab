@@ -80,7 +80,7 @@ run_tests 啟動子行程時，環境只放 PATH、LANG、LC_ALL、TMPDIR 與 PY
 
 ### run_tests 的 pytest 指令固定，不讀專案外的設定
 
-run_tests 執行的指令固定為：python -m pytest -q -p no:cacheprovider -c /dev/null --rootdir=. --confcutdir=. -- 加上 target（預設為 .）。-c /dev/null、--rootdir=. 與 --confcutdir=. 讓 pytest 不往上層目錄找 pyproject.toml 或 conftest.py；沒有這幾個參數時，workspace 位於 fixlab 專案目錄內（例如 tests/fixtures/timelog）會因為沙箱禁止讀取專案目錄而在 locate_config 階段崩潰（subagent review 以實驗重現）。-p no:cacheprovider 避免在工作目錄產生 .pytest_cache。-- 讓以 - 開頭的 target 不會被當成 pytest 選項。target 必須是工作目錄內的路徑，否則同樣 blocked。替代方案：workspace 一律複製到專案外的暫存目錄；不選的原因：使用者之後要對自己的 repo 就地執行，必須支援任意位置。
+run_tests 執行的指令固定為：python -m pytest -q -p no:cacheprovider -c /dev/null --rootdir=. --confcutdir=. -- 加上 target（預設為 .）。-c /dev/null、--rootdir=. 與 --confcutdir=. 讓 pytest 不往上層目錄找 pyproject.toml 或 conftest.py；沒有這幾個參數時，workspace 位於 fixlab 專案目錄內（例如 tests/fixtures/timelog）會因為沙箱禁止讀取專案目錄而在 locate_config 階段崩潰（subagent review 以實驗重現）。-p no:cacheprovider 避免在工作目錄產生 .pytest_cache。-- 與 target 的 ./ 前綴一起，確保 target 只會被當成路徑：2026-10-17 實測 pytest 9.1.1 對 `-- --version` 仍會印出版本並以 0 結束，run_tests 會誤判成測試通過（單元測試抓到的，原本的設計以為 -- 就夠了），加上 ./ 前綴後才變成「找不到路徑」、結束碼 4。target 必須是工作目錄內的路徑，否則同樣 blocked。逾時用簡單的 subprocess.run(timeout)，stdin 接空裝置避免測試卡在等輸入；輸出超過 4000 字元時留頭尾各 2000 字元、中間註明總量，因為 pytest 的失敗摘要與最後一行結果在尾端，只留開頭會看不到結果。替代方案：workspace 一律複製到專案外的暫存目錄；不選的原因：使用者之後要對自己的 repo 就地執行，必須支援任意位置。
 
 ### 沙箱：禁網路、限制讀寫範圍、測試檔不可寫
 
@@ -115,7 +115,7 @@ Workspace 登記工具時只存 properties 與 required；tool_specs() 產生送
 - 七個工具：read_file(path, start_line?, end_line?)、list_files(path?)、glob(pattern)、grep(pattern, path?)、edit_file(path, old_string, new_string)、write_file(path, content)、run_tests(target?)。
 - read_file 輸出每行格式為 6 位右對齊行號、一個 tab、原文；空檔輸出 "(empty file)"；結尾換行不產生多餘的編號空行。
 - grep、glob、list_files 的路徑一律是相對於工作目錄的相對路徑，不跟隨符號連結。
-- run_tests 的指令固定如「run_tests 的 pytest 指令固定」所述，逾時 10 秒，輸出超過 4000 字元就截斷並加註；旗標含 tests_passed、timed_out，必要時含 test_file_tampered。
+- run_tests 的指令固定如「run_tests 的 pytest 指令固定」所述，逾時 10 秒，輸出超過 4000 字元就留頭尾各 2000 字元、中間註明總量；旗標含 tests_passed、timed_out，必要時含 test_file_tampered。
 - `fixlab PATH`（fixlab/cli.py，smoke 用的最小入口）：指令格式是 `fixlab PATH`，不設子命令（互動模式是階段 2 的事，屆時再決定長相），`--task` 可換掉預設任務文字；入口是 `main(argv=None, client=None)`，argv 沒傳就讀終端機參數，client 沒傳才建 `OpenAI(timeout=600, max_retries=0)`，傳了就直接用（只供測試注入）。直接在 PATH 指到的目錄上跑 agent，不複製、不寫回：開始前在 stderr 印出該目錄的絕對路徑，並對 PATH 底下的檔案拍記憶體快照；每步在 stderr 印工具名稱、ok 與 flags；結束後在 PATH 上再跑一次 run_tests，並印 stop reason、步數、token 與快照對現況的 unified diff（涵蓋所有不在跳過清單的檔，含測試檔；沒有變動印 `no changes`）。
 
 **Failure modes**
@@ -168,6 +168,10 @@ Workspace 登記工具時只存 properties 與 required；tool_specs() 產生送
 
 - [read_only 預設不鎖任何檔案，修 bug 的呼叫端一旦忘了傳 looks_like_test_file，測試檔就沒有保護，連 test_file_tampered 的指紋也不會有東西可比，評分會悄悄失準] → fixlab PATH 有測試確認它傳了規則且測試檔改不動；benchmark（階段 3）建立 Workspace 時也要有同樣的測試，在跑任何題目之前先確認保護有效。
 - [沙箱（OS 層）的測試檔規則是從 looks_like_test_file 的命名慣例寫成 SBPL 的，無法由任意的 read_only 函式產生] → 自訂的 read_only 只在工具層與指紋生效，沙箱不管；規格已寫明。需要時階段 2 再決定要不要讓沙箱規則可設定。
+
+- [run_tests 逾時只用簡單的 subprocess.run(timeout)，只殺得到最上層的 pytest；測試若再啟動子行程且逾時，孫行程會變成孤兒繼續在背景跑。2026-10-17 實驗：孫行程 sleep 在逾時後仍活著，改用 start_new_session 加 killpg 殺整個行程群組則為 0 個。階段 1 的範例專案沒有測試會啟動子行程，目前碰不到；風險在模型改寫的原始碼裡放進 subprocess（第 4 篇那次模型在測試檔裡這樣做過，測試檔現在擋得住，原始碼擋不住）] → 先用簡單逾時；沙箱階段或真的碰到孤兒行程時，改成 Popen 加 start_new_session=True，逾時後 os.killpg 整個群組（高見龍的 kesi.py 的 stop_process_group 是這個做法）。
+- [測試印出無限多輸出時，capture 的輸出在 10 秒內持續佔用記憶體，沒有讀取量上限] → 階段 1 先不處理；高見龍的 kesi.py 另開執行緒邊讀邊算，超過 1 MB 就殺掉，需要時可參考。
+- [run_tests 的 tests_passed 只看 pytest 的結束碼是不是 0：任何讓 pytest 以 0 結束的情況都算通過（pytest 印版本就是一例，已用 ./ 前綴擋掉），沒有收集到測試時結束碼是 5，算未通過] → 之後若發現其他讓結束碼為 0 卻沒有真的跑測試的路徑，再補檢查。
 
 ## Open Questions
 
