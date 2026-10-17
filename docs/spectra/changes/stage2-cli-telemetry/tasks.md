@@ -13,6 +13,7 @@
 - [ ] 2.2 一次性 `fixlab PATH` 寫事件檔：入口建立 `EventLog`，依序寫 `run_start`（模式 `once`、條件欄位）、`task_start`、每筆 trace、`task_end`，並在 stderr 印 `log: <路徑>`；`task_end` 帶 `final_tests` 與 `changed_files`（快照比較要多提供結構化的新增、修改、刪除清單，供事件檔與印出的 diff 共用）。對應 One-shot results go in task_end 的兩個情境與 Four event types 的一次性情境；`request_error` 也會以 `trace` 寫出。驗證：tests/test_cli.py 以假 client 跑 timelog 副本，解析事件檔檢查事件順序與欄位；既有的 test_cli 測試（stdout、退出碼、diff）不改動也通過。
 - [ ] 2.3 「執行條件用 --meta 記錄，不自動偵測」與「事件檔放在使用者家目錄，不放進被修的目錄」：新增 `--meta KEY=VALUE`（可重複）與 `--log-dir`，預設 `~/.fixlab/runs`；`--meta` 缺 `=`、日誌目錄在 PATH 之內（含 PATH 是家目錄、符號連結）都以退出碼 2 結束且不建檔。對應 Experiment conditions come from --meta（兩個值、缺等號）與 The event log stays outside the target directory（目錄在 PATH 裡、PATH 是家目錄、diff 不含日誌）。驗證：tests/test_cli.py 新增對應測試；測試一律傳暫存的 `--log-dir`，不寫真的家目錄。
 - [ ] 2.4 用真模型跑一次一次性修復並檢視事件檔（觀察，不是通過門檻）：用 OpenRouter 的一個模型對 timelog 的暫存副本執行，記錄事件檔的實際內容是否讓階段 3 的統計算得出來（步數、token、延遲、旗標、`changed_files`），缺欄位或太大就記進設計文件的 Risks 或補成後續任務；模型能力問題只記錄。驗證：事件檔每行可解析，`task_end` 的 token 與入口印出的相同（手動審閱）。
+- [ ] 2.5 寫第 12 篇教學文章 docs/articles/12-event-log.md（事件記錄）：從最天真的版本（只在畫面上印、關掉就沒了）寫起，說明為什麼要存檔、為什麼每次執行一個檔、為什麼放在家目錄而不是被修的目錄、每行立刻寫入、寫不進去時不中斷，附 2.4 的真實事件檔片段與 `trace`、`task_end` 的欄位說明、已知限制與參考來源（KeSi 沒有 JSONL 事件記錄，照實寫）；文中不提先前的專案，新名詞（trace、事件檔、schema）第一次出現時定義。驗證：內容審閱，文中的數字（事件種類、欄位數、測試數）與程式及輸出一致；完成後在程式所在的 commit 打輕量 tag `article-12`（只建在本機）。
 
 ## 3. 互動模式與權限提示
 
@@ -20,6 +21,7 @@
 - [ ] 3.2 「中斷時丟棄該任務新增的訊息」：Ctrl-C 打斷執行中的任務時，把對話截回任務開始前的長度，印出提示，寫 `stop_reason` 為 `interrupted` 的 `task_end`，回到提示字元，下一個任務的請求裡沒有缺少結果的 `tool_calls`。對應 Interrupting a task discards its messages。驗證：tests/test_interactive.py 讓假 client 在第二次請求時丟出 `KeyboardInterrupt`，檢查訊息長度、提示文字與下一個請求。
 - [ ] 3.3 互動模式的提示函式：只對 `edit_file`、`write_file`、`run_tests` 提問，摘要格式與 `Allow? [y]es / [a]lways for this tool / [N]o: `，回答 `y`、`a`、其他一律拒絕（含空行與輸入結束），`a` 只對同一個工具在這個 session 內有效，字串最多顯示 200 字元；一次性模式不傳 `confirm`。對應 Interactive mode asks before changing files or running tests（讀取不問、回答對照表、always 依工具、長字串截斷）與 One-shot mode never asks（標準輸入關閉照常跑）。驗證：tests/test_interactive.py 與 tests/test_cli.py 各情境一個測試，輸入用注入的函式。
 - [ ] 3.4 用真終端機與真模型各跑一次互動 session 並記錄（觀察，不是通過門檻）：先要求修 timelog 的 bug（逐一回答權限提示，包含一次拒絕和一次 `a`），再用 `add a docstring to that function` 這類指涉前一句話的指令，最後 `/reset` 與 `/exit`；記錄提示字元、換行、Ctrl-C 的手感、事件檔的內容，以及被擋下的呼叫仍會先問的情況是否常發生（對應設計文件 Risks）。驗證：結果寫進設計文件的 Risks 或補成後續任務（手動審閱）。
+- [ ] 3.5 寫第 13、14 篇教學文章：docs/articles/13-interactive-session.md（互動模式：為什麼 `run_agent` 要能接續對話、最後的回覆為什麼要加進對話、中斷為什麼要截回長度、`/reset`）與 docs/articles/14-permissions.md（權限提示：為什麼做成 Workspace 的 `confirm` 參數而不是放進迴圈、y／a／N、拒絕為什麼算失敗、被擋下的呼叫仍會先問），附 3.4 的真實操作紀錄與已知限制、參考來源（KeSi 的斜線指令與權限把關只讀了 commit 標題與指令名稱，照實寫）；格式同第 12 篇。驗證：內容審閱，文中數字與程式及輸出一致；完成後各在程式所在的 commit 打輕量 tag `article-13`、`article-14`（只建在本機）。
 
 ## 4. 文件與收尾
 
