@@ -222,7 +222,7 @@ def edit_file(ws, path, old_string, new_string):
 
 最後那個 `the fix` 是真的把 bug 修好：
 
-```
+```diff
 -    units = [re.match(r"(\d+)([hm])", text).groups()]
 +    units = re.findall(r"(\d+)([hm])", text)
 ```
@@ -271,7 +271,7 @@ def edit_file(ws, path, old_string, new_string):
 
 下一步又改回去。這次的最後一份 CLI 輸出，diff 只有 `parser.py` 那一行：
 
-```
+```diff
 stop reason: done  steps: 11  tokens: 14801 prompt + 2114 completion
 
 changes since start:
