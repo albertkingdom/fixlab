@@ -116,14 +116,14 @@ Workspace 登記工具時只存 properties 與 required；tool_specs() 產生送
 - read_file 輸出每行格式為 6 位右對齊行號、一個 tab、原文；空檔輸出 "(empty file)"；結尾換行不產生多餘的編號空行。
 - grep、glob、list_files 的路徑一律是相對於工作目錄的相對路徑，不跟隨符號連結。
 - run_tests 的指令固定如「run_tests 的 pytest 指令固定」所述，逾時 10 秒，輸出超過 4000 字元就留頭尾各 2000 字元、中間註明總量；旗標含 tests_passed、timed_out，必要時含 test_file_tampered。
-- `fixlab PATH`（fixlab/cli.py，smoke 用的最小入口）：指令格式是 `fixlab PATH`，不設子命令（互動模式是階段 2 的事，屆時再決定長相），`--task` 可換掉預設任務文字；入口是 `main(argv=None, client=None)`，argv 沒傳就讀終端機參數，client 沒傳才建 `OpenAI(timeout=600, max_retries=0)`，傳了就直接用（只供測試注入）。直接在 PATH 指到的目錄上跑 agent，不複製、不寫回：開始前在 stderr 印出該目錄的絕對路徑，並對 PATH 底下的檔案拍記憶體快照；每步在 stderr 印工具名稱、ok 與 flags；結束後在 PATH 上再跑一次 run_tests，並印 stop reason、步數、token 與快照對現況的 unified diff（涵蓋所有不在跳過清單的檔，含測試檔；沒有變動印 `no changes`）。
+- `fixlab PATH`（fixlab/cli.py，smoke 用的最小入口）：指令格式是 `fixlab PATH`，不設子命令（互動模式是階段 2 的事，屆時再決定長相），`--task` 可換掉預設任務文字；入口是 `main(argv=None, client=None)`，argv 沒傳就讀終端機參數，client 沒傳才建 `OpenAI(timeout=600, max_retries=0)`，傳了就直接用（只供測試注入）。直接在 PATH 指到的目錄上跑 agent，不複製、不寫回：開始前在 stderr 印出該目錄的絕對路徑，並對 PATH 底下的檔案拍記憶體快照；每步在 stderr 印工具名稱、ok 與 flags；結束後在 PATH 上再跑一次 run_tests，並印 stop reason、步數、token 與快照對現況的 unified diff（涵蓋所有不在跳過清單的檔，含測試檔；沒有變動印 `no changes`）和測試輸出，最後一行是 `RESULT: tests passed` 或 `RESULT: tests FAILED`；先跑最後的測試、再拍「之後」的快照。退出碼：最後那次測試通過是 0，沒通過（含逾時）是 1。
 
 **Failure modes**
 
 - 路徑在工作目錄外、絕對路徑、以 ~ 開頭、跟隨符號連結後跑出工作目錄、run_tests 的 target 在工作目錄外：ok=false 並設 blocked。
 - 寫入 read_only 標記的檔案：ok=false 並設 blocked，檔案不變。
 - 其他工具錯誤（找不到檔案、read_file 讀到非 UTF-8 檔或行範圍不合理、edit_file 的次數不是 1、覆寫沒整檔讀過的檔案、無效正規表示式、grep 太慢）：ok=false，不設 blocked。
-- `fixlab` 遇到 PATH 不是目錄、沒設 OPENAI_API_KEY（使用注入的 client 時不檢查）、沒給 --model 也沒設 FIXLAB_MODEL：以退出碼 2 結束並給清楚的錯誤訊息。PATH 裡指向目錄外的符號連結不跟隨（read_file 被擋，設 blocked）。
+- `fixlab` 遇到 PATH 不是目錄、沒設 OPENAI_API_KEY（使用注入的 client 時不檢查）、沒給 --model 也沒設 FIXLAB_MODEL：以退出碼 2 結束並給清楚的錯誤訊息。最後那次測試沒通過（含逾時）：退出碼 1。PATH 裡指向目錄外的符號連結不跟隨（read_file 被擋，設 blocked）。
 - 連續 3 次「有執行工具且全失敗」的回合：迴圈以 stuck 結束，counters 記錄 stuck_failures。
 - 回覆被截斷、空回覆、原生呼叫的參數 JSON 壞掉：行為與 code-agent-eval 相同（回饋給模型，不算完成，也不影響連續失敗計數）。
 
@@ -177,4 +177,5 @@ Workspace 登記工具時只存 properties 與 required；tool_specs() 產生送
 
 - 測試檔保護是「修 bug 模式」的政策，不是 agent 的通用限制。修 bug 時測試檔是評分標準，改了就是假通過；通用的 coding agent 裡寫測試是常見的任務，硬擋反而是 bug（高見龍的 KeSi 與 Claude Code 都靠使用者授權，沒有寫死這種規則）。Workspace 的 read_only 參數已經讓政策可以從外部決定：預設不鎖任何檔案，fixlab PATH 明確傳入 looks_like_test_file。階段 2 加入互動模式時，還要決定哪些檔案可寫改由什麼決定：權限提示、使用者設定的規則，或任務模式的預設值。
 - 同一個回覆裡有多個工具呼叫時，全部會依序執行；混合讀與寫時，後面的呼叫是在前面的編輯之後才跑，而模型下這些命令時並不知道編輯的結果。2026-10-17 的兩次真模型紀錄（共 26 個有合法工具呼叫的回覆）每個都只有 1 個呼叫，所以階段 1 不限制；階段 3 跑多個模型時看 telemetry 的呼叫數分佈，再決定要不要限制。
+- 一次性模式結束後自動再跑一次測試，是因為沒有人在旁邊看，模型又可能沒驗證就宣告完成。互動模式有使用者在看，可以改成使用者想要時才執行；階段 3 的評測自己用隱藏測試驗證，不靠這個入口。這一步屬於哪一種模式，階段 2 設計互動模式時要決定。
 - 無效的回覆（工具不存在、JSON 壞掉）被擋下時，紀錄只留錯誤，沒有記下原本有幾個工具呼叫，所以無法統計「模型一次叫幾個工具」。階段 2 設計 telemetry 欄位時，要記下每個回覆原本的呼叫數，包含被擋下的。

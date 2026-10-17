@@ -350,6 +350,59 @@ Let me fix the parser:
 
 **unified diff 格式的來歷**（Wikipedia〈Diff〉與 GNU diffutils 手冊，2026-10-17 查閱）：最早的 `diff` 由 Douglas McIlroy 與 James Hunt 在貝爾實驗室寫成，隨 1974 年的 Unix 第 5 版發行。unified 格式由 Wayne Davison 在 1990 年 8 月的 `unidiff` 工具裡發明，約一個月後 Richard Stallman 把它加進 GNU diff，1991 年 1 月的 GNU diff 1.15 首次出現；POSIX.1-2008 才把 `-u` 正式納入標準。沒有哪個組織「制定」過它，是一個被 `patch`、`git` 等工具沿用而成為事實標準的約定。GNU 手冊對標頭的說明：一段改動只有一行時，只寫起始行號，否則寫成「起始行,行數」；行首空白代表兩邊共有，`+` 是新增，`-` 是刪除。`a/` 與 `b/` 的前綴是 git 的習慣。這個專案的輸出由 Python 標準函式庫的 `difflib.unified_diff` 產生，不是自己拼的。
 
+## 後記：3.11 之後，結束時自己再跑一次測試
+
+模型說「修好了」，只是它的宣稱。它可能沒跑測試就宣告完成，也可能測試失敗卻還是宣告完成。所以入口在模型結束之後，**自己再跑一次測試**，結果不依賴模型怎麼說。
+
+這一步只屬於一次性模式：沒有人在旁邊看，所以由程式代替。之後的互動模式有使用者在看，可以改成使用者想要時才執行。
+
+輸出的最後一行固定是結論，一眼就看得到；結論也決定結束碼：
+
+| 結束碼 | 意思 |
+|---|---|
+| 0 | 最後那次測試通過 |
+| 1 | 跑完了，但最後的測試沒通過（包含逾時） |
+| 2 | 輸入有誤（沒設金鑰、路徑不是資料夾等，前面已經有了） |
+
+下面是用劇本模型跑出來的真實輸出（不是真的模型），兩種結果：
+
+```
+===== 模型什麼都沒做就宣告完成
+stop reason: done  steps: 1  tokens: 10 prompt + 5 completion
+
+changes since start:
+no changes
+
+final test run:
+.F...                                                                    [100%]
+...（pytest 的失敗內容，略）
+1 failed, 4 passed in 0.01s
+
+RESULT: tests FAILED
+[結束碼 1]
+
+===== 模型用改檔工具修好 bug 才宣告完成
+stop reason: done  steps: 2  tokens: 20 prompt + 10 completion
+
+changes since start:
+--- a/timelog/parser.py
++++ b/timelog/parser.py
+@@ -9,5 +9,5 @@
+...（略）
+-    units = [re.match(r"(\d+)([hm])", text).groups()]
++    units = re.findall(r"(\d+)([hm])", text)
+     return sum(int(number) * (60 if unit == "h" else 1) for number, unit in units)
+
+final test run:
+.....                                                                    [100%]
+5 passed in 0.01s
+
+RESULT: tests passed
+[結束碼 0]
+```
+
+還有一個順序上的細節：先跑最後的測試，**再**拍「之後」的快照。這樣，測試程式在執行過程中動了什麼檔案（例如測試會寫出一個新檔），也會出現在差異比較裡。測試裡有一個專門檢查這件事。
+
 ## 下一篇
 
 第 4 篇是改檔工具：讓模型真的能改檔案。其中有一次真實的紀錄，模型為了跑測試，竟然去改了測試檔。
