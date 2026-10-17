@@ -25,6 +25,9 @@ def file_digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+# fixlab 自己的專案目錄（fixlab/ 套件的上一層）。沙箱預設禁止測試程式讀取它：裡面有 .env、.git、其他題目與紀錄。
+FIXLAB_ROOT = Path(__file__).resolve().parent.parent
+
 # schema 的 JSON 型別名稱 → Python 型別。bool 是 int 的子類別，整數檢查要另外排除。
 _JSON_TYPES = {"string": str, "integer": int, "boolean": bool}
 
@@ -93,8 +96,12 @@ class Tool:
 
 
 class Workspace:
-    def __init__(self, root: Path, python: str = sys.executable, read_only: Callable[[PurePath], bool] = nothing_is_read_only):
+    def __init__(self, root: Path, python: str = sys.executable, read_only: Callable[[PurePath], bool] = nothing_is_read_only,
+                 deny_read=(), project_root: Path = FIXLAB_ROOT):
         self.root = Path(root).resolve()  # 先解析一次，之後的路徑都跟它比
+        # 沙箱額外禁止測試程式讀取的資料夾（例如其他題目的工作目錄、評分用的隱藏測試），以及 fixlab 自己的專案目錄。
+        self.deny_read = tuple(Path(folder).resolve() for folder in deny_read)
+        self.project_root = Path(project_root).resolve()
         # 判斷「相對於工作目錄的路徑」能不能寫入的函式，回 True 就是唯讀。預設都能寫；傳 looks_like_test_file 鎖測試檔，
         # 或傳自己的函式，例如只鎖題目指定的幾個檔案。
         self.read_only = read_only

@@ -16,6 +16,7 @@ from openai import OpenAI
 
 from fixlab.loop import DEFAULT_MAX_STEPS, run_agent
 from fixlab.tools import register_tools
+from fixlab.sandbox import sandbox_status
 from fixlab.workspace import Workspace, iter_files, looks_like_test_file
 
 # 送給模型的任務文字維持英文。
@@ -51,6 +52,7 @@ def main(argv=None, client=None) -> int:
 
     root = Path(args.path).resolve()
     print(f"editing in place: {root}", file=sys.stderr)
+    print(f"sandbox: {sandbox_status()}", file=sys.stderr)  # 沙箱是安全功能，沒開要讓使用者看得到
     before = take_snapshot(root)
 
     ws = Workspace(root, read_only=looks_like_test_file)  # 修 bug：測試檔是評分標準，模型不能改

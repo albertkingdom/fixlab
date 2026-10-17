@@ -1,8 +1,17 @@
 # 路徑隔離測試：對應 workspace-isolation 規格的 Paths stay inside the workspace。
+import re
+import shutil
+import socket
+import sys
+import textwrap
+import uuid
+from pathlib import Path
+
 import pytest
 
+import fixlab.sandbox as sandbox
 from fixlab.tools import register_tools
-from fixlab.workspace import ToolError, ToolResult, Workspace, looks_like_test_file
+from fixlab.workspace import FIXLAB_ROOT, ToolError, ToolResult, Workspace, looks_like_test_file
 
 
 @pytest.fixture
@@ -239,3 +248,169 @@ def test_default_workspace_lets_write_file_overwrite_test_files(tmp_path):
     register_tools(w)
     w.call("read_file", {"path": "tests/test_a.py"})
     assert write(w, "tests/test_a.py").ok
+
+
+# ---- 沙箱：對應規格的 Tests run in a sandbox（只有 macOS 有 sandbox-exec）----
+
+macos_only = pytest.mark.skipif(not sandbox.sandbox_available(), reason="sandbox-exec is only available on macOS")
+HOME = Path.home().resolve()
+
+
+def sandboxed_workspace(root, **kwargs):
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "timelog").mkdir(exist_ok=True)
+    (root / "timelog" / "parser.py").write_text("def parse_duration(text):\n    return 0\n")
+    w = Workspace(root, **kwargs)
+    register_tools(w)
+    return w
+
+
+def probe(w, action):
+    """在 run_tests 裡執行一行程式，回傳結果：ok、denied（PermissionError）或 error:例外名稱。
+
+    做法：寫一個測試檔，執行 action，然後故意讓測試失敗並把結果放進失敗訊息（失敗時 pytest 才會顯示）。"""
+    code = (
+        "def test_probe():\n"
+        "    try:\n"
+        f"        {action}\n"
+        "        outcome = 'ok'\n"
+        "    except PermissionError:\n"
+        "        outcome = 'denied'\n"
+        "    except Exception as e:\n"
+        "        outcome = 'error:' + type(e).__name__\n"
+        "    raise AssertionError('PROBE=' + outcome)\n"
+    )
+    (w.root / "tests").mkdir(exist_ok=True)
+    (w.root / "tests" / "test_probe.py").write_text(code)
+    output = w.call("run_tests", {"target": "tests/test_probe.py"}).output
+    found = re.search(r"AssertionError: PROBE=(\S+)", output)  # 不能只找 PROBE=：pytest 顯示的原始碼那一行也有
+    assert found, output
+    return found.group(1)
+
+
+@pytest.fixture
+def home_scratch():
+    """家目錄底下一個暫時的資料夾，測試結束時刪掉。"""
+    folder = HOME / f".fixlab-test-{uuid.uuid4().hex[:8]}"
+    folder.mkdir()
+    yield folder
+    shutil.rmtree(folder, ignore_errors=True)
+
+
+# Scenario: Network access
+@macos_only
+def test_sandbox_blocks_network_access(tmp_path):
+    w = sandboxed_workspace(tmp_path / "ws")
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+    try:
+        port = server.getsockname()[1]  # 本機的伺服器確實在聽，連得上的話一定連得上
+        assert probe(w, f"__import__('socket').create_connection(('127.0.0.1', {port}), timeout=3)") == "denied"
+    finally:
+        server.close()
+
+
+# Scenario: Reading outside the workspace
+@macos_only
+def test_sandbox_reading_table(tmp_path, home_scratch):
+    secrets = tmp_path / "secrets"
+    secrets.mkdir()
+    (secrets / "note.txt").write_text("secret\n")
+    (home_scratch / "fake_key").write_text("sk-fake-123\n")
+    w = sandboxed_workspace(tmp_path / "ws", deny_read=(secrets,))
+
+    rows = [
+        (f"open({str(secrets / 'note.txt')!r}).read()", "denied"),                  # 額外的 deny_read 目錄裡的檔案
+        (f"open({str(FIXLAB_ROOT / 'AGENTS.md')!r}).read()", "denied"),             # fixlab 專案根目錄的 AGENTS.md
+        (f"open({str(home_scratch / 'fake_key')!r}).read()", "denied"),             # 家目錄裡的假金鑰檔
+        ("__import__('os').listdir(__import__('os').path.expanduser('~/.ssh'))", "denied"),   # 列出 ~/.ssh
+        (f"open({str(FIXLAB_ROOT / '.git' / 'HEAD')!r}).read()", "denied"),         # 專案根目錄的 .git/HEAD
+        ("open('timelog/parser.py').read()", "ok"),                                   # 工作目錄裡的檔案
+        ("__import__('regex')", "ok"),                                                # 虛擬環境裡安裝的套件
+    ]
+    for action, expected in rows:
+        assert probe(w, action) == expected, action
+
+
+# Scenario: Writing outside the workspace
+@macos_only
+def test_sandbox_blocks_writing_to_the_home_directory(tmp_path, home_scratch):
+    w = sandboxed_workspace(tmp_path / "ws")
+    target = home_scratch / "written.txt"
+    assert probe(w, f"open({str(target)!r}, 'w').write('x')") == "denied"
+    assert not target.exists()
+
+
+@macos_only
+def test_sandbox_blocks_writing_outside_the_workspace_and_allows_inside(tmp_path):
+    w = sandboxed_workspace(tmp_path / "ws")
+    assert probe(w, "open('/tmp/fixlab-sandbox-test.txt', 'w').write('x')") == "denied"
+    assert probe(w, "open('inside.txt', 'w').write('x')") == "ok"
+    assert (w.root / "inside.txt").exists()
+
+
+# Scenario: Profile has no literal paths（不需要 sandbox-exec，任何平台都能測）
+def test_profile_text_has_no_literal_paths(tmp_path):
+    root = tmp_path / "ws"
+    root.mkdir()
+    secrets = tmp_path / "secrets"
+    secrets.mkdir()
+    command = sandbox.wrap_command(["python", "-V"], root, sys.executable, FIXLAB_ROOT, (secrets,), tmp_path / "tmp")
+    profile = command[command.index("-p") + 1] if "-p" in command else sandbox.build_profile(1)
+    for path in (root, FIXLAB_ROOT, HOME, secrets, tmp_path / "tmp"):
+        assert str(path) not in profile
+    assert profile == sandbox.build_profile(1)
+
+
+# 實驗發現：規則裡的路徑必須是真實路徑（macOS 的 /var 是 /private/var 的捷徑）
+@macos_only
+def test_a_workspace_given_as_a_symbolic_link_still_works(tmp_path):
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real, target_is_directory=True)
+    w = sandboxed_workspace(link)
+    assert probe(w, "open('inside.txt', 'w').write('x')") == "ok"
+
+
+# 實際使用時，工作目錄就在家目錄底下
+@macos_only
+def test_a_workspace_inside_the_home_directory_works(home_scratch):
+    w = sandboxed_workspace(home_scratch / "ws")
+    assert probe(w, "open('timelog/parser.py').read()") == "ok"
+    assert probe(w, "open('inside.txt', 'w').write('x')") == "ok"
+    assert probe(w, "open(" + repr(str(home_scratch / "outside.txt")) + ", 'w').write('x')") == "denied"
+
+
+# 每次執行有專屬的暫存目錄，tmp_path 不會把垃圾寫進工作目錄
+def test_tmp_path_does_not_pollute_the_workspace(tmp_path):
+    w = sandboxed_workspace(tmp_path / "ws")
+    (w.root / "tests").mkdir(exist_ok=True)
+    (w.root / "tests" / "test_tmp.py").write_text("def test_tmp(tmp_path):\n    (tmp_path / 'a.txt').write_text('x')\n    assert str(tmp_path) == 'x'\n")
+    before = {p.relative_to(w.root).as_posix() for p in w.root.rglob("*")}
+
+    output = w.call("run_tests", {"target": "tests/test_tmp.py"}).output
+
+    used = re.search(r"assert '(\S+)' == 'x'", output).group(1)  # 失敗訊息裡帶著 tmp_path 的真實位置
+    assert not used.startswith(str(w.root))
+    assert not Path(used).exists()  # 跑完整個目錄都刪掉了
+    after = {p.relative_to(w.root).as_posix() for p in w.root.rglob("*")}
+    assert after == before
+
+
+# 啟動失敗不能被當成通過
+def test_a_python_that_fails_to_start_is_not_a_pass(tmp_path):
+    w = sandboxed_workspace(tmp_path / "ws", python="/usr/bin/false")
+    r = w.call("run_tests", {})
+    assert r.flags["tests_passed"] is False
+
+
+# 沒有沙箱可用時直接執行，並且說清楚
+def test_without_a_sandbox_tests_still_run_and_the_status_says_so(tmp_path, monkeypatch):
+    monkeypatch.setattr(sandbox, "SANDBOX_EXEC", None)
+    assert sandbox.sandbox_status().startswith("OFF")
+    w = sandboxed_workspace(tmp_path / "ws")
+    (w.root / "tests").mkdir()
+    (w.root / "tests" / "test_ok.py").write_text("def test_ok():\n    assert True\n")
+    assert w.call("run_tests", {}).flags["tests_passed"] is True

@@ -211,3 +211,8 @@ def test_diff_says_no_changes_when_nothing_changed():
 def test_diff_explains_final_newline_only_change():
     out = diff_report({"a.py": b"x\n"}, {"a.py": b"x"})
     assert out == "a.py: only line endings or the final newline changed"
+
+
+def test_the_sandbox_status_is_printed_at_the_start(project, capsys):
+    run_fix(project, FakeClient([("Done.", None)]))
+    assert "sandbox: " in capsys.readouterr().err  # 沙箱是安全功能，開或沒開都要讓使用者看得到

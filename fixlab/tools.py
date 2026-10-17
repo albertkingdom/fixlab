@@ -6,11 +6,14 @@
 
 import os
 import subprocess
+import tempfile
 import time
 from functools import partial
+from pathlib import Path
 
 import regex
 
+from fixlab.sandbox import sandbox_available, wrap_command
 from fixlab.workspace import ToolError, ToolResult, Workspace, file_digest, iter_files
 
 # 工具輸出一律有上限：輸出會留在對話歷史裡每一輪重送，是成本與小模型 context 的主要壓力。
@@ -24,9 +27,10 @@ GREP_LINE_TIMEOUT_S = 1      # 比對一行的時間上限，擋災難性回溯
 GREP_TOTAL_TIMEOUT_S = 5     # 整個搜尋的時間上限。這幾個秒數做成模組常數，測試可以改短
 RUN_TESTS_TIMEOUT_S = 10  # 做成模組常數，測試無窮迴圈的案例時可以改短，不用真的等 10 秒
 
-# 測試子行程唯一能看到的環境變數。用白名單：金鑰的名字無法窮舉（OPENAI_KEY、STRIPE_SK、GH_PAT……），
+# 測試子行程從父行程繼承的環境變數。用白名單：金鑰的名字無法窮舉（OPENAI_KEY、STRIPE_SK、GH_PAT……），
 # 而且被執行的程式包含模型改寫過的檔案，只要印出環境，金鑰就會進入測試輸出與對話。
-CHILD_ENV_NAMES = ("PATH", "LANG", "LC_ALL", "TMPDIR")
+# TMPDIR 不在這裡：每次執行都換成專屬的暫存目錄（見 run_tests）。
+CHILD_ENV_NAMES = ("PATH", "LANG", "LC_ALL")
 
 READ_FILE_DESCRIPTION = (
     "Read a text file in the working directory. Every line is prefixed with its line number. "
@@ -310,12 +314,18 @@ def run_tests(ws: Workspace, target: str = ".") -> ToolResult:
     # -p no:cacheprovider 不在工作目錄留下 .pytest_cache；-- 與目標的 ./ 前綴一起，確保目標只會被當成路徑。
     command = [ws.python, "-m", "pytest", "-q", "-p", "no:cacheprovider",
                "-c", "/dev/null", "--rootdir=.", "--confcutdir=.", "--", relative_target]
-    try:
-        done = subprocess.run(command, cwd=ws.root, env=child_environment(), stdin=subprocess.DEVNULL,
-                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=RUN_TESTS_TIMEOUT_S)
-        output, timed_out, passed = done.stdout, False, done.returncode == 0
-    except subprocess.TimeoutExpired as e:
-        output, timed_out, passed = e.stdout or b"", True, False
+    # 每次執行用專屬的暫存目錄：很多程式與測試（pytest 的 tmp_path）需要暫存檔，沙箱又不准寫工作目錄以外的地方。
+    # 沒有它，pytest 會把暫存檔悄悄寫進工作目錄，弄髒結束時的差異比較。跑完整個刪掉。
+    with tempfile.TemporaryDirectory(prefix="fixlab-run-") as tmp:
+        tmpdir = Path(tmp).resolve()
+        if sandbox_available():
+            command = wrap_command(command, ws.root, ws.python, ws.project_root, ws.deny_read, tmpdir)
+        try:
+            done = subprocess.run(command, cwd=ws.root, env=child_environment(tmpdir), stdin=subprocess.DEVNULL,
+                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=RUN_TESTS_TIMEOUT_S)
+            output, timed_out, passed = done.stdout, False, done.returncode == 0
+        except subprocess.TimeoutExpired as e:
+            output, timed_out, passed = e.stdout or b"", True, False
     text = output.decode("utf-8", errors="replace")
     if timed_out:
         text += f"\n[tests timed out after {RUN_TESTS_TIMEOUT_S}s]"
@@ -323,12 +333,13 @@ def run_tests(ws: Workspace, target: str = ".") -> ToolResult:
     return ToolResult(clip_middle(text), True, {"tests_passed": passed, "timed_out": timed_out})
 
 
-def child_environment() -> dict:
-    """測試子行程的環境變數：只放白名單裡有設的，再加上不產生 .pyc 的設定。"""
+def child_environment(tmpdir: Path) -> dict:
+    """測試子行程的環境變數：白名單裡有設的、這次執行專屬的暫存目錄，再加上不產生 .pyc 的設定。"""
     env = {}
     for name in CHILD_ENV_NAMES:
         if name in os.environ:
             env[name] = os.environ[name]
+    env["TMPDIR"] = str(tmpdir)
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     return env
 
