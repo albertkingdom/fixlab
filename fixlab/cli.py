@@ -1,6 +1,6 @@
 """fixlab 的最小入口（smoke 用，不是階段 2 的正式 CLI）。
 
-流程：檢查參數與金鑰 → 對 PATH 拍快照 → 跑 agent → 自己再跑一次測試 → 印結果與快照 diff。
+流程：檢查參數與金鑰 → 對 PATH 拍快照 → 跑 agent（過程寫進事件檔）→ 自己再跑一次測試 → 印結果與快照 diff。
 最後那次測試不聽模型怎麼說，結果決定結束碼：0 是測試通過，1 是沒通過，2 是輸入有誤。
 agent 直接修改 PATH，不複製、不寫回；一次性執行沒有人在旁邊授權，所以改成事後審查，
 diff 涵蓋測試檔，竄改看得到。因為直接改 PATH，請對有備份或已 commit 的目錄使用。
@@ -9,15 +9,19 @@ diff 涵蓋測試檔，竄改看得到。因為直接改 PATH，請對有備份�
 import argparse
 import difflib
 import os
+import platform
+import subprocess
 import sys
 from pathlib import Path
 
+import openai
 from openai import OpenAI
 
 from fixlab.loop import DEFAULT_MAX_STEPS, run_agent
-from fixlab.tools import register_tools
 from fixlab.sandbox import sandbox_status
-from fixlab.workspace import Workspace, iter_files, looks_like_test_file
+from fixlab.telemetry import EventLog, default_log_dir
+from fixlab.tools import register_tools
+from fixlab.workspace import FIXLAB_ROOT, Workspace, iter_files, looks_like_test_file
 
 # 送給模型的任務文字維持英文。
 DEFAULT_TASK = "The tests fail under pytest. Find the cause and fix it."
@@ -55,16 +59,29 @@ def main(argv=None, client=None) -> int:
     print(f"sandbox: {sandbox_status()}", file=sys.stderr)  # 沙箱是安全功能，沒開要讓使用者看得到
     before = take_snapshot(root)
 
+    log = EventLog(default_log_dir(), model)
+    if log.path is not None:
+        print(f"log: {log.path}", file=sys.stderr)
+    log.write("run_start", **run_conditions(args, model, root))
+    log.write("task_start", task=1, text=args.task)
+
     # 修 bug：測試檔是評分標準，模型不能改，被執行的程式也不能改
     ws = Workspace(root, read_only=looks_like_test_file, protect_tests=True)
     register_tools(ws)
     result = run_agent(client, model, ws, args.task, max_steps=args.max_steps,
-                       request_extra={"max_tokens": args.max_tokens}, trace=print_step)
+                       request_extra={"max_tokens": args.max_tokens}, trace=trace_to(log, task=1))
 
     # 模型可能沒跑測試就宣告完成，所以結束後自己再跑一次，看真正的結果。
     # 先跑測試、再拍「之後」的快照：測試程式在跑的過程中動了什麼檔案，也會出現在差異裡。
     final = ws.call("run_tests", {})
     after = take_snapshot(root)
+
+    log.write("task_end", task=1, stop_reason=result.stop_reason, steps=result.steps, counters=result.counters,
+              prompt_tokens=result.prompt_tokens, completion_tokens=result.completion_tokens, seconds=result.seconds,
+              final_tests={"tests_passed": final.flags.get("tests_passed", False),
+                           "timed_out": final.flags.get("timed_out", False)},
+              changed_files=changed_files(before, after))
+    log.close()
 
     print(f"stop reason: {result.stop_reason}  steps: {result.steps}  "
           f"tokens: {result.prompt_tokens} prompt + {result.completion_tokens} completion")
@@ -88,6 +105,34 @@ def fail(message: str) -> int:
     return 2
 
 
+def run_conditions(args, model: str, root: Path) -> dict:
+    """run_start 事件的內容：這次執行的條件。只放程式本來就知道的；量化方式之類 API 不會告訴我們的，之後由 --meta 補。"""
+    return {
+        "schema": 1, "mode": "once", "model": model, "base_url": os.environ.get("OPENAI_BASE_URL"),
+        "path": str(root), "max_steps": args.max_steps, "max_tokens": args.max_tokens,
+        "sandbox": sandbox_status(), "fixlab_commit": fixlab_commit(),
+        "python": platform.python_version(), "openai": openai.__version__, "meta": {},
+    }
+
+
+def fixlab_commit() -> str | None:
+    """fixlab 自己程式的 git commit；不在 git 底下（例如用 pip 裝的）或沒有 git 就是 None。"""
+    try:
+        done = subprocess.run(["git", "-C", str(FIXLAB_ROOT), "rev-parse", "HEAD"],
+                              capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return done.stdout.strip() if done.returncode == 0 else None
+
+
+def trace_to(log: EventLog, task: int):
+    """trace 回呼：每筆紀錄印一行到畫面，同時寫進事件檔。"""
+    def trace(record: dict) -> None:
+        print_step(record)
+        log.write("trace", task=task, record=record)
+    return trace
+
+
 def print_step(record: dict) -> None:
     """trace 回呼：每個工具呼叫在 stderr 印一行。"""
     if record.get("event") == "request_error":
@@ -104,6 +149,14 @@ def take_snapshot(root: Path) -> dict[str, bytes]:
         name = path.relative_to(root).as_posix()
         snapshot[name] = path.read_bytes()
     return snapshot
+
+
+def changed_files(before: dict[str, bytes], after: dict[str, bytes]) -> dict[str, list[str]]:
+    """哪些檔案新增、修改、刪除（路徑排序過）。事件檔用它，和印出的 diff 看的是同一份快照。"""
+    added = sorted(name for name in after if name not in before)
+    deleted = sorted(name for name in before if name not in after)
+    modified = sorted(name for name in before if name in after and before[name] != after[name])
+    return {"added": added, "modified": modified, "deleted": deleted}
 
 
 def diff_report(before: dict[str, bytes], after: dict[str, bytes]) -> str:

@@ -1,9 +1,11 @@
 # fixlab 最小入口的測試：用假 client，不需要真的 LLM。
 # 目前只涵蓋參數與錯誤、每步輸出、快照 diff。結束後再跑 run_tests 的部分，等 run_tests 完成後再補。
 # 一律先把 fixture 複製到暫存目錄再當 PATH：fixlab 會直接修改指定的目錄。
+import json
+
 import pytest
 
-from fixlab.cli import DEFAULT_TASK, diff_report, main, take_snapshot
+from fixlab.cli import DEFAULT_TASK, changed_files, diff_report, main, take_snapshot
 from fixlab.sandbox import sandbox_available
 from test_fixture import BUGGY, FIXED, copy_fixture  # 把 timelog 複製到暫存目錄；bug 與修法
 from test_loop import FakeClient, native  # 依序回傳劇本回覆的假 client
@@ -12,6 +14,21 @@ from test_loop import FakeClient, native  # 依序回傳劇本回覆的假 clien
 @pytest.fixture
 def project(tmp_path):
     return copy_fixture(tmp_path)
+
+
+@pytest.fixture(autouse=True)
+def home(tmp_path_factory, monkeypatch):
+    """事件檔預設寫在 ~/.fixlab/runs：CLI 的測試一律把家目錄換成暫存目錄，不能寫進真的。
+    這個資料夾和 project 是兄弟，不是上下層，沙箱擋家目錄時才不會連 project 一起擋掉。"""
+    folder = tmp_path_factory.mktemp("home")
+    monkeypatch.setenv("HOME", str(folder))
+    return folder
+
+
+def event_lines(home):
+    """這次執行寫出的事件檔，每行解析成 dict。"""
+    (path,) = (home / ".fixlab" / "runs").glob("*/events.jsonl")
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
 def run_fix(project, client, *extra):
@@ -245,3 +262,80 @@ def test_diff_explains_final_newline_only_change():
 def test_the_sandbox_status_is_printed_at_the_start(project, capsys):
     run_fix(project, FakeClient([("Done.", None)]))
     assert "sandbox: " in capsys.readouterr().err  # 沙箱是安全功能，開或沒開都要讓使用者看得到
+
+
+# ── 事件檔：對應 run-telemetry 規格（一次性模式）──────────────────────────────
+
+FIX_SCRIPT = [
+    (None, [native("read_file", path="timelog/parser.py")]),
+    (None, [native("edit_file", path="timelog/parser.py", old_string=BUGGY, new_string=FIXED)]),
+    ("Fixed.", None),
+]
+
+
+# Scenario: A one-task run
+def test_one_shot_run_writes_run_start_task_start_traces_and_task_end(project, home, capsys):
+    exit_code = run_fix(project, FakeClient(FIX_SCRIPT))
+
+    assert exit_code == 0
+    lines = event_lines(home)
+    assert [line["event"] for line in lines] == ["run_start", "task_start", "trace", "trace", "trace", "task_end"]
+    run_start, task_start, *traces, task_end = lines
+
+    assert run_start["schema"] == 1 and run_start["mode"] == "once" and run_start["model"] == "m"
+    assert run_start["path"] == str(project.resolve()) and run_start["max_steps"] == 20
+    assert run_start["max_tokens"] == 8192 and run_start["meta"] == {}
+    assert run_start["sandbox"].startswith(("on", "OFF"))
+    assert {"fixlab_commit", "python", "openai", "base_url"} <= run_start.keys()
+
+    assert task_start["task"] == 1 and task_start["text"] == DEFAULT_TASK
+    assert [t["record"]["step"] for t in traces] == [1, 2, 3] and all(t["task"] == 1 for t in traces)
+    assert traces[2]["record"]["event"] == "done"
+
+    assert task_end["task"] == 1 and task_end["stop_reason"] == "done" and task_end["steps"] == 3
+    assert task_end["prompt_tokens"] == 30 and task_end["completion_tokens"] == 15
+    assert task_end["counters"] == {}  # 這個劇本沒有 parse 錯誤、沒被擋、也沒跑 run_tests
+    assert "log: " in capsys.readouterr().err
+
+
+# Scenario: The model fixed the bug
+def test_task_end_has_the_final_test_result_and_the_changed_files(project, home):
+    run_fix(project, FakeClient(FIX_SCRIPT))
+
+    task_end = event_lines(home)[-1]
+    assert task_end["final_tests"] == {"tests_passed": True, "timed_out": False}
+    assert task_end["changed_files"] == {"added": [], "modified": ["timelog/parser.py"], "deleted": []}
+
+
+def test_a_run_that_fixes_nothing_reports_failing_tests_and_no_changes(project, home):
+    exit_code = run_fix(project, FakeClient([("I give up.", None)]))
+
+    assert exit_code == 1
+    task_end = event_lines(home)[-1]
+    assert task_end["final_tests"]["tests_passed"] is False
+    assert task_end["changed_files"] == {"added": [], "modified": [], "deleted": []}
+
+
+# Scenario: Request failure is a trace line too
+def test_a_request_error_is_a_trace_line_and_the_task_ends_with_error(project, home):
+    run_fix(project, FakeClient([RuntimeError("boom")]))
+
+    lines = event_lines(home)
+    assert [line["event"] for line in lines] == ["run_start", "task_start", "trace", "task_end"]
+    assert lines[2]["record"]["event"] == "request_error"
+    assert lines[3]["stop_reason"] == "error"
+
+
+def test_the_log_line_names_the_event_file(project, home, capsys):
+    run_fix(project, FakeClient([("Done.", None)]))
+
+    (path,) = (home / ".fixlab" / "runs").glob("*/events.jsonl")
+    assert f"log: {path}" in capsys.readouterr().err
+
+
+def test_changed_files_lists_added_modified_and_deleted_sorted():
+    before = {"a.py": b"1", "b.py": b"1", "c.py": b"1"}
+    after = {"a.py": b"2", "c.py": b"1", "z.py": b"9", "d.py": b"9"}
+
+    assert changed_files(before, after) == {"added": ["d.py", "z.py"], "modified": ["a.py"], "deleted": ["b.py"]}
+
