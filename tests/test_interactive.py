@@ -37,6 +37,7 @@ def session(project, monkeypatch):
                 raise EOFError from None
             if isinstance(line, BaseException):
                 raise line
+            print(line)  # 真的終端機會把你打的字和換行留在畫面上
             return line
 
         monkeypatch.setattr("builtins.input", fake_input)
@@ -151,7 +152,7 @@ def test_a_finished_task_shows_the_reply_and_the_summary_but_no_result_line(sess
 
     out = capsys.readouterr().out
     assert "Fixed parse_duration." in out and "RESULT:" not in out
-    assert out.index("Fixed parse_duration.") < out.index("stop reason: done")  # 先印答案，再印摘要
+    assert out.index("Fixed parse_duration.") < out.index("(1 step")  # 先印答案，再印結尾的用量行
 
 
 def test_interactive_events_have_the_interactive_mode_and_no_final_tests(session, home):
@@ -234,7 +235,7 @@ def test_a_failed_request_discards_its_task_and_the_next_one_is_well_formed(sess
     session(client, ["fix it", "add a comment", "add a docstring"])
 
     out = capsys.readouterr().out
-    assert "stop reason: error" in out and "this task was discarded because the request failed" in out
+    assert "(stopped: error" in out and "this task was discarded because the request failed" in out
     assert client.sent[2] == [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": "fix it"},
@@ -354,5 +355,74 @@ def test_three_refused_rounds_in_a_row_end_the_task_as_stuck(session, capsys):
     client = FakeClient([(None, [an_edit()])] * 3)
     session(client, ["fix it", "n", "n", "n"])
 
-    assert "stop reason: stuck" in capsys.readouterr().out
+    assert "(stopped: stuck" in capsys.readouterr().out
+
+
+# ── 畫面：Tool calls are shown as readable blocks ─────────────────────────
+
+import re  # noqa: E402
+
+
+def without_timing(text):
+    """耗時每次都不一樣，比對前換成固定字樣。"""
+    return re.sub(r"· \d+ s\)", "· X s)", text)
+
+
+# Scenario: A read followed by a confirmed edit
+def test_a_whole_session_looks_like_this(session, capsys):
+    client = FakeClient([(None, [native("read_file", path=PARSER)]), (None, [an_edit()]), ("Fixed.", None)])
+    session(client, ["fix it", "y"])
+
+    assert without_timing(capsys.readouterr().out) == (
+        "fixlab> fix it\n"
+        "\n"
+        "  ▸ read_file timelog/parser.py\n"
+        "    ✓\n"
+        "  ▸ edit_file timelog/parser.py\n"
+        '    - [re.match(r"(\\d+)([hm])", text).groups()]\n'
+        '    + re.findall(r"(\\d+)([hm])", text)\n'
+        "    Allow? [y]es / [a]lways for this tool / [N]o: y\n"
+        "    ✓\n"
+        "\n"
+        "Fixed.\n"
+        "\n"
+        "(3 steps · 30 + 15 tokens · X s)\n"
+        "fixlab> \n"
+    )
+
+
+# Scenario: A refused call
+def test_a_refused_call_ends_its_block_with_declined(session, capsys):
+    session(FakeClient([(None, [native("run_tests")]), ("OK.", None)]), ["run them", "n"])
+
+    out = capsys.readouterr().out
+    assert "  ▸ run_tests .\n    Allow? [y]es / [a]lways for this tool / [N]o: n\n    ✗ declined\n" in out
+
+
+# Scenario: Failing tests
+def test_failing_tests_end_their_block_with_the_pytest_summary(session, capsys):
+    session(FakeClient([(None, [native("run_tests")]), ("Still failing.", None)]), ["run them", "y"])
+
+    assert re.search(r"    ✗ 1 failed, 4 passed in [\d.]+s\n", capsys.readouterr().out)
+
+
+def test_a_blocked_call_ends_with_the_reason(session, capsys):
+    edit_test = native("edit_file", path="tests/test_report.py", old_string="assert", new_string="pass")
+    session(FakeClient([(None, [edit_test]), ("OK.", None)]), ["edit the test", "y"])
+
+    assert "    ✗ blocked: 'tests/test_report.py' is read-only" in capsys.readouterr().out
+
+
+def test_the_per_call_lines_do_not_go_to_standard_error(session, capsys):
+    session(FakeClient([(None, [native("list_files")]), ("Done.", None)]), ["look"])
+
+    err = capsys.readouterr().err
+    assert "ok=True" not in err and "flags=" not in err
+
+
+def test_a_request_error_is_shown_to_the_user(session, capsys):
+    session(FakeClient([RuntimeError("boom")]), ["go"])
+
+    out = capsys.readouterr().out
+    assert "  ! request failed" in out and "boom" in out
 

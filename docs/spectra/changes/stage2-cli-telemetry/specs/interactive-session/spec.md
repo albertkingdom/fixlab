@@ -81,16 +81,16 @@ Interactive mode SHALL NOT run the project's tests after a task on its own. The 
 #### Scenario: A task ends
 
 - **WHEN** a task finishes with stop reason `done`
-- **THEN** fixlab prints the stop reason, steps and tokens for the task and returns to the prompt, and no `RESULT:` line is printed
+- **THEN** fixlab prints the footer line for the task and returns to the prompt, and no `RESULT:` line is printed
 
 ### Requirement: The model's final reply is shown
 
-When a task ends with stop reason `done`, interactive mode SHALL print the model's final message on standard output before the summary line, because that message is the answer the user asked for. For other stop reasons there is no final message to print.
+When a task ends with stop reason `done`, interactive mode SHALL print the model's final message on standard output, with a blank line before and after it and the footer line below, because that message is the answer the user asked for. For other stop reasons there is no final message to print.
 
 #### Scenario: A task finishes
 
 - **WHEN** the model ends a task with the reply "Fixed parse_duration."
-- **THEN** standard output contains `Fixed parse_duration.` followed by the line starting with `stop reason: done`
+- **THEN** standard output contains `Fixed parse_duration.` followed by the footer line
 
 ### Requirement: A task that fails with a request error is discarded
 
@@ -105,4 +105,56 @@ When a task ends with stop reason `error`, the session SHALL restore the convers
 
 - **WHEN** a task ends with stop reason `max_steps` after one tool call and the user types a second line
 - **THEN** the second task's first request contains the first task's messages, including the tool call and its result
+
+### Requirement: Tool calls are shown as readable blocks
+
+In interactive mode every tool call SHALL be shown on standard output as a block, in the order the calls run. The block starts with a header line `  ▸ <tool> <what it touches>`: for `read_file` the path (and the line range when one is given), for `list_files` the path (`.` when none), for `grep` the pattern and the path, for `edit_file` the path, for `write_file` the path and the number of characters, for `run_tests` the target (`.` when none). For `edit_file` the header is followed by the removed text as lines starting with `    - ` and the added text as lines starting with `    + `, at most 10 lines of each, each line cut to 200 characters, and a line `    … N more lines` when lines were left out. When the user is asked, the question follows. The block ends with a result line starting with `    ✓` or `    ✗`: `✓` when the call succeeded (for `run_tests` with the test summary, for example `✓ 5 passed in 0.01s`), `✗ 1 failed, 4 passed in 0.01s` when tests ran and failed, `✗ declined` when the user refused, `✗ blocked: <reason>` when a rule blocked it, and `✗ <reason>` for any other error. A blank line SHALL separate the typed task from the first block. The per-call lines SHALL NOT go to standard error in interactive mode.
+
+#### Scenario: A read followed by a confirmed edit
+
+- **WHEN** the model reads `timelog/parser.py`, then edits it, and the user answers `y`
+- **THEN** standard output shows, in this order, `▸ read_file timelog/parser.py`, `✓`, `▸ edit_file timelog/parser.py`, one `-` line, one `+` line, the question, and `✓`
+
+#### Scenario: A refused call
+
+- **WHEN** the user answers `n` to a `run_tests` question
+- **THEN** the block for that call ends with `✗ declined`
+
+#### Scenario: Failing tests
+
+- **WHEN** `run_tests` runs and one test fails
+- **THEN** the block ends with a `✗` line showing the pytest summary, such as `1 failed, 4 passed in 0.01s`, although the tool call itself succeeded
+
+#### Scenario: A long edit
+
+- **WHEN** the model replaces a 25-line text with a 12-line text
+- **THEN** the block shows 10 `-` lines followed by `… 15 more lines`, and 10 `+` lines followed by `… 2 more lines`
+
+### Requirement: Each task ends with a footer line
+
+After a task, interactive mode SHALL print one footer line in parentheses: `(<N> steps · <P> + <C> tokens · <S> s)` with thousands separators in the token counts, `1 step` in the singular, and `S` the elapsed seconds rounded to a whole number. When the task did not end with stop reason `done`, the line SHALL start with `(stopped: <reason> · `. The old line `stop reason: ...` SHALL NOT be printed in interactive mode.
+
+#### Scenario: Three steps
+
+- **WHEN** a task ends with stop reason `done` after 3 steps, 11766 prompt tokens, 677 completion tokens and 18.4 seconds
+- **THEN** the footer is `(3 steps · 11,766 + 677 tokens · 18 s)`
+
+#### Scenario: Stuck
+
+- **WHEN** a task ends with stop reason `stuck` after 3 steps
+- **THEN** the footer starts with `(stopped: stuck · 3 steps`
+
+### Requirement: Colors only on a terminal
+
+Interactive mode SHALL color the output (green for `✓` and `+` lines, red for `✗` and `-` lines, dim for the footer) only when standard output is a terminal and the environment variable `NO_COLOR` is not set. Otherwise the output SHALL contain no escape codes.
+
+#### Scenario: Output is captured
+
+- **WHEN** standard output is not a terminal
+- **THEN** the output contains no escape sequences
+
+#### Scenario: NO_COLOR on a terminal
+
+- **WHEN** standard output is a terminal and `NO_COLOR` is set
+- **THEN** the output contains no escape sequences
 

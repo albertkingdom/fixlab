@@ -25,7 +25,7 @@ Tool permissions let the entry point decide whether a tool call needs the user's
 
 ### Requirement: Interactive mode asks before changing files or running tests
 
-In interactive mode the confirm function SHALL ask only for `edit_file`, `write_file` and `run_tests`; `read_file`, `list_files` and `grep` SHALL run without a question. The question SHALL be a one-line summary followed by `Allow? [y]es / [a]lways for this tool / [N]o: `. The summary for `edit_file` SHALL show the path and the old and new strings, each cut to 200 characters; for `write_file` the path and the number of characters; for `run_tests` the target (`.` when none is given).
+In interactive mode the confirm function SHALL ask only for `edit_file`, `write_file` and `run_tests`; `read_file`, `list_files` and `grep` SHALL run without a question. The question SHALL be `Allow? [y]es / [a]lways for this tool / [N]o: `, printed after the block that shows what the call will do (the header line and, for `edit_file`, the removed and added lines; see the requirement about tool call blocks in interactive-session).
 
 #### Scenario: Reading is not asked
 
@@ -50,8 +50,8 @@ In interactive mode the confirm function SHALL ask only for `edit_file`, `write_
 
 #### Scenario: Long strings are cut
 
-- **WHEN** the model calls `edit_file` with an `old_string` of 500 characters
-- **THEN** the summary shows only the first 200 characters of it
+- **WHEN** the model calls `edit_file` with an `old_string` of 500 characters on one line
+- **THEN** the removed line shows only the first 200 characters of it
 
 ### Requirement: One-shot mode never asks
 

@@ -19,6 +19,7 @@ from pathlib import Path
 import openai
 from openai import OpenAI
 
+from fixlab.display import call_header, edit_diff_lines, footer_line, result_line
 from fixlab.loop import DEFAULT_MAX_STEPS, run_agent
 from fixlab.sandbox import sandbox_status
 from fixlab.telemetry import EventLog, default_log_dir
@@ -81,8 +82,9 @@ def main(argv=None, client=None) -> int:
 
     # 修 bug：測試檔是評分標準，模型不能改，被執行的程式也不能改。
     # 互動模式使用者在場，寫檔與跑測試前問一聲；一次性執行沒有人可以問，沿用預設（全部放行）。
+    workspace_class = ShownWorkspace if args.interactive else Workspace
     options = {"confirm": make_asker()} if args.interactive else {}
-    ws = Workspace(root, read_only=looks_like_test_file, protect_tests=True, **options)
+    ws = workspace_class(root, read_only=looks_like_test_file, protect_tests=True, **options)
     register_tools(ws)
     try:
         if args.interactive:
@@ -97,7 +99,7 @@ def run_once(client, model: str, ws: Workspace, root: Path, args, log: EventLog)
     before = take_snapshot(root)
     log.write("task_start", task=1, text=args.task)
     result = run_agent(client, model, ws, args.task, max_steps=args.max_steps,
-                       request_extra={"max_tokens": args.max_tokens}, trace=trace_to(log, task=1))
+                       request_extra={"max_tokens": args.max_tokens}, trace=trace_to(log, 1, print_step))
 
     # 模型可能沒跑測試就宣告完成，所以結束後自己再跑一次，看真正的結果。
     # 先跑測試、再拍「之後」的快照：測試程式在跑的過程中動了什麼檔案，也會出現在差異裡。
@@ -149,26 +151,30 @@ def run_interactive(client, model: str, ws: Workspace, args, log: EventLog) -> i
 
 def run_task(client, model: str, ws: Workspace, args, log: EventLog, session: list, number: int, text: str) -> None:
     log.write("task_start", task=number, text=text)
-    before = len(session)  # 任務開始前的對話長度；失敗或中斷時截回這裡
+    before = len(session)  # 任務開始前的對話長度；請求失敗時截回這裡
     started = time.perf_counter()
+    print()  # 使用者打的那一行和第一個工具呼叫之間空一行
     try:
         result = run_agent(client, model, ws, text, messages=session, max_steps=args.max_steps,
-                           request_extra={"max_tokens": args.max_tokens}, trace=trace_to(log, number))
+                           request_extra={"max_tokens": args.max_tokens}, trace=trace_to(log, number, print_problem))
     except KeyboardInterrupt:
         # 已完成的部分留在對話裡（迴圈已把沒有結果的工具呼叫補上結果），再接一則說明：
         # 下一個任務的模型才知道前面做到哪裡、哪些檔案可能已經被改了。
         session.append({"role": "assistant", "content": INTERRUPT_NOTE})
+        print()  # 按 Ctrl-C 時游標可能停在問題後面，換一行再印
         print("interrupted; what was done so far is kept (files may already have been changed; use /reset to start over)")
         log.write("task_end", task=number, stop_reason="interrupted", steps=None, counters=None, prompt_tokens=None,
                   completion_tokens=None, seconds=round(time.perf_counter() - started, 2),
                   final_tests=None, changed_files=None)
         return
 
+    print()
     if result.stop_reason == "done":
         reply = session[-1]["content"]  # 迴圈把模型最後的回覆放在對話最後面：那就是使用者要的答案
         if reply:
             print(reply)
-    print(summary_line(result))
+            print()
+    print(footer_line(result))
     if result.stop_reason == "error":
         # 請求失敗：對話停在一則沒有回覆的 user 訊息，下一個任務接上去會變成兩則連續的 user 訊息，
         # 有些模型的模板會直接拒絕。跑滿步數與卡住則不同，對話仍然完整，使用者可以叫模型接著做。
@@ -178,9 +184,23 @@ def run_task(client, model: str, ws: Workspace, args, log: EventLog, session: li
     log.write("task_end", task=number, **task_result_fields(result), final_tests=None, changed_files=None)
 
 
+class ShownWorkspace(Workspace):
+    """互動模式用的 Workspace：每個工具呼叫前後把畫面印出來（標題行、改檔的差異、結果行）。
+    問題是在 call 裡面問的，所以標題要在 call 之前印、結果要在 call 之後印，順序才對。"""
+
+    def call(self, name: str, args: dict):
+        print(call_header(name, args))
+        old, new = args.get("old_string"), args.get("new_string")
+        if name == "edit_file" and isinstance(old, str) and isinstance(new, str):
+            for line in edit_diff_lines(old, new):
+                print(line)
+        result = super().call(name, args)
+        print(result_line(result))
+        return result
+
+
 # 會改檔或執行程式的工具才問；讀取類工具直接放行
 ASKED_TOOLS = ("edit_file", "write_file", "run_tests")
-SHOWN_CHARS = 200  # 問題裡每段字串最多顯示幾個字元
 INTERRUPT_NOTE = "[The user interrupted this task.]"  # 接在被打斷的任務後面，給下一個任務的模型看
 
 
@@ -192,10 +212,10 @@ def make_asker():
     def ask(name: str, args: dict) -> bool:
         if name not in ASKED_TOOLS or name in always:
             return True
-        print(describe_call(name, args))
         try:
-            answer = input("Allow? [y]es / [a]lways for this tool / [N]o: ")
+            answer = input("    Allow? [y]es / [a]lways for this tool / [N]o: ")
         except EOFError:  # 輸入結束了，沒有人可以同意：拒絕
+            print()  # 問題後面沒有換行，補一個，下一行的結果才不會接在後面
             return False
         answer = answer.strip().lower()
         if answer == "a":
@@ -204,20 +224,6 @@ def make_asker():
         return answer == "y"  # 其他一律拒絕，包括空白
 
     return ask
-
-
-def describe_call(name: str, args: dict) -> str:
-    """問題前面那一行摘要：這個呼叫要動什麼。"""
-    if name == "edit_file":
-        return f"edit_file {args['path']}: replace {shown(args['old_string'])} with {shown(args['new_string'])}"
-    if name == "write_file":
-        return f"write_file {args['path']} ({len(args['content'])} characters)"
-    return f"run_tests {args.get('target', '.')}"
-
-
-def shown(text: str) -> str:
-    """最多顯示 SHOWN_CHARS 個字元；用 repr 顯示，換行才看得見。"""
-    return repr(text if len(text) <= SHOWN_CHARS else text[:SHOWN_CHARS] + "…")
 
 
 def summary_line(result) -> str:
@@ -274,12 +280,23 @@ def fixlab_commit() -> str | None:
     return done.stdout.strip() if done.returncode == 0 else None
 
 
-def trace_to(log: EventLog, task: int):
-    """trace 回呼：每筆紀錄印一行到畫面，同時寫進事件檔。"""
+def trace_to(log: EventLog, task: int, printer):
+    """trace 回呼：每筆紀錄交給 printer 決定要不要印，同時寫進事件檔。"""
     def trace(record: dict) -> None:
-        print_step(record)
+        printer(record)
         log.write("trace", task=task, record=record)
     return trace
+
+
+def print_problem(record: dict) -> None:
+    """互動模式的 trace 輸出：工具呼叫的畫面由 ShownWorkspace 印，這裡只印出問題。"""
+    event = record.get("event")
+    if event == "request_error":
+        print(f"  ! request failed: {record['error']}")
+    elif event == "retry":
+        print(f"  ! the server is busy, retrying (attempt {record['attempt']})")
+    elif event == "invalid_tool_call":
+        print(f"  ! the model's tool call was invalid: {'; '.join(record['parse_errors'])}")
 
 
 def print_step(record: dict) -> None:
