@@ -173,3 +173,72 @@ def test_a_task_can_use_the_tools_and_edit_the_project(session, project):
     session(client, ["fix it"])
 
     assert FIXED in (project / "timelog" / "parser.py").read_text()
+
+
+# ── Interrupting a task discards its messages ─────────────────────────────
+
+INTERRUPT_MESSAGE = "interrupted; this task was discarded; files may already have been changed (use /reset to start over)"
+
+
+# Scenario: Interrupted between a tool call and its result
+def test_ctrl_c_in_the_middle_of_a_task_leaves_no_dangling_tool_call(session, home, capsys):
+    # 第一個任務：第一次請求回了工具呼叫（已加進對話），第二次請求時使用者按 Ctrl-C
+    client = FakeClient([(None, [native("list_files")]), KeyboardInterrupt(), ("Second done.", None)])
+    session(client, ["first task", "second task"])
+
+    assert INTERRUPT_MESSAGE in capsys.readouterr().out
+    # 對話被截回任務開始前（空的），第二個任務從系統提示重新開始，沒有缺少結果的 tool_calls
+    assert client.sent[2] == [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": "second task"}]
+    ends = [line for line in event_lines(home) if line["event"] == "task_end"]
+    assert ends[0]["task"] == 1 and ends[0]["stop_reason"] == "interrupted"
+    assert ends[0]["steps"] is None and ends[0]["counters"] is None
+    assert ends[0]["prompt_tokens"] is None and ends[0]["completion_tokens"] is None
+    assert ends[0]["seconds"] >= 0 and ends[0]["final_tests"] is None
+    assert ends[1]["task"] == 2 and ends[1]["stop_reason"] == "done"
+
+
+def test_an_interrupt_only_discards_the_interrupted_task(session):
+    client = FakeClient([("First done.", None), (None, [native("list_files")]), KeyboardInterrupt(), ("Third done.", None)])
+    session(client, ["one", "two", "three"])
+
+    assert client.sent[3] == [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": "one"},
+        {"role": "assistant", "content": "First done."},
+        {"role": "user", "content": "three"},
+    ]
+
+
+# ── A task that fails with a request error is discarded ──────────────────
+
+
+# Scenario: A request fails after an earlier task succeeded
+def test_a_failed_request_discards_its_task_and_the_next_one_is_well_formed(session, capsys):
+    client = FakeClient([("Done.", None), RuntimeError("boom"), ("Documented.", None)])
+    session(client, ["fix it", "add a comment", "add a docstring"])
+
+    out = capsys.readouterr().out
+    assert "stop reason: error" in out and "this task was discarded because the request failed" in out
+    assert client.sent[2] == [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": "fix it"},
+        {"role": "assistant", "content": "Done."},
+        {"role": "user", "content": "add a docstring"},
+    ]
+
+
+def test_a_failure_in_the_first_task_leaves_the_session_empty(session):
+    client = FakeClient([RuntimeError("boom"), ("OK.", None)])
+    session(client, ["first", "second"])
+
+    assert client.sent[1] == [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": "second"}]
+
+
+# Scenario: A task runs out of steps
+def test_a_task_that_runs_out_of_steps_keeps_its_messages(session):
+    client = FakeClient([(None, [native("list_files")]), ("Continued.", None)])
+    session(client, ["look around", "keep going"], "--max-steps", "1")
+
+    roles = [m["role"] for m in client.sent[1]]
+    assert roles == ["system", "user", "assistant", "tool", "user"]  # 工具呼叫與結果都還在
+

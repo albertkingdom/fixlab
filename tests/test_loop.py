@@ -27,7 +27,7 @@ def native(name, **args):
 class FakeClient:
     """依序回傳劇本裡的回覆，並記下每次請求收到的對話與工具清單。
 
-    劇本的每一項是 (文字, 工具呼叫) 或 (文字, 工具呼叫, finish_reason)；如果是例外物件，這次請求就丟出它。
+    劇本的每一項是 (文字, 工具呼叫) 或 (文字, 工具呼叫, finish_reason)；如果是例外物件（含 KeyboardInterrupt），這次請求就丟出它。
     """
 
     def __init__(self, replies):
@@ -40,7 +40,7 @@ class FakeClient:
         self.sent.append(list(messages))
         self.tools.append(tools)
         reply = self.replies.pop(0)
-        if isinstance(reply, Exception):
+        if isinstance(reply, BaseException):  # 例外，或 KeyboardInterrupt（模擬 Ctrl-C）
             raise reply
         content, tool_calls = reply[0], reply[1]
         finish_reason = reply[2] if len(reply) == 3 else "stop"

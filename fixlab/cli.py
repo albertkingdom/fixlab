@@ -13,6 +13,7 @@ import os
 import platform
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import openai
@@ -146,13 +147,31 @@ def run_interactive(client, model: str, ws: Workspace, args, log: EventLog) -> i
 
 def run_task(client, model: str, ws: Workspace, args, log: EventLog, session: list, number: int, text: str) -> None:
     log.write("task_start", task=number, text=text)
-    result = run_agent(client, model, ws, text, messages=session, max_steps=args.max_steps,
-                       request_extra={"max_tokens": args.max_tokens}, trace=trace_to(log, number))
+    before = len(session)  # 任務開始前的對話長度；失敗或中斷時截回這裡
+    started = time.perf_counter()
+    try:
+        result = run_agent(client, model, ws, text, messages=session, max_steps=args.max_steps,
+                           request_extra={"max_tokens": args.max_tokens}, trace=trace_to(log, number))
+    except KeyboardInterrupt:
+        # 可能停在「模型要呼叫工具、結果還沒回來」中間：API 要求每個 tool_calls 都有結果，留著會讓之後每個請求都被拒絕。
+        # 所以整個任務丟掉。代價：已經執行的修改還留在檔案裡，但對話不記得，所以提醒使用者。
+        del session[before:]
+        print("interrupted; this task was discarded; files may already have been changed (use /reset to start over)")
+        log.write("task_end", task=number, stop_reason="interrupted", steps=None, counters=None, prompt_tokens=None,
+                  completion_tokens=None, seconds=round(time.perf_counter() - started, 2),
+                  final_tests=None, changed_files=None)
+        return
+
     if result.stop_reason == "done":
         reply = session[-1]["content"]  # 迴圈把模型最後的回覆放在對話最後面：那就是使用者要的答案
         if reply:
             print(reply)
     print(summary_line(result))
+    if result.stop_reason == "error":
+        # 請求失敗：對話停在一則沒有回覆的 user 訊息，下一個任務接上去會變成兩則連續的 user 訊息，
+        # 有些模型的模板會直接拒絕。跑滿步數與卡住則不同，對話仍然完整，使用者可以叫模型接著做。
+        del session[before:]
+        print("this task was discarded because the request failed")
     # 互動模式使用者在場，想驗證可以直接叫模型跑測試，所以沒有最後的測試結果與檔案變動
     log.write("task_end", task=number, **task_result_fields(result), final_tests=None, changed_files=None)
 

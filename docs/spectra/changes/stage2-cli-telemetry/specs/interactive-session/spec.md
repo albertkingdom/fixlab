@@ -57,7 +57,7 @@ In interactive mode a line that is empty or only spaces SHALL be ignored. `/exit
 
 ### Requirement: Interrupting a task discards its messages
 
-When the user presses Ctrl-C while a task is running, the session SHALL restore the conversation to its length before the task started, print `interrupted; this task was discarded; files may already have been changed (use /reset to start over)`, write a `task_end` event with `stop_reason` `interrupted` for that task, and show the prompt again. The next task's request SHALL NOT contain an assistant tool call without its matching tool result.
+When the user presses Ctrl-C while a task is running, the session SHALL restore the conversation to its length before the task started, print `interrupted; this task was discarded; files may already have been changed (use /reset to start over)`, write a `task_end` event with `stop_reason` `interrupted` for that task (`steps`, `counters`, `prompt_tokens` and `completion_tokens` are null because the run did not return them; `seconds` is measured), and show the prompt again. The next task's request SHALL NOT contain an assistant tool call without its matching tool result.
 
 #### Scenario: Interrupted between a tool call and its result
 
@@ -81,4 +81,18 @@ When a task ends with stop reason `done`, interactive mode SHALL print the model
 
 - **WHEN** the model ends a task with the reply "Fixed parse_duration."
 - **THEN** standard output contains `Fixed parse_duration.` followed by the line starting with `stop reason: done`
+
+### Requirement: A task that fails with a request error is discarded
+
+When a task ends with stop reason `error`, the session SHALL restore the conversation to its length before the task started and print `this task was discarded because the request failed`, so that the next task does not follow a user message that never got a reply. Tasks that end with `max_steps` or `stuck` SHALL keep their messages, because the conversation is still well formed and the user can ask the model to continue.
+
+#### Scenario: A request fails after an earlier task succeeded
+
+- **WHEN** the user types `fix it` and gets the reply "Done.", then types `add a comment` and the request fails, then types `add a docstring`
+- **THEN** the third task's first request contains the messages of the first task and the line `add a docstring`, and nothing from the failed task
+
+#### Scenario: A task runs out of steps
+
+- **WHEN** a task ends with stop reason `max_steps` after one tool call and the user types a second line
+- **THEN** the second task's first request contains the first task's messages, including the tool call and its result
 
