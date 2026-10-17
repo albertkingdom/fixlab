@@ -464,6 +464,40 @@ def test_protected_writes_are_counted_next_to_blocked_calls(tmp_path):
     assert r.counters["blocked_calls"] == 1 and r.counters["protected_write_calls"] == 1
 
 
+# ---- Denied calls count as failures ----
+
+def refusing_workspace(tmp_path):
+    """edit_file 一律被使用者拒絕，其他工具照常。"""
+    (tmp_path / "rules.py").write_text("def grace_days():\n    return 2\n")
+    w = Workspace(tmp_path, confirm=lambda name, args: name != "edit_file")
+    register_tools(w)
+    return w
+
+
+def an_edit():
+    return native("edit_file", path="rules.py", old_string="return 2", new_string="return 3")
+
+
+# Scenario: Three refused edits
+def test_three_refused_edits_in_a_row_stop_the_loop(tmp_path):
+    client = FakeClient([(None, [an_edit()])] * 4)
+    r = run_agent(client, "m", refusing_workspace(tmp_path), TASK)
+
+    assert r.stop_reason == "stuck" and r.steps == 3
+    assert r.counters["denied_calls"] == 3 and r.counters["stuck_failures"] == 3
+    assert (tmp_path / "rules.py").read_text() == "def grace_days():\n    return 2\n"
+
+
+# Scenario: A refusal followed by a success
+def test_a_refusal_followed_by_a_success_resets_the_count(tmp_path):
+    client = FakeClient([(None, [an_edit()]), (None, [native("list_files")]), (None, [an_edit()]),
+                         (None, [an_edit()]), ("Done.", None)])
+    r = run_agent(client, "m", refusing_workspace(tmp_path), TASK)
+
+    assert r.stop_reason == "done" and "stuck_failures" not in r.counters
+    assert r.counters["denied_calls"] == 3
+
+
 # Scenario: Failing tests are not tool failures
 def test_failing_tests_are_not_tool_failures(ws):
     client = FakeClient([(None, [native("run_tests")])] * 3 + [("Done.", None)])

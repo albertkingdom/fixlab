@@ -27,7 +27,7 @@ DEFAULT_MAX_STEPS = 20
 MAX_FAILING_ROUNDS = 3
 
 # 工具回傳的旗標變成計數器時用的名稱；沒列在這裡的旗標（例如 tests_passed）就用旗標自己的名字。
-FLAG_COUNTER_NAMES = {"blocked": "blocked_calls", "protected_write": "protected_write_calls"}
+FLAG_COUNTER_NAMES = {"blocked": "blocked_calls", "protected_write": "protected_write_calls", "denied": "denied_calls"}
 
 # 遇到限流（429）或伺服器暫時錯誤時，依序等這些秒數再重試。放在模組層，測試可以把它改成 0。
 RETRY_DELAYS_S = (5, 15, 30, 60, 120, 180, 300, 300)

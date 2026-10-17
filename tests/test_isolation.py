@@ -165,6 +165,54 @@ def test_a_path_escape_is_blocked_but_not_protected_write(pws):
     assert not r.ok and r.flags == {"blocked": True}  # 事件檔要分得出「碰了測試檔」與「路徑逃逸」
 
 
+# ---- 寫入前確認：對應 tool-permissions 規格的 A Workspace can require confirmation ----
+
+def confirming_workspace(tmp_path, confirm=None):
+    root = tmp_path / "ws"
+    (root / "timelog").mkdir(parents=True)
+    (root / "timelog" / "parser.py").write_text("x = 1\n")
+    w = Workspace(root) if confirm is None else Workspace(root, confirm=confirm)
+    register_tools(w)
+    return w
+
+
+# Scenario: Default approves
+def test_default_workspace_asks_nobody(tmp_path):
+    w = confirming_workspace(tmp_path)
+    r = edit(w, "timelog/parser.py")
+    assert r.ok and r.flags == {}
+    assert (w.root / "timelog" / "parser.py").read_text() == "x = 2\n"
+
+
+# Scenario: Denied call does nothing
+def test_a_denied_call_is_not_executed(tmp_path):
+    w = confirming_workspace(tmp_path, confirm=lambda name, args: False)
+    r = edit(w, "timelog/parser.py")
+    assert not r.ok and r.flags == {"denied": True}
+    assert r.output.startswith("error: the user declined this call")
+    assert (w.root / "timelog" / "parser.py").read_text() == "x = 1\n"
+
+
+# Scenario: Invalid calls are not asked about
+def test_invalid_calls_are_not_confirmed(tmp_path):
+    asked = []
+    w = confirming_workspace(tmp_path, confirm=lambda name, args: asked.append(name) or True)
+
+    missing = w.call("edit_file", {"path": "timelog/parser.py", "old_string": "x = 1"})  # 缺 new_string
+    unknown = w.call("bash", {"cmd": "ls"})
+
+    assert not missing.ok and "missing required" in missing.output
+    assert not unknown.ok and "unknown tool" in unknown.output
+    assert asked == []  # 一次都沒問
+
+
+def test_confirm_receives_the_tool_name_and_arguments(tmp_path):
+    asked = []
+    w = confirming_workspace(tmp_path, confirm=lambda name, args: asked.append((name, args)) or True)
+    edit(w, "timelog/parser.py")
+    assert asked == [("edit_file", {"path": "timelog/parser.py", "old_string": "x = 1", "new_string": "x = 2"})]
+
+
 # Scenario: No rule by default
 def test_nothing_is_read_only_by_default(tmp_path):
     w = Workspace(make_project(tmp_path / "ws"))  # 沒有傳 read_only

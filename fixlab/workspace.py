@@ -53,6 +53,11 @@ def nothing_is_read_only(rel) -> bool:
     return False
 
 
+def allow_everything(name, args) -> bool:
+    """預設的確認規則：每個呼叫都放行。一次性執行沒有人在旁邊可以問，所以預設不問；互動入口會傳自己的函式進來。"""
+    return True
+
+
 def looks_like_test_file(rel) -> bool:
     """rel（相對於工作目錄的路徑）看起來是不是測試檔。靠命名慣例猜的，不保證。
 
@@ -103,7 +108,8 @@ class Tool:
 
 class Workspace:
     def __init__(self, root: Path, python: str = sys.executable, read_only: Callable[[PurePath], bool] = nothing_is_read_only,
-                 deny_read=(), project_root: Path = FIXLAB_ROOT, protect_tests: bool = False):
+                 deny_read=(), project_root: Path = FIXLAB_ROOT, protect_tests: bool = False,
+                 confirm: Callable[[str, dict], bool] = allow_everything):
         self.root = Path(root).resolve()  # 先解析一次，之後的路徑都跟它比
         # 沙箱額外禁止測試程式讀取的資料夾（例如其他題目的工作目錄、評分用的隱藏測試），以及 fixlab 自己的專案目錄。
         self.deny_read = tuple(Path(folder).resolve() for folder in deny_read)
@@ -113,6 +119,8 @@ class Workspace:
         self.read_only = read_only
         # 沙箱要不要擋下 run_tests 執行的程式寫入測試檔（read_only 只管工具；這個管被執行的程式）。預設不擋，和 read_only 一樣由入口決定。
         self.protect_tests = protect_tests
+        # 執行工具之前問一下：confirm(工具名稱, 參數) 回 False 就不執行（使用者拒絕）。和 read_only 一樣，政策由入口決定，迴圈不管。
+        self.confirm = confirm
         self.python = python  # run_tests 用哪個直譯器；不 resolve，venv 的 python 是符號連結，解析後會找不到套件
         self._tools: dict[str, Tool] = {}
         # 模型「整檔、未截斷」讀過的檔案：解析後的真實路徑 → 讀的當下的內容指紋。write_file 覆寫既有檔案前要查它：
@@ -183,6 +191,12 @@ class Workspace:
             if tool is None:
                 raise ToolError(f"unknown tool: {name!r}")
             self._check_args(name, tool, args)
+            # 放在參數檢查之後：不合法的呼叫本來就不會執行，不用拿去問使用者
+            if not self.confirm(name, args):
+                return ToolResult(
+                    "error: the user declined this call. Do not retry it unchanged; "
+                    "try a different approach or ask the user what they want.",
+                    False, {"denied": True})
             return tool.func(**args)
         except ReadOnlyBlocked as e:  # 要放在 PathBlocked 前面：它是 PathBlocked 的子類別
             return ToolResult(f"error: {e}", False, {"blocked": True, "protected_write": True})
