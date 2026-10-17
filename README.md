@@ -15,7 +15,7 @@
 - **開源與商用模型對照**：透過 Ollama／OpenRouter 跑 Qwen、Gemma 等開源模型，與商用模型在同一套 benchmark 上比較。
 - **Prompt／Context Engineering**：system prompt 規則消融、tool output 截斷策略。
 - **安全隔離**：路徑限制在工作目錄、macOS 沙箱禁網路、子行程環境變數白名單。
-- **CLI 開發者工具**：`fixlab fix <repo>` 一次性修復與互動模式。
+- **CLI 開發者工具**：`fixlab <repo>` 一次性修復與互動模式。
 - **選做**：多 agent 對照（修復者＋審查者）、MCP 或 GitHub issue connector。
 
 前身是 `../code-agent-eval`（單檔函式題的評測），fixlab 把它擴展成能實際使用的多檔修復工具。

@@ -6,7 +6,7 @@
 
 做一個**教學導向的最小 CLI coding agent**，專門修多檔小型專案裡的 bug：
 
-> `fixlab fix ./某個有 bug 的 repo` → agent 自己找出 bug 在哪個檔案、讀懂相關程式、局部修改、用測試驗證。
+> `fixlab ./某個有 bug 的 repo` → agent 自己找出 bug 在哪個檔案、讀懂相關程式、局部修改、用測試驗證。
 
 並附上 telemetry 與 bug benchmark，量化它的表現（隱藏測試通過、弄壞既有行為、假通過、沒驗證卻宣稱完成、步數、成本）。
 
@@ -21,7 +21,7 @@ fixlab 是能實際使用的工具，沿用它的評測方法（可見／隱藏�
 | JD | fixlab 的對應 |
 |---|---|
 | Tool-use Agent、Coding Copilot（工作 3） | 多檔修 bug 的 agent 迴圈與工具 |
-| CLI AI Assistant、Developer Productivity Tool（工作 8、加分 3） | 互動式 CLI 與一次性 `fix` 指令 |
+| CLI AI Assistant、Developer Productivity Tool（工作 8、加分 3） | 互動式 CLI 與一次性 `fixlab PATH` 指令 |
 | 評估、Telemetry、實驗框架、AI Evaluation Framework（工作 5、加分 1） | 事件記錄、彙整報告、bug benchmark |
 | 程式碼生成的自動化驗證（工作 6） | 可抽換的 verifier（pytest） |
 | 開源模型與推論框架（加分 2） | Ollama／OpenRouter 上的 Qwen、Gemma 對商用模型 |
