@@ -319,7 +319,7 @@ def run_tests(ws: Workspace, target: str = ".") -> ToolResult:
     with tempfile.TemporaryDirectory(prefix="fixlab-run-") as tmp:
         tmpdir = Path(tmp).resolve()
         if sandbox_available():
-            command = wrap_command(command, ws.root, ws.python, ws.project_root, ws.deny_read, tmpdir)
+            command = wrap_command(command, ws.root, ws.python, ws.project_root, ws.deny_read, tmpdir, ws.protect_tests)
         try:
             done = subprocess.run(command, cwd=ws.root, env=child_environment(tmpdir), stdin=subprocess.DEVNULL,
                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=RUN_TESTS_TIMEOUT_S)

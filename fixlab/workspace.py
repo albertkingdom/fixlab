@@ -97,7 +97,7 @@ class Tool:
 
 class Workspace:
     def __init__(self, root: Path, python: str = sys.executable, read_only: Callable[[PurePath], bool] = nothing_is_read_only,
-                 deny_read=(), project_root: Path = FIXLAB_ROOT):
+                 deny_read=(), project_root: Path = FIXLAB_ROOT, protect_tests: bool = False):
         self.root = Path(root).resolve()  # 先解析一次，之後的路徑都跟它比
         # 沙箱額外禁止測試程式讀取的資料夾（例如其他題目的工作目錄、評分用的隱藏測試），以及 fixlab 自己的專案目錄。
         self.deny_read = tuple(Path(folder).resolve() for folder in deny_read)
@@ -105,6 +105,8 @@ class Workspace:
         # 判斷「相對於工作目錄的路徑」能不能寫入的函式，回 True 就是唯讀。預設都能寫；傳 looks_like_test_file 鎖測試檔，
         # 或傳自己的函式，例如只鎖題目指定的幾個檔案。
         self.read_only = read_only
+        # 沙箱要不要擋下 run_tests 執行的程式寫入測試檔（read_only 只管工具；這個管被執行的程式）。預設不擋，和 read_only 一樣由入口決定。
+        self.protect_tests = protect_tests
         self.python = python  # run_tests 用哪個直譯器；不 resolve，venv 的 python 是符號連結，解析後會找不到套件
         self._tools: dict[str, Tool] = {}
         # 模型「整檔、未截斷」讀過的檔案：解析後的真實路徑 → 讀的當下的內容指紋。write_file 覆寫既有檔案前要查它：

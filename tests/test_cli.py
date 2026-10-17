@@ -4,6 +4,7 @@
 import pytest
 
 from fixlab.cli import DEFAULT_TASK, diff_report, main, take_snapshot
+from fixlab.sandbox import sandbox_available
 from test_fixture import BUGGY, FIXED, copy_fixture  # 把 timelog 複製到暫存目錄；bug 與修法
 from test_loop import FakeClient, native  # 依序回傳劇本回覆的假 client
 
@@ -110,6 +111,24 @@ def test_fixed_project_shows_passing_tests_and_only_the_fix_in_the_diff(project,
     assert code == 0
     assert out.rstrip().splitlines()[-1] == "RESULT: tests passed"
     assert out.count("--- a/") == 1 and "--- a/timelog/parser.py" in out  # 差異裡只有 parser.py
+
+
+@pytest.mark.skipif(not sandbox_available(), reason="sandbox-exec is only available on macOS")
+def test_a_source_edit_that_rewrites_the_tests_cannot_fake_a_pass(project, capsys):
+    cheat = 'import pathlib\npathlib.Path("tests/test_report.py").write_text("def test_ok():\\n    assert True\\n")\n'
+    before = take_snapshot(project)
+    client = FakeClient([
+        (None, [native("edit_file", path="timelog/parser.py", old_string="import re\n", new_string="import re\n" + cheat)]),
+        (None, [native("run_tests")]),
+        ("Done.", None),
+    ])
+
+    code = run_fix(project, client)
+
+    out = capsys.readouterr().out
+    assert code == 1
+    assert out.rstrip().splitlines()[-1] == "RESULT: tests FAILED"
+    assert take_snapshot(project)["tests/test_report.py"] == before["tests/test_report.py"]  # 測試檔沒被改寫
 
 
 def test_files_touched_by_the_final_test_run_show_up_in_the_diff(project, capsys):

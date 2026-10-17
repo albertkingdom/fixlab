@@ -7,12 +7,18 @@
   3. 再放行自己的工作目錄與虛擬環境（所以 deny 都要寫在這條 allow 之前）。
   4. 允許讀「檔案中繼資料」（存在與否、大小），因為取得目前目錄要走過上層目錄。
   5. 只能寫工作目錄、這次執行專用的暫存目錄、/dev。
+  6. （選用，protect_tests=True 才有）工作目錄裡看起來像測試檔的路徑，連寫入也不行（覆寫、新建、刪除、改名、搬移都擋）。
+     測試檔是評分標準：被測的程式如果能改寫它，把失敗的測試改成 assert True，就是假通過。
+     工具層（read_only）已經擋住「模型直接改測試檔」，這一條擋「模型改過的程式自己去改」。
+     只有修 bug 的入口開啟它：通用的互動用法裡，補測試是正常的任務，不該鎖。
 路徑一律用 -D 參數傳入，規則文字裡沒有任何字面路徑：路徑含引號或括號也不會改寫規則。
 所有路徑都要先轉成真實路徑：macOS 的 /var 其實是 /private/var 的捷徑，規則比對的是真實路徑，
 用捷徑寫的規則永遠對不上。
 
 來源說明：這個寫法的結構（allow default 再逐項收緊、路徑用 -D 參數、放行 file-read-metadata、寫入只放行白名單）
 參考高見龍的 KeSi（https://github.com/kaochenlong/KeSi，commit dfa0cd0）的 sandbox_spec。
+第 6 條把路徑接進正規表示式的做法 (regex (string-append "^" (regex-quote (param ...)) ...)) 也來自他的規則；
+他用它禁止讀取工作目錄裡的特定名稱（.env 等），這裡用來禁止寫入測試檔。
 規則本身是為這個專案另外寫的（擋家目錄與專案目錄、放行虛擬環境、私有暫存目錄），文字不同，
 但結構相同。sandbox_status() 的名稱，以及「沙箱不可用就直接執行、並把狀態顯示出來」的做法，也與他的 kesi.py 相同，
 不能排除受他影響。因此附上他的授權聲明：
@@ -39,6 +45,9 @@
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
     SOFTWARE.
 
+第 6 條的樣式要與 workspace.looks_like_test_file 對得上（測試會逐條比對兩邊）；
+自訂的 read_only 只在工具層生效，沙箱不管。已知缺口：把「含有測試資料夾的上層資料夾」改名不會被擋。
+
 限制：sandbox-exec 已被 Apple 標為棄用，而且只有 macOS 有。其他平台上 run_tests 直接執行，
 不套任何沙箱；入口會在開始時印出 sandbox_status()，讓使用者看得到。
 """
@@ -64,10 +73,31 @@ def sandbox_status() -> str:
     return "OFF (sandbox-exec not found: tests run without a sandbox)"
 
 
-def build_profile(deny_count: int) -> str:
+def any_case(text: str) -> str:
+    """每個字母改寫成 [Tt] 的形式，規則就不分大小寫：macOS 的檔案系統預設不分大小寫，TEST_X.PY 與 test_x.py 是同一個檔。"""
+    result = ""
+    for letter in text:
+        if letter.isalpha():
+            result += "[" + letter.upper() + letter.lower() + "]"
+        else:
+            result += letter
+    return result
+
+
+def test_file_patterns() -> list[str]:
+    """與 looks_like_test_file 對應的四種路徑樣式。每個都從工作目錄之後的 / 開始比對，(.*/)? 表示中間可以隔任意層資料夾。"""
+    return [
+        f"/(.*/)?{any_case('tests?')}(/.*)?$",                   # 任何一層資料夾叫 tests 或 test：資料夾本身與底下全部（所以也擋改名）
+        f"/(.*/)?{any_case('test_')}[^/]*$",                      # 檔名以 test_ 開頭
+        f"/(.*/)?[^/]*{any_case('_test')}[.]{any_case('py')}$",   # 檔名以 _test.py 結尾（[.] 是一個真正的點）
+        f"/(.*/)?{any_case('conftest')}[.]{any_case('py')}$",     # conftest.py
+    ]
+
+
+def build_profile(deny_count: int, protect_tests: bool = False) -> str:
     """沙箱規則文字。裡面只有 (param "名稱")，路徑由 -D 另外傳；deny_count 是額外禁止讀取的目錄數。"""
     extra_denies = "".join(f'(deny file-read* (subpath (param "DENY_{i}")))' for i in range(deny_count))
-    return (
+    profile = (
         "(version 1)(allow default)(deny network*)"
         '(deny file-read* (subpath (param "HOME")))'
         '(deny file-read* (subpath (param "PROJECT")))'
@@ -76,6 +106,10 @@ def build_profile(deny_count: int) -> str:
         "(allow file-read-metadata)"
         '(deny file-write* (require-not (require-any (subpath (param "WS")) (subpath (param "TMP")) (subpath "/dev"))))'
     )
+    if protect_tests:
+        # ^ 加上被跳脫的工作目錄開頭，所以工作目錄「上層」有叫 tests 的資料夾（例如 tests/fixtures/x）不受影響
+        profile += '(deny file-write* (regex (string-append "^" (regex-quote (param "WS")) "(' + "|".join(test_file_patterns()) + ')")))'
+    return profile
 
 
 def sandbox_paths(root: Path, python: str, project_root: Path, deny_read: tuple, tmp: Path) -> dict[str, Path]:
@@ -94,8 +128,9 @@ def sandbox_paths(root: Path, python: str, project_root: Path, deny_read: tuple,
     return {name: Path(path).resolve() for name, path in paths.items()}
 
 
-def wrap_command(command: list[str], root: Path, python: str, project_root: Path, deny_read: tuple, tmp: Path) -> list[str]:
+def wrap_command(command: list[str], root: Path, python: str, project_root: Path, deny_read: tuple, tmp: Path,
+                 protect_tests: bool = False) -> list[str]:
     """把指令包進 sandbox-exec。"""
     paths = sandbox_paths(root, python, project_root, deny_read, tmp)
     definitions = [arg for name, path in paths.items() for arg in ("-D", f"{name}={path}")]
-    return [SANDBOX_EXEC, *definitions, "-p", build_profile(len(deny_read)), *command]
+    return [SANDBOX_EXEC, *definitions, "-p", build_profile(len(deny_read), protect_tests), *command]

@@ -414,3 +414,140 @@ def test_without_a_sandbox_tests_still_run_and_the_status_says_so(tmp_path, monk
     (w.root / "tests").mkdir()
     (w.root / "tests" / "test_ok.py").write_text("def test_ok():\n    assert True\n")
     assert w.call("run_tests", {}).flags["tests_passed"] is True
+
+
+# ---- 受保護路徑（protect_tests=True）：被執行的程式不能改測試檔 ----
+
+def protected_workspace(root, **kwargs):
+    """有 tests/test_report.py、tests/helpers.py 的工作目錄，沙箱開啟測試檔保護。"""
+    w = sandboxed_workspace(root, protect_tests=True, **kwargs)
+    (w.root / "tests").mkdir(exist_ok=True)
+    (w.root / "tests" / "test_report.py").write_text("def test_report():\n    assert 1 == 2\n")
+    (w.root / "tests" / "helpers.py").write_text("x = 1\n")
+    return w
+
+
+@pytest.fixture
+def project_scratch():
+    """fixlab 專案目錄底下一個暫時的資料夾（不動真正的 fixture），測試結束時刪掉。"""
+    folder = FIXLAB_ROOT / f".fixlab-test-{uuid.uuid4().hex[:8]}"
+    folder.mkdir()
+    yield folder
+    shutil.rmtree(folder, ignore_errors=True)
+
+
+# Scenario: Overwriting a test file from code under test
+@macos_only
+def test_code_under_test_cannot_overwrite_a_test_file(tmp_path):
+    w = protected_workspace(tmp_path / "ws")
+    before = (w.root / "tests" / "test_report.py").read_text()
+    assert probe(w, "open('tests/test_report.py', 'w').write('def test_report():\\n    assert True\\n')") == "denied"
+    assert (w.root / "tests" / "test_report.py").read_text() == before
+
+
+# Scenario: Creating a new file in a tests directory
+@macos_only
+def test_code_under_test_cannot_create_a_file_in_the_tests_directory(tmp_path):
+    w = protected_workspace(tmp_path / "ws")
+    assert probe(w, "open('tests/new_helper.py', 'w').write('x')") == "denied"
+    assert not (w.root / "tests" / "new_helper.py").exists()
+
+
+# Scenario: Renaming the tests directory
+@macos_only
+def test_code_under_test_cannot_rename_the_tests_directory(tmp_path):
+    w = protected_workspace(tmp_path / "ws")
+    assert probe(w, "__import__('os').rename('tests', 't2')") == "denied"
+    assert (w.root / "tests" / "helpers.py").exists()
+    assert not (w.root / "t2").exists()
+
+
+# Scenario: Workspace path with regular-expression characters
+@macos_only
+def test_a_workspace_named_with_regular_expression_characters_is_still_protected(tmp_path):
+    w = protected_workspace(tmp_path / "a+b(c)")
+    assert probe(w, "open('tests/test_report.py', 'a').write('x')") == "denied"
+    assert probe(w, "open('timelog/parser.py', 'a').write('#')") == "ok"
+
+
+# 同樣的規則，換成不同的寫法與手法。每一列都用全新的工作目錄，互不影響。
+PROTECTED_ACTIONS = [
+    ("add to an existing test file",         "open('tests/test_report.py', 'a').write('x')",                     "denied"),
+    ("delete a helper in tests",             "__import__('os').remove('tests/helpers.py')",                      "denied"),
+    ("make a folder in tests",               "__import__('os').mkdir('tests/sub')",                              "denied"),
+    ("truncate a test file",                 "__import__('os').truncate('tests/test_report.py', 0)",             "denied"),
+    ("chmod a test file",                    "__import__('os').chmod('tests/test_report.py', 0o777)",            "denied"),
+    ("test_ file at the top",                "open('test_x.py', 'w').write('x')",                                "denied"),
+    ("test_ file inside a package",          "open('timelog/test_inner.py', 'w').write('x')",                    "denied"),
+    ("upper-case test file name",            "open('TEST_Y.PY', 'w').write('x')",                                "denied"),
+    ("_test.py file",                        "open('foo_test.py', 'w').write('x')",                              "denied"),
+    ("conftest.py",                          "open('conftest.py', 'w').write('x')",                              "denied"),
+    ("move a test file to a plain name",     "__import__('os').rename('tests/test_report.py', 'plain.txt')",     "denied"),
+    ("move a source file to a test name",    "__import__('os').rename('timelog/parser.py', 'test_p.py')",        "denied"),
+    ("write through a symbolic link",        "__import__('os').symlink('tests/test_report.py', 'alias'); open('alias', 'a').write('x')", "denied"),
+    ("write through a hard link",            "__import__('os').link('tests/test_report.py', 'alias2'); open('alias2', 'a').write('x')",  "denied"),
+    ("write a source file",                  "open('timelog/parser.py', 'a').write('#')",                        "ok"),
+    ("tests.py is not collected by pytest",  "open('tests.py', 'w').write('x')",                                 "ok"),
+    ("contest.py only looks similar",        "open('contest.py', 'w').write('x')",                               "ok"),
+    ("rename an ancestor folder (known gap)", "__import__('os').rename('timelog', 'timelog2')",                  "ok"),
+]
+
+
+@macos_only
+@pytest.mark.parametrize("label, action, expected", PROTECTED_ACTIONS, ids=[row[0] for row in PROTECTED_ACTIONS])
+def test_protected_path_actions(tmp_path, label, action, expected):
+    w = protected_workspace(tmp_path / "ws")
+    assert probe(w, action) == expected
+
+
+# 沙箱的樣式要和工具層的 looks_like_test_file 對得上：同一個相對路徑，兩邊的判斷一致
+SAME_VERDICT_PATHS = [
+    "tests/a.py", "test/a.py", "Tests/a.py", "pkg/tests/data.json", "a/b/test_c.py", "x_test.py", "X_TEST.PY",
+    "conftest.py", "pkg/conftest.py",
+    "tests.py", "contest.py", "testing/a.py", "pkg/attests/a.py", "latest.py", "timelog/parser.py", "notes/test.txt",
+]
+
+
+@macos_only
+@pytest.mark.parametrize("rel", SAME_VERDICT_PATHS)
+def test_sandbox_and_tool_layer_agree_on_which_paths_are_test_files(tmp_path, rel):
+    w = protected_workspace(tmp_path / "ws")
+    action = f"p = {rel!r}; d = __import__('os').path.dirname(p); d and __import__('os').makedirs(d, exist_ok=True); open(p, 'w').write('x')"
+    expected = "denied" if looks_like_test_file(rel) else "ok"
+    assert probe(w, action) == expected, rel
+
+
+# 預設不保護：通用的用法裡，補測試是正常的任務
+@macos_only
+def test_test_files_are_writable_when_protection_is_not_asked_for(tmp_path):
+    w = sandboxed_workspace(tmp_path / "ws")
+    (w.root / "tests").mkdir()
+    assert probe(w, "open('tests/new_test.py', 'w').write('x')") == "ok"
+    assert (w.root / "tests" / "new_test.py").exists()
+
+
+# 工作目錄上層叫 tests（例如 tests/fixtures/x）不影響判斷
+@macos_only
+def test_a_folder_named_tests_above_the_workspace_does_not_protect_everything(tmp_path):
+    w = protected_workspace(tmp_path / "tests" / "fixtures" / "x")
+    assert probe(w, "open('timelog/parser.py', 'a').write('#')") == "ok"
+    assert probe(w, "open('tests/test_report.py', 'a').write('x')") == "denied"
+
+
+# Scenario: Workspace inside the project directory（用臨時資料夾，不動真正的 fixture）
+@macos_only
+def test_a_workspace_inside_the_project_directory_can_be_read_and_written(project_scratch):
+    w = protected_workspace(project_scratch / "ws")
+    assert probe(w, f"open({str(FIXLAB_ROOT / 'AGENTS.md')!r}).read()") == "denied"
+    assert probe(w, "open('timelog/parser.py').read()") == "ok"
+    assert probe(w, "open('timelog/parser.py', 'a').write('#')") == "ok"
+
+
+# 真正的 fixture 位於專案目錄內：只讀，run_tests 能跑，不再因為讀不到 pyproject.toml 而崩潰
+@macos_only
+def test_run_tests_works_in_place_on_the_real_fixture():
+    w = Workspace(FIXLAB_ROOT / "tests" / "fixtures" / "timelog", protect_tests=True)
+    register_tools(w)
+    output = w.call("run_tests", {}).output
+    assert "PermissionError" not in output
+    assert "1 failed, 4 passed" in output

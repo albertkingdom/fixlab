@@ -55,7 +55,8 @@ def main(argv=None, client=None) -> int:
     print(f"sandbox: {sandbox_status()}", file=sys.stderr)  # 沙箱是安全功能，沒開要讓使用者看得到
     before = take_snapshot(root)
 
-    ws = Workspace(root, read_only=looks_like_test_file)  # 修 bug：測試檔是評分標準，模型不能改
+    # 修 bug：測試檔是評分標準，模型不能改，被執行的程式也不能改
+    ws = Workspace(root, read_only=looks_like_test_file, protect_tests=True)
     register_tools(ws)
     result = run_agent(client, model, ws, args.task, max_steps=args.max_steps,
                        request_extra={"max_tokens": args.max_tokens}, trace=print_step)
