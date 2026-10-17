@@ -14,7 +14,8 @@
 來源說明：這個寫法的結構（allow default 再逐項收緊、路徑用 -D 參數、放行 file-read-metadata、寫入只放行白名單）
 參考高見龍的 KeSi（https://github.com/kaochenlong/KeSi，commit dfa0cd0）的 sandbox_spec。
 規則本身是為這個專案另外寫的（擋家目錄與專案目錄、放行虛擬環境、私有暫存目錄），文字不同，
-但結構相同，所以附上他的授權聲明：
+但結構相同。sandbox_status() 的名稱，以及「沙箱不可用就直接執行、並把狀態顯示出來」的做法，也與他的 kesi.py 相同，
+不能排除受他影響。因此附上他的授權聲明：
 
     MIT License
 
