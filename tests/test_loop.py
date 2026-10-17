@@ -306,6 +306,45 @@ def test_an_argument_of_exactly_2000_characters_is_kept_whole(ws):
     assert records[0]["tool_calls"][0]["args"]["new_string"] == exactly
 
 
+# ---- A run can continue an existing conversation ----
+
+# Scenario: Default is unchanged
+def test_runs_without_messages_do_not_share_a_conversation(ws):
+    client = FakeClient([("First done.", None), ("Second done.", None)])
+    run_agent(client, "m", ws, TASK)
+    run_agent(client, "m", ws, "another task")
+
+    # 沒傳 messages：每次執行都從系統提示加任務開始，前一次的對話不會留下來
+    assert client.sent[1] == [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": "another task"}]
+
+
+# Scenario: Empty list is filled
+def test_an_empty_list_is_filled_and_kept_by_the_caller(ws):
+    session = []
+    client = FakeClient([(None, [native("read_file", path="rules.py")]), ("Done.", None)])
+    run_agent(client, "m", ws, TASK, messages=session)
+
+    assert session[0] == {"role": "system", "content": SYSTEM_PROMPT}
+    assert session[1] == {"role": "user", "content": TASK}
+    assert [m["role"] for m in session] == ["system", "user", "assistant", "tool", "assistant"]
+    assert session[-1] == {"role": "assistant", "content": "Done."}  # 最後的回覆也留在對話裡
+
+
+# Scenario: Second task continues
+def test_a_second_task_continues_the_same_conversation(ws):
+    session = []
+    client = FakeClient([("Fixed parse_duration.", None), ("Added a comment.", None)])
+    run_agent(client, "m", ws, "fix the failing test", messages=session)
+    run_agent(client, "m", ws, "add a comment", messages=session)
+
+    assert client.sent[1] == [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": "fix the failing test"},
+        {"role": "assistant", "content": "Fixed parse_duration."},
+        {"role": "user", "content": "add a comment"},
+    ]
+
+
 # ---- Step records show truncation and the original call count ----
 
 # Scenario: Cut-off reply
