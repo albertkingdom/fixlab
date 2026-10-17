@@ -66,7 +66,7 @@ cp -R tests/fixtures/timelog /某個暫存目錄/timelog-try
 | 順序 | 檔案 | 做什麼 |
 |---|---|---|
 | 1 | `fixlab/cli.py` | `fixlab PATH` 的入口：檢查參數、拍快照、跑 agent、自己再跑一次測試、印結果 |
-| 2 | `fixlab/loop.py` | agent 迴圈：問模型 → 解讀回覆 → 執行工具；步數上限、連續失敗上限、重試、trace 回呼 |
+| 2 | `fixlab/loop.py` | agent 迴圈：問模型 → 解讀回覆 → 執行工具；步數上限、連續失敗上限、重試、trace 回呼（每一步把這一步的紀錄交給它，畫面上的進度與事件檔都由它產生） |
 | 3 | `fixlab/toolparse.py` | 把模型的回覆解析成工具呼叫：只認原生 `tool_calls`，參數對照 schema 驗證 |
 | 4 | `fixlab/tools.py` | 六個工具的實作與登記 |
 | 5 | `fixlab/workspace.py` | 工作目錄：路徑必須落在根目錄內、測試檔唯讀、工具分派、錯誤不丟例外 |
