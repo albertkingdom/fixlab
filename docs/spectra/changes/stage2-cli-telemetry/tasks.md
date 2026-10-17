@@ -9,7 +9,7 @@
 
 ## 2. 事件記錄
 
-- [ ] 2.1 新增 fixlab/telemetry.py 的 `EventLog`，實作「事件檔：每次執行一個 JSONL，四種事件」與「事件檔寫入失敗不中斷執行」：對應 One event file per run（預設位置與名稱、重名加後綴、自訂目錄）、Four event types（行的欄位與 `ts` 格式）、Each line is written immediately（不關檔就讀得到每一行）與 Logging failures never stop the run（OSError 只警告一次，後面靜默略過）。驗證：tests/test_telemetry.py，每個情境一個測試，時間用固定值注入。
+- [x] 2.1 新增 fixlab/telemetry.py 的 `EventLog`，實作「事件檔：每次執行一個 JSONL，四種事件」與「事件檔寫入失敗不中斷執行」：對應 One event file per run（預設位置與名稱、重名加後綴、自訂目錄）、Four event types（行的欄位與 `ts` 格式）、Each line is written immediately（不關檔就讀得到每一行）與 Logging failures never stop the run（OSError 只警告一次，後面靜默略過）。驗證：tests/test_telemetry.py，每個情境一個測試，時間用固定值注入。
 - [ ] 2.2 一次性 `fixlab PATH` 寫事件檔：入口建立 `EventLog`，依序寫 `run_start`（模式 `once`、條件欄位）、`task_start`、每筆 trace、`task_end`，並在 stderr 印 `log: <路徑>`；`task_end` 帶 `final_tests` 與 `changed_files`（快照比較要多提供結構化的新增、修改、刪除清單，供事件檔與印出的 diff 共用）。對應 One-shot results go in task_end 的兩個情境與 Four event types 的一次性情境；`request_error` 也會以 `trace` 寫出。驗證：tests/test_cli.py 以假 client 跑 timelog 副本，解析事件檔檢查事件順序與欄位；既有的 test_cli 測試（stdout、退出碼、diff）不改動也通過。
 - [ ] 2.3 「執行條件用 --meta 記錄，不自動偵測」與「事件檔放在使用者家目錄，不放進被修的目錄」：新增 `--meta KEY=VALUE`（可重複）與 `--log-dir`，預設 `~/.fixlab/runs`；`--meta` 缺 `=`、日誌目錄在 PATH 之內（含 PATH 是家目錄、符號連結）都以退出碼 2 結束且不建檔。對應 Experiment conditions come from --meta（兩個值、缺等號）與 The event log stays outside the target directory（目錄在 PATH 裡、PATH 是家目錄、diff 不含日誌）。驗證：tests/test_cli.py 新增對應測試；測試一律傳暫存的 `--log-dir`，不寫真的家目錄。
 - [ ] 2.4 用真模型跑一次一次性修復並檢視事件檔（觀察，不是通過門檻）：用 OpenRouter 的一個模型對 timelog 的暫存副本執行，記錄事件檔的實際內容是否讓階段 3 的統計算得出來（步數、token、延遲、旗標、`changed_files`），缺欄位或太大就記進設計文件的 Risks 或補成後續任務；模型能力問題只記錄。驗證：事件檔每行可解析，`task_end` 的 token 與入口印出的相同（手動審閱）。
