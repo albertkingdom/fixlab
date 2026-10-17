@@ -97,7 +97,7 @@ When a reply contains more than one valid native tool call, the loop SHALL execu
 #### Scenario: Two reads in one reply
 
 - **WHEN** the reply has a native read_file call on "timelog/parser.py" and a native read_file call on "timelog/report.py"
-- **THEN** both files are read in that order, the next request contains two tool results, and `steps` is 1
+- **THEN** both files are read in that order, the next request contains two tool results, and the reply counts as one step (`steps` is 2 once the model has answered with "Done.")
 
 ### Requirement: Transient provider errors are retried, timeouts are not
 

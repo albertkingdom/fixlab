@@ -1,10 +1,17 @@
 # agent 迴圈的單元測試：用寫好劇本的假模型驗證 agent-loop 規格，不需要真的 LLM。
-# 這個檔案目前涵蓋任務文字、模型自己決定、步數上限、提示文字、連續失敗保險。
-# 重試、截斷、trace 的情境等迴圈保險完成後再補。
+# 這個檔案涵蓋任務文字、模型自己決定、步數上限、提示文字、回覆異常、同一回覆的多個呼叫、重試、連續失敗保險。
+# trace 的情境（Every step is traced）還沒補。
 import json
 from types import SimpleNamespace as NS
 
+import openai
 import pytest
+
+# openai 3.x 改用 httpx2 發請求，舊版用 httpx；測試要自己造 openai 的例外，需要同一套 Request 與 Response。
+try:
+    import httpx2 as httpx
+except ImportError:
+    import httpx
 
 from fixlab.loop import SYSTEM_PROMPT, run_agent
 from fixlab.tools import register_tools
@@ -19,7 +26,10 @@ def native(name, **args):
 
 
 class FakeClient:
-    """依序回傳劇本裡的回覆，並記下每次請求收到的對話與工具清單。"""
+    """依序回傳劇本裡的回覆，並記下每次請求收到的對話與工具清單。
+
+    劇本的每一項是 (文字, 工具呼叫) 或 (文字, 工具呼叫, finish_reason)；如果是例外物件，這次請求就丟出它。
+    """
 
     def __init__(self, replies):
         self.replies = list(replies)
@@ -30,9 +40,14 @@ class FakeClient:
     def _create(self, model, messages, tools, **kw):
         self.sent.append(list(messages))
         self.tools.append(tools)
-        content, tool_calls = self.replies.pop(0)
+        reply = self.replies.pop(0)
+        if isinstance(reply, Exception):
+            raise reply
+        content, tool_calls = reply[0], reply[1]
+        finish_reason = reply[2] if len(reply) == 3 else "stop"
         msg = NS(content=content, tool_calls=tool_calls, model_extra={})
-        return NS(choices=[NS(message=msg, finish_reason="stop")], usage=NS(prompt_tokens=10, completion_tokens=5))
+        return NS(choices=[NS(message=msg, finish_reason=finish_reason)],
+                  usage=NS(prompt_tokens=10, completion_tokens=5))
 
 
 @pytest.fixture
@@ -115,6 +130,93 @@ def test_empty_reply_is_not_completion_and_the_model_may_just_finish(ws):
     assert feedback["role"] == "user"
     assert "reply was empty" in feedback["content"] and "final message" in feedback["content"]
 
+
+# Scenario: Missing required argument
+def test_missing_required_argument_is_feedback_not_a_crash(ws):
+    client = FakeClient([(None, [native("edit_file", path="rules.py")]), ("Done.", None)])
+    r = run_agent(client, "m", ws, TASK)
+
+    assert r.stop_reason == "done" and r.steps == 2
+    assert (ws.root / "rules.py").read_text() == "def grace_days():\n    return 2\n"  # 沒有改任何檔案
+    assert "invalid" in client.sent[1][-1]["content"]
+    assert r.counters["parse_errors"] == 1
+
+
+# Scenario: Truncated reply
+def test_a_truncated_reply_discards_its_tool_call(ws):
+    cut_off = (None, [native("edit_file", path="rules.py", old_string="return 2", new_string="return 3")], "length")
+    client = FakeClient([cut_off, ("Done.", None)])
+    r = run_agent(client, "m", ws, TASK)
+
+    assert r.stop_reason == "done" and r.steps == 2
+    assert (ws.root / "rules.py").read_text() == "def grace_days():\n    return 2\n"  # 被截斷的呼叫沒有執行
+    assert "cut off" in client.sent[1][-1]["content"]
+    assert r.counters["truncated_replies"] == 1
+
+
+# ---- All native calls in one reply are executed ----
+
+# Scenario: Two reads in one reply
+def test_two_reads_in_one_reply_run_in_order_and_cost_one_step(ws):
+    (ws.root / "other.py").write_text("OTHER = 1\n")
+    two_reads = (None, [native("read_file", path="rules.py"), native("read_file", path="other.py")])
+    client = FakeClient([two_reads, ("Done.", None)])
+    r = run_agent(client, "m", ws, TASK)
+
+    # 兩次讀取加上一個「Done.」只用了兩步：同一個回覆裡的呼叫合起來算一步
+    assert r.stop_reason == "done" and r.steps == 2
+    asked = client.sent[1][-3:]  # 第二次請求的最後三則：assistant 的呼叫，加上兩個工具結果
+    assert [m["role"] for m in asked] == ["assistant", "tool", "tool"]
+    assert "grace_days" in asked[1]["content"] and "OTHER = 1" in asked[2]["content"]
+    # 每個結果都用自己呼叫的 id 接在後面
+    assert [m["tool_call_id"] for m in asked[1:]] == [c["id"] for c in asked[0]["tool_calls"]]
+
+
+# ---- Transient provider errors are retried, timeouts are not ----
+
+@pytest.fixture
+def no_wait(monkeypatch):
+    """重試之間不真的等。"""
+    monkeypatch.setattr("fixlab.loop.RETRY_DELAYS_S", (0, 0))
+
+
+def provider_error(kind):
+    request = httpx.Request("POST", "http://localhost/v1/chat/completions")
+    if kind == "429":
+        return openai.RateLimitError("slow down", response=httpx.Response(429, request=request), body=None)
+    if kind == "500":
+        return openai.InternalServerError("oops", response=httpx.Response(500, request=request), body=None)
+    if kind == "connection":
+        return openai.APIConnectionError(request=request)
+    return openai.APITimeoutError(request=request)
+
+
+# Scenario: One rate limit then success
+@pytest.mark.parametrize("kind", ["429", "500", "connection"])
+def test_a_transient_error_is_retried(ws, no_wait, kind):
+    client = FakeClient([provider_error(kind), ("Done.", None)])
+    r = run_agent(client, "m", ws, TASK)
+
+    assert r.stop_reason == "done"
+    assert r.counters["rate_limit_retries"] == 1 and "request_errors" not in r.counters
+
+
+# Scenario: Timeout is not retried
+def test_a_timeout_is_not_retried(ws, no_wait):
+    client = FakeClient([provider_error("timeout"), ("Done.", None)])
+    r = run_agent(client, "m", ws, TASK)
+
+    assert r.stop_reason == "error"
+    assert r.counters["request_errors"] == 1 and "rate_limit_retries" not in r.counters
+    assert len(client.replies) == 1  # 第二個回覆沒有被用到
+
+
+def test_a_request_that_keeps_failing_ends_the_run_without_raising(ws, no_wait):
+    client = FakeClient([provider_error("429")] * 3)  # 第一次請求加上兩次重試，全部失敗
+    r = run_agent(client, "m", ws, TASK)
+
+    assert r.stop_reason == "error"
+    assert r.counters["rate_limit_retries"] == 2 and r.counters["request_errors"] == 1
 
 
 # ---- 連續失敗保險：對應規格的 Consecutive failing rounds stop the loop ----
