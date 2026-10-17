@@ -55,14 +55,24 @@ In interactive mode a line that is empty or only spaces SHALL be ignored. `/exit
 - **WHEN** the user presses Enter on an empty prompt
 - **THEN** no request is sent to the model and the prompt is shown again
 
-### Requirement: Interrupting a task discards its messages
+### Requirement: Interrupting a task keeps what was completed
 
-When the user presses Ctrl-C while a task is running, the session SHALL restore the conversation to its length before the task started, print `interrupted; this task was discarded; files may already have been changed (use /reset to start over)`, write a `task_end` event with `stop_reason` `interrupted` for that task (`steps`, `counters`, `prompt_tokens` and `completion_tokens` are null because the run did not return them; `seconds` is measured), and show the prompt again. The next task's request SHALL NOT contain an assistant tool call without its matching tool result.
+When the user presses Ctrl-C while a task is running, the session SHALL keep every message the task already added to the conversation, then append the assistant message `[The user interrupted this task.]`, print `interrupted; what was done so far is kept (files may already have been changed; use /reset to start over)`, write a `task_end` event with `stop_reason` `interrupted` for that task (`steps`, `counters`, `prompt_tokens` and `completion_tokens` are null because the run did not return them; `seconds` is measured), and show the prompt again. After an interrupt every assistant tool call in the conversation SHALL have a matching tool result, so the next request is valid and the model knows what happened.
 
-#### Scenario: Interrupted between a tool call and its result
+#### Scenario: Interrupted at a permission question
 
-- **WHEN** the fake client raises `KeyboardInterrupt` on the second request of a task, after the first request's tool call was already added to the conversation
-- **THEN** the session's messages have the same length as before the task, the message is printed, and the next task's request contains no assistant message with `tool_calls`
+- **WHEN** the model calls `read_file` and `edit_file` in one reply, and the user presses Ctrl-C at the question about `edit_file`
+- **THEN** the conversation keeps the reply and the result of `read_file`, gets an error result for `edit_file` saying the user interrupted and its state is unknown, and ends with `[The user interrupted this task.]`; the file is unchanged
+
+#### Scenario: The next task sees the interrupted one
+
+- **WHEN** a task is interrupted and the user then types `try again`
+- **THEN** the next request contains the interrupted task's messages, including the interrupt note, followed by the user message `try again`
+
+#### Scenario: Interrupted while waiting for the model
+
+- **WHEN** the user presses Ctrl-C during the first request of a task, before any reply arrived
+- **THEN** the conversation holds the user's task text followed by `[The user interrupted this task.]`, and the next task's request is well formed
 
 ### Requirement: No automatic final test run in interactive mode
 

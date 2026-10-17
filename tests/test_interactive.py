@@ -175,38 +175,54 @@ def test_a_task_can_use_the_tools_and_edit_the_project(session, project):
     assert FIXED in (project / "timelog" / "parser.py").read_text()
 
 
-# ── Interrupting a task discards its messages ─────────────────────────────
+# ── Interrupting a task keeps what was completed ─────────────────────────
 
-INTERRUPT_MESSAGE = "interrupted; this task was discarded; files may already have been changed (use /reset to start over)"
+INTERRUPT_MESSAGE = "interrupted; what was done so far is kept (files may already have been changed; use /reset to start over)"
+INTERRUPT_NOTE = {"role": "assistant", "content": "[The user interrupted this task.]"}
 
 
-# Scenario: Interrupted between a tool call and its result
-def test_ctrl_c_in_the_middle_of_a_task_leaves_no_dangling_tool_call(session, home, capsys):
-    # 第一個任務：第一次請求回了工具呼叫（已加進對話），第二次請求時使用者按 Ctrl-C
-    client = FakeClient([(None, [native("list_files")]), KeyboardInterrupt(), ("Second done.", None)])
-    session(client, ["first task", "second task"])
+# Scenario: Interrupted at a permission question
+def test_ctrl_c_at_a_question_keeps_the_work_and_seals_the_unfinished_call(session, project, capsys):
+    client = FakeClient([(None, [native("read_file", path=PARSER), an_edit()]), ("Next done.", None)])
+    session(client, ["fix it", KeyboardInterrupt(), "try again"])
 
     assert INTERRUPT_MESSAGE in capsys.readouterr().out
-    # 對話被截回任務開始前（空的），第二個任務從系統提示重新開始，沒有缺少結果的 tool_calls
-    assert client.sent[2] == [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": "second task"}]
+    assert BUGGY in parser_text(project)  # 還沒改
+    # Scenario: The next task sees the interrupted one
+    next_request = client.sent[1]
+    assert [m["role"] for m in next_request] == ["system", "user", "assistant", "tool", "tool", "assistant", "user"]
+    assert next_request[4]["content"].startswith("error: interrupted by the user")  # 被打斷的 edit_file 有結果了
+    assert next_request[5] == INTERRUPT_NOTE
+    assert next_request[6] == {"role": "user", "content": "try again"}
+
+
+# Scenario: Interrupted while waiting for the model
+def test_ctrl_c_while_waiting_for_the_model_leaves_a_well_formed_conversation(session, home):
+    client = FakeClient([KeyboardInterrupt(), ("Second done.", None)])
+    session(client, ["first task", "second task"])
+
+    assert client.sent[1] == [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": "first task"},
+        INTERRUPT_NOTE,
+        {"role": "user", "content": "second task"},
+    ]
     ends = [line for line in event_lines(home) if line["event"] == "task_end"]
     assert ends[0]["task"] == 1 and ends[0]["stop_reason"] == "interrupted"
     assert ends[0]["steps"] is None and ends[0]["counters"] is None
     assert ends[0]["prompt_tokens"] is None and ends[0]["completion_tokens"] is None
-    assert ends[0]["seconds"] >= 0 and ends[0]["final_tests"] is None
+    assert ends[0]["seconds"] >= 0 and ends[0]["final_tests"] is None and ends[0]["changed_files"] is None
     assert ends[1]["task"] == 2 and ends[1]["stop_reason"] == "done"
 
 
-def test_an_interrupt_only_discards_the_interrupted_task(session):
+def test_an_interrupt_keeps_earlier_tasks_too(session):
     client = FakeClient([("First done.", None), (None, [native("list_files")]), KeyboardInterrupt(), ("Third done.", None)])
     session(client, ["one", "two", "three"])
 
-    assert client.sent[3] == [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": "one"},
-        {"role": "assistant", "content": "First done."},
-        {"role": "user", "content": "three"},
-    ]
+    roles = [m["role"] for m in client.sent[3]]
+    # 任務一的完整對話、任務二已完成的部分（工具呼叫與結果）、中斷說明，最後才是任務三
+    assert roles == ["system", "user", "assistant", "user", "assistant", "tool", "assistant", "user"]
+    assert client.sent[3][6] == INTERRUPT_NOTE and client.sent[3][-1]["content"] == "three"
 
 
 # ── A task that fails with a request error is discarded ──────────────────
@@ -332,16 +348,6 @@ def test_the_edit_summary_shows_the_path_and_both_strings(session, capsys):
 
     out = capsys.readouterr().out
     assert PARSER in out and "re.match" in out and "re.findall" in out
-
-
-# Ctrl-C 在問題上：當作中斷，丟掉這個任務
-def test_ctrl_c_at_the_question_discards_the_task(session, project, capsys):
-    client = FakeClient([(None, [an_edit()]), ("Next done.", None)])
-    session(client, ["fix it", KeyboardInterrupt(), "next"])
-
-    assert INTERRUPT_MESSAGE in capsys.readouterr().out
-    assert BUGGY in parser_text(project)
-    assert client.sent[1] == [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": "next"}]
 
 
 def test_three_refused_rounds_in_a_row_end_the_task_as_stuck(session, capsys):

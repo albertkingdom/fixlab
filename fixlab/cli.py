@@ -155,10 +155,10 @@ def run_task(client, model: str, ws: Workspace, args, log: EventLog, session: li
         result = run_agent(client, model, ws, text, messages=session, max_steps=args.max_steps,
                            request_extra={"max_tokens": args.max_tokens}, trace=trace_to(log, number))
     except KeyboardInterrupt:
-        # 可能停在「模型要呼叫工具、結果還沒回來」中間：API 要求每個 tool_calls 都有結果，留著會讓之後每個請求都被拒絕。
-        # 所以整個任務丟掉。代價：已經執行的修改還留在檔案裡，但對話不記得，所以提醒使用者。
-        del session[before:]
-        print("interrupted; this task was discarded; files may already have been changed (use /reset to start over)")
+        # 已完成的部分留在對話裡（迴圈已把沒有結果的工具呼叫補上結果），再接一則說明：
+        # 下一個任務的模型才知道前面做到哪裡、哪些檔案可能已經被改了。
+        session.append({"role": "assistant", "content": INTERRUPT_NOTE})
+        print("interrupted; what was done so far is kept (files may already have been changed; use /reset to start over)")
         log.write("task_end", task=number, stop_reason="interrupted", steps=None, counters=None, prompt_tokens=None,
                   completion_tokens=None, seconds=round(time.perf_counter() - started, 2),
                   final_tests=None, changed_files=None)
@@ -181,6 +181,7 @@ def run_task(client, model: str, ws: Workspace, args, log: EventLog, session: li
 # 會改檔或執行程式的工具才問；讀取類工具直接放行
 ASKED_TOOLS = ("edit_file", "write_file", "run_tests")
 SHOWN_CHARS = 200  # 問題裡每段字串最多顯示幾個字元
+INTERRUPT_NOTE = "[The user interrupted this task.]"  # 接在被打斷的任務後面，給下一個任務的模型看
 
 
 def make_asker():

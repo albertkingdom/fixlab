@@ -219,8 +219,12 @@ def _run_tool_calls(ws: Workspace, it: Interpretation, msg, messages: list, coun
         {"id": i, "type": "function", "function": {"name": x.name, "arguments": json.dumps(x.arguments)}}
         for i, x in zip(ids, it.calls)]})
     any_succeeded = False
-    for i, x in zip(ids, it.calls):
-        result = ws.call(x.name, x.arguments)
+    for position, (i, x) in enumerate(zip(ids, it.calls)):
+        try:
+            result = ws.call(x.name, x.arguments)
+        except KeyboardInterrupt:  # 使用者按了 Ctrl-C（可能停在權限詢問、也可能停在執行中的工具）
+            _seal_interrupted_round(messages, ids, position)
+            raise
         any_succeeded = any_succeeded or result.ok
         messages.append({"role": "tool", "tool_call_id": i, "content": result.output})
         for flag, val in result.flags.items():
@@ -231,6 +235,20 @@ def _run_tool_calls(ws: Workspace, it: Interpretation, msg, messages: list, coun
                                            for k, v in x.arguments.items()},
                                   "ok": result.ok, "flags": result.flags, "output": result.output[:2000]})
     return not any_succeeded
+
+
+def _seal_interrupted_round(messages: list, ids: list, interrupted_at: int) -> None:
+    """這一輪被打斷時，把還沒有結果的呼叫補上結果。
+
+    API 要求每個 assistant 的 tool_calls 都有對應的結果，留著缺口，之後每個請求都會被拒絕。
+    被打斷的那一個可能已經跑到一半，所以寫「狀態不明」；後面還沒開始的，寫「沒有執行」。前面已經跑完的保留自己的結果。"""
+    for position in range(interrupted_at, len(ids)):
+        if position == interrupted_at:
+            text = ("error: interrupted by the user while this call was waiting or running; its state is unknown, "
+                    "so check the current state before trying it again")
+        else:
+            text = "error: not run, because the user interrupted the task"
+        messages.append({"role": "tool", "tool_call_id": ids[position], "content": text})
 
 
 def _count(counters: dict, key: str, n: int = 1) -> None:

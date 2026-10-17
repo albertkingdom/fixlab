@@ -498,6 +498,52 @@ def test_a_refusal_followed_by_a_success_resets_the_count(tmp_path):
     assert r.counters["denied_calls"] == 3
 
 
+# ---- An interrupted tool round is sealed ----
+
+def interrupting_workspace(tmp_path):
+    """edit_file 被確認時使用者按了 Ctrl-C；其他工具照常。"""
+    (tmp_path / "rules.py").write_text("def grace_days():\n    return 2\n")
+
+    def confirm(name, args):
+        if name == "edit_file":
+            raise KeyboardInterrupt
+        return True
+
+    w = Workspace(tmp_path, confirm=confirm)
+    register_tools(w)
+    return w
+
+
+# Scenario: Interrupt in the middle of three calls
+def test_an_interrupt_in_the_middle_of_a_round_gives_every_call_a_result(tmp_path):
+    w = interrupting_workspace(tmp_path)
+    conversation = []
+    client = FakeClient([(None, [native("read_file", path="rules.py"), an_edit(), native("list_files")])])
+
+    with pytest.raises(KeyboardInterrupt):
+        run_agent(client, "m", w, TASK, messages=conversation)
+
+    assert [m["role"] for m in conversation] == ["system", "user", "assistant", "tool", "tool", "tool"]
+    done, interrupted, not_run = conversation[3:]
+    assert "grace_days" in done["content"]  # 已經跑完的呼叫保留自己的結果
+    assert interrupted["content"].startswith("error: interrupted by the user") and "unknown" in interrupted["content"]
+    assert "not run" in not_run["content"]
+    # 每個結果都用自己呼叫的 id，順序一致
+    assert [m["tool_call_id"] for m in conversation[3:]] == [c["id"] for c in conversation[2]["tool_calls"]]
+    assert (tmp_path / "rules.py").read_text() == "def grace_days():\n    return 2\n"
+
+
+# Scenario: Interrupt while waiting for the model
+def test_an_interrupt_while_waiting_for_the_model_adds_nothing(tmp_path):
+    w = interrupting_workspace(tmp_path)
+    conversation = []
+
+    with pytest.raises(KeyboardInterrupt):
+        run_agent(FakeClient([KeyboardInterrupt()]), "m", w, TASK, messages=conversation)
+
+    assert conversation == [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": TASK}]
+
+
 # Scenario: Failing tests are not tool failures
 def test_failing_tests_are_not_tool_failures(ws):
     client = FakeClient([(None, [native("run_tests")])] * 3 + [("Done.", None)])

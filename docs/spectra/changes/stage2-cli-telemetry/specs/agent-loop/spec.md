@@ -60,3 +60,18 @@ A tool result with the flag `protected_write` SHALL be counted in `protected_wri
 
 - **WHEN** the model calls `write_file` on `tests/test_report.py` and the Workspace treats test files as read-only
 - **THEN** the run's counters contain `"blocked_calls": 1` and `"protected_write_calls": 1`
+
+### Requirement: An interrupted tool round is sealed
+
+When a KeyboardInterrupt is raised while the tool calls of one reply are being executed, the loop SHALL append a tool result for the call that was interrupted (saying the user interrupted it and that its state is unknown) and a tool result for every later call of that reply (saying it was not run), before letting the interrupt propagate. Calls that had already finished keep their own results. When the interrupt is raised while waiting for the model, the loop SHALL add nothing and let it propagate.
+
+#### Scenario: Interrupt in the middle of three calls
+
+- **WHEN** one reply carries `read_file`, `edit_file` and `list_files`, and the interrupt is raised while `edit_file` is being confirmed
+- **THEN** the conversation has three tool results in order: the file content, an error starting with `error: interrupted by the user`, and an error saying the call was not run, and the interrupt reaches the caller
+
+#### Scenario: Interrupt while waiting for the model
+
+- **WHEN** the interrupt is raised during a model request
+- **THEN** the conversation is exactly as it was before the request and the interrupt reaches the caller
+
