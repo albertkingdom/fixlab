@@ -79,7 +79,10 @@ def test_golden_trace(tmp_path):
         GOLDEN.parent.mkdir(exist_ok=True)
         GOLDEN.write_text(json.dumps(actual, ensure_ascii=False, indent=1, sort_keys=True) + "\n")
         pytest.skip("golden file regenerated")
-    assert actual == json.loads(GOLDEN.read_text())
+    expected = json.loads(GOLDEN.read_text())
+    assert actual.keys() == expected.keys()
+    for part in expected:  # 一部分一部分比，失敗時看得出是對話、trace、計數器還是最後的檔案不一樣
+        assert actual[part] == expected[part], part
 
 
 def test_golden_covers_the_intended_cases():
