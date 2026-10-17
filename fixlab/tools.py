@@ -32,6 +32,20 @@ LIST_FILES_DESCRIPTION = (
     f"At most {MAX_LIST_ENTRIES} entries are shown."
 )
 LIST_FILES_SCHEMA = {"properties": {"path": {"type": "string"}}, "required": []}
+EDIT_FILE_DESCRIPTION = (
+    "Replace one piece of text in an existing UTF-8 text file. "
+    "old_string must match the file exactly (spaces, indentation, line breaks) and occur exactly once; "
+    "if it is not unique, include more surrounding lines. "
+    "Do not include the line numbers that read_file prints. new_string may be empty to delete the text."
+)
+EDIT_FILE_SCHEMA = {
+    "properties": {
+        "path": {"type": "string"},
+        "old_string": {"type": "string"},
+        "new_string": {"type": "string"},
+    },
+    "required": ["path", "old_string", "new_string"],
+}
 
 
 def read_file(ws: Workspace, path: str, start_line: int | None = None, end_line: int | None = None) -> ToolResult:
@@ -91,7 +105,58 @@ def list_files(ws: Workspace, path: str = ".") -> ToolResult:
     return ToolResult("\n".join(names), True)
 
 
+def edit_file(ws: Workspace, path: str, old_string: str, new_string: str) -> ToolResult:
+    p = ws.resolve_inside(path)
+    if not p.exists():
+        raise ToolError(f"file not found: {path!r}")
+    if p.is_dir():
+        raise ToolError(f"{path!r} is a directory, not a file")
+    if old_string == "":
+        # 空字串在任何檔案裡都「出現」，空檔還會剛好算成一次，等於把 new_string 塞進檔案。
+        raise ToolError("old_string must not be empty")
+    if old_string == new_string:
+        # 這種「修改」什麼都沒改卻回成功，模型會以為已經修好。
+        raise ToolError("old_string and new_string are identical, nothing to change")
+
+    # 用 bytes 讀寫：文字模式會把 \r\n 悄悄換成 \n，整個檔案的換行字元都被改掉。
+    try:
+        text = p.read_bytes().decode("utf-8")
+    except UnicodeDecodeError:
+        raise ToolError(f"not a UTF-8 text file: {path!r}") from None
+
+    count = count_occurrences(text, old_string)
+    if count == 0:
+        raise ToolError(
+            f"old_string occurs 0 times in {path!r}. It must match the file exactly, including spaces "
+            "and indentation, and must not include line numbers. Use read_file to check the current text."
+        )
+    if count > 1:
+        raise ToolError(
+            f"old_string occurs {count} times in {path!r}, but it must occur exactly once. "
+            "Include more surrounding lines to make it unique."
+        )
+
+    try:
+        data = text.replace(old_string, new_string, 1).encode("utf-8")  # 先編碼再寫檔，編碼失敗時檔案不會被動到
+    except UnicodeEncodeError:
+        raise ToolError("new_string cannot be encoded as UTF-8") from None
+    p.write_bytes(data)
+    ws.files_read.discard(p)  # 模型沒看過編輯後的全文，之後要用 write_file 覆寫得重新讀
+    return ToolResult(f"edited {path}", True)
+
+
+def count_occurrences(text: str, piece: str) -> int:
+    """piece 在 text 裡出現幾次，重疊的也算："aa" 在 "aaa" 裡是 2 次（str.count 只會回 1）。"""
+    count = 0
+    start = text.find(piece)
+    while start != -1:
+        count += 1
+        start = text.find(piece, start + 1)  # 從下一個字元找起，重疊的位置才不會漏掉
+    return count
+
+
 def register_tools(ws: Workspace) -> None:
     """把所有工具登記到 ws。之後每個工具的任務各加一行 ws.register(...)。"""
     ws.register("read_file", partial(read_file, ws), READ_FILE_SCHEMA, READ_FILE_DESCRIPTION)
     ws.register("list_files", partial(list_files, ws), LIST_FILES_SCHEMA, LIST_FILES_DESCRIPTION)
+    ws.register("edit_file", partial(edit_file, ws), EDIT_FILE_SCHEMA, EDIT_FILE_DESCRIPTION)

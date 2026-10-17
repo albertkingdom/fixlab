@@ -13,7 +13,7 @@ def ws(tmp_path):
     (root / "link_secret").symlink_to("../secret.txt")
     w = Workspace(root)
 
-    # 假工具：任務 3.2 以後才有真的 read_file，這裡只驗證路徑守門與錯誤分類。
+    # 假的 read_file：只驗證路徑守門與錯誤分類，不依賴真工具的行為。
     def read_file(path: str) -> ToolResult:
         p = w.resolve_inside(path)
         if not p.is_file():

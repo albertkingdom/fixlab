@@ -1,6 +1,6 @@
 # agent 迴圈的單元測試：用寫好劇本的假模型驗證 agent-loop 規格，不需要真的 LLM。
-# 這個檔案目前只涵蓋 3.5 的部分：任務文字、模型自己決定、步數上限、提示文字。
-# 重試、截斷、連續失敗、trace 的情境留給 6.x。
+# 這個檔案目前只涵蓋任務文字、模型自己決定、步數上限、提示文字。
+# 重試、截斷、連續失敗、trace 的情境等迴圈保險完成後再補。
 import json
 from types import SimpleNamespace as NS
 
@@ -41,7 +41,7 @@ def ws(tmp_path):
     w = Workspace(tmp_path)
     register_tools(w)  # 真的 read_file 與 list_files
 
-    # 真的 edit_file 與 run_tests 要到 3.8、3.10 才有，這裡用假的，只驗證迴圈會照模型的決定執行。
+    # edit_file 與 run_tests 在這裡用假的：只驗證迴圈會照模型的決定執行，不依賴真工具的細節。
     def edit_file(path: str, old_string: str, new_string: str) -> ToolResult:
         p = w.resolve_inside(path)
         p.write_text(p.read_text().replace(old_string, new_string))

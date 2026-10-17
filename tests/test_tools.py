@@ -8,13 +8,14 @@ import pytest
 from fixlab.toolparse import parse_message
 from fixlab.tools import MAX_READ_CHARS, register_tools
 from fixlab.workspace import ToolResult, Workspace
+from test_fixture import BUGGY, FIXED, copy_fixture, run_pytest  # timelog 範例專案與它的 bug／修法
 
 
 @pytest.fixture
 def ws(tmp_path):
     w = Workspace(tmp_path)
 
-    # 假工具：edit_file 到任務 3.5 才有，這裡只驗證參數型別檢查。
+    # 這個 edit_file 是假的，什麼都不做，只用來驗證參數型別檢查（真的在 fixlab/tools.py）。
     def edit_file(path: str, old_string: str, new_string: str) -> ToolResult:
         return ToolResult("edited", True)
 
@@ -243,3 +244,136 @@ def test_list_files_bad_path_is_an_error(rws, path, message):
 def test_list_files_outside_workspace_is_blocked(rws):
     r = rws.call("list_files", {"path": ".."})
     assert not r.ok and r.flags == {"blocked": True}
+
+
+# ---- edit_file：對應規格的 edit_file replaces one unique string ----
+
+# timelog 的 bug 那一行（\d 是字面的反斜線加 d，小模型最常在這裡把跳脫寫錯）
+BUGGY_LINE = r'    units = [re.match(r"(\d+)([hm])", text).groups()]'
+FIXED_LINE = r'    units = re.findall(r"(\d+)([hm])", text)'
+
+
+def edit(w, path, old, new):
+    return w.call("edit_file", {"path": path, "old_string": old, "new_string": new})
+
+
+def write_parser(root, text=None):
+    path = root / "timelog" / "parser.py"
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(text if text is not None else f"def parse_duration(text):\n{BUGGY_LINE}\n    return units\n")
+    return path
+
+
+# Scenario: Unique match
+def test_edit_unique_match_replaces_it(rws):
+    parser = write_parser(rws.root)
+    r = edit(rws, "timelog/parser.py", r'[re.match(r"(\d+)([hm])", text).groups()]', r're.findall(r"(\d+)([hm])", text)')
+    assert r.ok and r.output == "edited timelog/parser.py"
+    assert parser.read_text() == f"def parse_duration(text):\n{FIXED_LINE}\n    return units\n"
+
+
+# Scenario: Ambiguous match
+def test_edit_ambiguous_match_leaves_file_unchanged(rws):
+    original = "def a():\n    return 0\n\ndef b():\n    return 0\n"
+    parser = write_parser(rws.root, original)
+    r = edit(rws, "timelog/parser.py", "return 0", "return 1")
+    assert not r.ok and "2 times" in r.output and "blocked" not in r.flags
+    assert parser.read_text() == original
+
+
+# Scenario: No match
+def test_edit_no_match_leaves_file_unchanged(rws):
+    parser = write_parser(rws.root)
+    original = parser.read_text()
+    r = edit(rws, "timelog/parser.py", "this text is not in the file", "x")
+    assert not r.ok and "0 times" in r.output and "blocked" not in r.flags
+    assert parser.read_text() == original
+
+
+def test_edit_counts_overlapping_matches(rws):
+    parser = write_parser(rws.root, "aaa\n")
+    r = edit(rws, "timelog/parser.py", "aa", "b")  # "aa" 在 "aaa" 的位置 0 與 1 都匹配，不是唯一
+    assert not r.ok and "2 times" in r.output
+    assert parser.read_text() == "aaa\n"
+
+
+def test_edit_with_empty_new_string_deletes_the_text(rws):
+    parser = write_parser(rws.root, "x = 1\ny = 2\n")
+    assert edit(rws, "timelog/parser.py", "y = 2\n", "").ok
+    assert parser.read_text() == "x = 1\n"
+
+
+@pytest.mark.parametrize("old, new, message", [
+    ("", "x", "must not be empty"),
+    ("x = 1", "x = 1", "identical"),
+])
+def test_edit_rejects_pointless_requests(rws, old, new, message):
+    parser = write_parser(rws.root, "x = 1\n")
+    r = edit(rws, "timelog/parser.py", old, new)
+    assert not r.ok and message in r.output
+    assert parser.read_text() == "x = 1\n"
+
+
+def test_edit_empty_old_string_does_not_fill_an_empty_file(rws):
+    parser = write_parser(rws.root, "")
+    r = edit(rws, "timelog/parser.py", "", "x = 1\n")
+    assert not r.ok
+    assert parser.read_text() == ""
+
+
+# Requirement 的最後一句：成功的編輯讓該檔不再算整檔讀過
+def test_successful_edit_removes_file_from_files_read(rws):
+    parser = write_parser(rws.root, "x = 1\n")
+    read(rws, "timelog/parser.py")
+    assert parser in rws.files_read
+
+    assert not edit(rws, "timelog/parser.py", "nope", "y").ok
+    assert parser in rws.files_read  # 失敗的編輯沒有改檔，讀過的內容仍然有效
+
+    assert edit(rws, "timelog/parser.py", "x = 1", "x = 2").ok
+    assert parser not in rws.files_read
+
+
+def test_edit_keeps_windows_line_endings(rws):
+    parser = rws.root / "crlf.py"
+    parser.write_bytes(b"a = 1\r\nb = 2\r\n")
+    assert edit(rws, "crlf.py", "a = 1", "a = 9").ok
+    assert parser.read_bytes() == b"a = 9\r\nb = 2\r\n"
+
+
+def test_edit_new_string_that_cannot_be_encoded_leaves_file_unchanged(rws):
+    parser = write_parser(rws.root, "x = 1\n")
+    r = edit(rws, "timelog/parser.py", "x = 1", "\ud800")  # 孤立的 surrogate 不能編成 UTF-8
+    assert not r.ok and "UTF-8" in r.output
+    assert parser.read_text() == "x = 1\n"
+
+
+def test_edit_missing_directory_and_binary_files_are_errors(rws):
+    (rws.root / "pkg").mkdir()
+    (rws.root / "blob.bin").write_bytes(b"\xff\xfe\x00\x80")
+    for path, message in [("nope.py", "file not found"), ("pkg", "directory"), ("blob.bin", "UTF-8")]:
+        r = edit(rws, path, "a", "b")
+        assert not r.ok and message in r.output and "blocked" not in r.flags
+
+
+def test_edit_outside_workspace_is_blocked(rws):
+    r = edit(rws, "../secret.txt", "a", "b")
+    assert not r.ok and r.flags == {"blocked": True}
+
+
+def test_edit_file_is_offered_to_the_model(rws):
+    spec = {s["function"]["name"]: s["function"] for s in rws.tool_specs()}["edit_file"]
+    assert spec["parameters"]["required"] == ["path", "old_string", "new_string"]
+    assert "line numbers" in spec["description"]  # read_file 的輸出有行號，提醒模型別把行號抄進 old_string
+
+
+def test_edit_file_applies_the_real_fix_to_the_fixture(tmp_path):
+    project = copy_fixture(tmp_path)
+    assert "1 failed" in run_pytest(project).stdout
+    w = Workspace(project)
+    register_tools(w)
+
+    assert edit(w, "timelog/parser.py", BUGGY, FIXED).ok
+
+    result = run_pytest(project)
+    assert result.returncode == 0, result.stdout

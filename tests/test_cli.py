@@ -1,5 +1,5 @@
 # fixlab 最小入口的測試：用假 client，不需要真的 LLM。
-# 目前只涵蓋 3.6：參數與錯誤、每步輸出、快照 diff。結束後再跑 run_tests 與含 edit_file 的 diff 留給 3.11。
+# 目前只涵蓋參數與錯誤、每步輸出、快照 diff。結束後再跑 run_tests 的部分，等 run_tests 完成後再補。
 # 一律先把 fixture 複製到暫存目錄再當 PATH：fixlab 會直接修改指定的目錄。
 import pytest
 
