@@ -70,9 +70,9 @@ read_file 每行加行號並可指定 start_line 與 end_line，以 splitlines �
 
 list_files、glob、grep 與測試檔指紋掃描共用同一份跳過清單（.git、.venv、__pycache__、.pytest_cache），且一律不跟隨、不列出符號連結。原因：這些工具在沙箱外以 Python 行程執行，工作目錄裡放一個指向 ../secret 的連結，就能讓 grep 讀到工作目錄外的內容；單一的使用者路徑解析擋不住這種情況。替代方案：對每個走訪到的檔案都 resolve 並檢查；不選的原因：實作較繁、效能較差，而且測試專案本來就不需要符號連結。
 
-### 測試檔以規則判定，路徑相對於工作目錄，指紋涵蓋整組
+### 唯讀檔案由 Workspace 的 read_only 函式決定，預設都能寫，修 bug 時鎖測試檔
 
-「受保護檔案」的判定規則，一律對「相對於工作目錄根的路徑」套用：檔名（不分大小寫）以 test_ 開頭、以 _test.py 結尾、等於 conftest.py，或路徑中任一層目錄名為 tests 或 test。工作目錄本身位於名為 tests 的目錄底下（例如 tests/fixtures/timelog）不影響判定。tests.py 這類單一檔名不受保護，這是刻意的：pytest 預設不會收集它，保護範圍與 pytest 收集規則對齊。Workspace 建立時掃描所有受保護檔案（用共用跳過清單），對「相對路徑加內容」排序後算一個 sha256 指紋；run_tests 跑完再算一次，不同就設 test_file_tampered 旗標（刪除或新增受保護檔案也算）。write_file 與 edit_file 都先過同一個判定函式。替代方案：只保護 test_*.py。不選的原因：tests/helpers.py 或 fixtures 檔改掉，同樣能讓測試變綠而不修 bug。
+Workspace 接受一個 read_only 函式，輸入「相對於工作目錄根的路徑」，回傳這個檔案能不能寫；預設是 nothing_is_read_only，沒有任何檔案唯讀，因為通用的 agent 由使用者決定能改什麼，不該預設鎖測試檔（見 Open Questions）。修 bug 的入口（fixlab PATH，以及之後的 benchmark）明確傳入 looks_like_test_file，這個函式用命名慣例猜哪些是測試檔：檔名（不分大小寫）以 test_ 開頭、以 _test.py 結尾、等於 conftest.py，或路徑中任一層目錄名為 tests 或 test。工作目錄本身位於名為 tests 的目錄底下（例如 tests/fixtures/timelog）不影響判定。tests.py 這類單一檔名不算，這是刻意的：pytest 預設不會收集它，範圍與 pytest 收集規則對齊。判定用的是「解析符號連結之後」的真實路徑，指向測試檔的連結不能拿來繞過。Workspace 建立時掃描 read_only 函式標記的所有檔案（用共用跳過清單），對「相對路徑加內容」排序後算一個 sha256 指紋；run_tests 跑完再算一次，不同就設 test_file_tampered 旗標（刪除或新增被標記的檔案也算）；預設規則下沒有被標記的檔案，所以永遠不會設這個旗標。write_file 與 edit_file 都經過 Workspace.resolve_writable()，由它呼叫 read_only，判定放在檢查檔案是否存在之前，所以對不存在的測試路徑也是 blocked。替代方案一：只保護 test_*.py；不選的原因：tests/helpers.py 或 fixtures 檔改掉，同樣能讓測試變綠而不修 bug。替代方案二：預設就鎖測試檔；不選的原因：忘了傳規則的呼叫端至少不會莫名其妙被擋，通用用法也不會被預設值綁住，代價是修 bug 的呼叫端必須記得傳，見 Risks。傳入的是函式，不是路徑清單或 glob：函式最簡單，不用處理 ** 與大小寫的細節，要自訂「只鎖題目指定的檔」也只是一個 lambda。
 
 ### 子行程環境變數用白名單
 
@@ -111,7 +111,7 @@ Workspace 登記工具時只存 properties 與 required；tool_specs() 產生送
 **Behavior**
 
 - `run_agent(client, model, ws, task, max_steps=20, request_extra=None, trace=...)` 回傳 AgentResult，stop_reason 為 done、max_steps、error、stuck 之一。
-- `Workspace(root, python=sys.executable, deny_read=(), project_root=...)`；`ws.call(name, args)` 永遠回傳 ToolResult(output, ok, flags)，不拋例外。
+- `Workspace(root, python=sys.executable, read_only=nothing_is_read_only, deny_read=(), project_root=...)`；`read_only` 是 `(相對路徑) -> bool`，預設都能寫，`fixlab PATH` 傳入 `looks_like_test_file`；`ws.call(name, args)` 永遠回傳 ToolResult(output, ok, flags)，不拋例外。
 - 七個工具：read_file(path, start_line?, end_line?)、list_files(path?)、glob(pattern)、grep(pattern, path?)、edit_file(path, old_string, new_string)、write_file(path, content)、run_tests(target?)。
 - read_file 輸出每行格式為 6 位右對齊行號、一個 tab、原文；空檔輸出 "(empty file)"；結尾換行不產生多餘的編號空行。
 - grep、glob、list_files 的路徑一律是相對於工作目錄的相對路徑，不跟隨符號連結。
@@ -121,7 +121,7 @@ Workspace 登記工具時只存 properties 與 required；tool_specs() 產生送
 **Failure modes**
 
 - 路徑在工作目錄外、絕對路徑、以 ~ 開頭、跟隨符號連結後跑出工作目錄、run_tests 的 target 在工作目錄外：ok=false 並設 blocked。
-- 寫入受保護檔案：ok=false 並設 blocked，檔案不變。
+- 寫入 read_only 標記的檔案：ok=false 並設 blocked，檔案不變。
 - 其他工具錯誤（找不到檔案、read_file 讀到非 UTF-8 檔或行範圍不合理、edit_file 的次數不是 1、覆寫沒整檔讀過的檔案、無效正規表示式、grep 太慢）：ok=false，不設 blocked。
 - `fixlab` 遇到 PATH 不是目錄、沒設 OPENAI_API_KEY（使用注入的 client 時不檢查）、沒給 --model 也沒設 FIXLAB_MODEL：以退出碼 2 結束並給清楚的錯誤訊息。PATH 裡指向目錄外的符號連結不跟隨（read_file 被擋，設 blocked）。
 - 連續 3 次「有執行工具且全失敗」的回合：迴圈以 stuck 結束，counters 記錄 stuck_failures。
@@ -166,6 +166,11 @@ Workspace 登記工具時只存 properties 與 required；tool_specs() 產生送
 - [目前的工具組無法建立新檔案：edit_file 只改既有的檔案，空的 old_string 被拒絕，write_file 要到後面才做] → timelog 的修復只需要改既有檔案，不影響 3.12 的 smoke；edit_file 對空 old_string 的錯誤訊息只教「用既有的一行當錨點插入」，write_file 完成後再補「要建立新檔用 write_file」，現在提示一個還沒登記的工具，模型會去呼叫它而被拒絕。
 - [edit_file 成功時只回 `edited <path>`，模型看不到自己改了什麼；快照 diff 是 agent 結束後才印給使用者看的，不會進對話。模型若改錯地方或縮排不對，只能自己再 read_file 才會發現] → 先維持最簡單的回饋，因為工具輸出會留在歷史裡每一輪重送，是 token 與成本的主要壓力。替代方案：回傳修改處前後幾行的片段（Claude Code 的 Edit 工具回傳修改後的片段，依記憶，未重新查證）。2026-10-17 的非正式觀察（第 4 篇的紀錄，單一樣本）：模型第 5 步修好 parser.py 之後沒有再讀它，直接去讀別的檔，最後宣告完成。3.12 看模型改完會不會自己重讀；若常在沒驗證的情況下宣告完成，或改錯位置而不自知，再改成回傳片段。
 
+- [read_only 預設不鎖任何檔案，修 bug 的呼叫端一旦忘了傳 looks_like_test_file，測試檔就沒有保護，連 test_file_tampered 的指紋也不會有東西可比，評分會悄悄失準] → fixlab PATH 有測試確認它傳了規則且測試檔改不動；benchmark（階段 3）建立 Workspace 時也要有同樣的測試，在跑任何題目之前先確認保護有效。
+- [沙箱（OS 層）的測試檔規則是從 looks_like_test_file 的命名慣例寫成 SBPL 的，無法由任意的 read_only 函式產生] → 自訂的 read_only 只在工具層與指紋生效，沙箱不管；規格已寫明。需要時階段 2 再決定要不要讓沙箱規則可設定。
+
 ## Open Questions
 
-(none)
+- 測試檔保護是「修 bug 模式」的政策，不是 agent 的通用限制。修 bug 時測試檔是評分標準，改了就是假通過；通用的 coding agent 裡寫測試是常見的任務，硬擋反而是 bug（高見龍的 KeSi 與 Claude Code 都靠使用者授權，沒有寫死這種規則）。Workspace 的 read_only 參數已經讓政策可以從外部決定：預設不鎖任何檔案，fixlab PATH 明確傳入 looks_like_test_file。階段 2 加入互動模式時，還要決定哪些檔案可寫改由什麼決定：權限提示、使用者設定的規則，或任務模式的預設值。
+- 同一個回覆裡有多個工具呼叫時，全部會依序執行；混合讀與寫時，後面的呼叫是在前面的編輯之後才跑，而模型下這些命令時並不知道編輯的結果。2026-10-17 的兩次真模型紀錄（共 26 個有合法工具呼叫的回覆）每個都只有 1 個呼叫，所以階段 1 不限制；階段 3 跑多個模型時看 telemetry 的呼叫數分佈，再決定要不要限制。
+- 無效的回覆（工具不存在、JSON 壞掉）被擋下時，紀錄只留錯誤，沒有記下原本有幾個工具呼叫，所以無法統計「模型一次叫幾個工具」。階段 2 設計 telemetry 欄位時，要記下每個回覆原本的呼叫數，包含被擋下的。
