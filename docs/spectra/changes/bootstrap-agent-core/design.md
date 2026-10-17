@@ -94,7 +94,7 @@ Workspace 接受一個 read_only 函式，輸入「相對於工作目錄根的�
 
 ### 子行程環境變數用白名單
 
-run_tests 啟動子行程時，環境只放 PATH、LANG、LC_ALL、TMPDIR 與 PYTHONDONTWRITEBYTECODE=1，其餘全部不傳。依據是自己的程式：code-agent-eval 的 run_tests 把整個 os.environ 傳進子行程，而專案根目錄的 .env 放了 OpenRouter 金鑰，被測程式只要印出環境就能讓金鑰進入 trace 與對話。已用實驗確認白名單下以 sandbox-exec 啟動 venv 的 python 與 pytest 可行，不需要 HOME、VIRTUAL_ENV 或 PYTHONPATH。替代方案：黑名單（移除名稱含 KEY、TOKEN 的變數）；不選的原因：命名無法窮舉（OPENAI_KEY、STRIPE_SK、GH_PAT）。取捨：若被測專案的測試需要特定環境變數，要明確加進白名單（階段 1 不開放設定）。
+run_tests 啟動子行程時，環境只放 PATH、LANG、LC_ALL（有設才傳）、這次執行專屬的暫存目錄（TMPDIR）與 PYTHONDONTWRITEBYTECODE=1，其餘全部不傳。依據是自己的程式：code-agent-eval 的 run_tests 把整個 os.environ 傳進子行程，而專案根目錄的 .env 放了 OpenRouter 金鑰，被測程式只要印出環境就能讓金鑰進入 trace 與對話。已用實驗確認白名單下以 sandbox-exec 啟動 venv 的 python 與 pytest 可行，不需要 HOME、VIRTUAL_ENV 或 PYTHONPATH。替代方案：黑名單（移除名稱含 KEY、TOKEN 的變數）；不選的原因：命名無法窮舉（OPENAI_KEY、STRIPE_SK、GH_PAT）。取捨：若被測專案的測試需要特定環境變數，要明確加進白名單（階段 1 不開放設定）。
 
 ### run_tests 的 pytest 指令固定，不讀專案外的設定
 
@@ -102,7 +102,7 @@ run_tests 執行的指令固定為：python -m pytest -q -p no:cacheprovider -c 
 
 ### 沙箱：禁網路、限制讀寫範圍、測試檔不可寫
 
-沿用 code-agent-eval 的 sandbox-exec 規則：預設允許、禁網路；使用者家目錄、專案目錄與額外的 deny_read 目錄不可讀，再放行自己的工作目錄與 .venv（後面的規則覆蓋前面的，所以順序就是邏輯：所有 deny 寫在 allow 之前）；只能寫工作目錄（加 /dev）。擋家目錄是新增的：code-agent-eval 只擋專案目錄，被測程式仍能讀 ~/.ssh、~/.aws 或其他專案的 .env，雖然禁網路，內容仍可經 pytest 輸出進入 run_tests 的結果、對話與 trace，最後送到 LLM 供應商。已用實驗確認：家目錄被擋時，位於家目錄底下的工作目錄與 .venv 經 allow 放行後，pytest 仍能正常執行與 import；venv 的基底 Python 位於 /opt/homebrew 不受影響。替代方案：改成預設拒絕再逐一放行系統目錄；不選的原因：Python 與 pytest 需要讀的系統路徑很多，清單難以維護。取捨：若基底 Python 裝在家目錄底下（例如 pyenv 或 uv 管理的 Python），會被擋而無法啟動，屆時需把基底 Python 目錄加入放行清單。新增：工作目錄內的受保護路徑不可寫，且 tests 或 test 目錄不可改名或搬移。因為 SBPL 的 param 無法直接放進正規表示式，規則用 string-append 把「已用反斜線跳脫過所有正規表示式特殊字元的工作目錄路徑」（參數 WS_RE）接上目錄與檔名樣式；目錄樣式用 [Tt][Ee][Ss][Tt][Ss]? 加 (/|$) 結尾以涵蓋不分大小寫與改名。檔名規則（test_、_test.py、conftest.py）同樣編進沙箱。這些規則由 subagent review 以實驗驗證可行，並確認工作目錄路徑含 a+b(c) 這類字元時若不跳脫，保護會悄悄失效。路徑全部以 -D 參數傳入，不直接拼進規則字串。已知限制：硬連結能指向工作目錄外的檔案而沙箱只檢查路徑，階段 1 不處理，只在 README 列為已知限制。
+沿用 code-agent-eval 的 sandbox-exec 規則：預設允許、禁網路；使用者家目錄、專案目錄與額外的 deny_read 目錄不可讀，再放行自己的工作目錄與 .venv（後面的規則覆蓋前面的，所以順序就是邏輯：所有 deny 寫在 allow 之前）；只能寫工作目錄（加 /dev）。擋家目錄是新增的：code-agent-eval 只擋專案目錄，被測程式仍能讀 ~/.ssh、~/.aws 或其他專案的 .env，雖然禁網路，內容仍可經 pytest 輸出進入 run_tests 的結果、對話與 trace，最後送到 LLM 供應商。已用實驗確認：家目錄被擋時，位於家目錄底下的工作目錄與 .venv 經 allow 放行後，pytest 仍能正常執行與 import；venv 的基底 Python 位於 /opt/homebrew 不受影響。替代方案：改成預設拒絕再逐一放行系統目錄；不選的原因：Python 與 pytest 需要讀的系統路徑很多，清單難以維護。取捨：若基底 Python 裝在家目錄底下（例如 pyenv 或 uv 管理的 Python），會被擋而無法啟動，屆時需把基底 Python 目錄加入放行清單。新增：工作目錄內的受保護路徑不可寫，且 tests 或 test 目錄不可改名或搬移。因為 SBPL 的 param 無法直接放進正規表示式，規則用 string-append 把「已用反斜線跳脫過所有正規表示式特殊字元的工作目錄路徑」（參數 WS_RE）接上目錄與檔名樣式；目錄樣式用 [Tt][Ee][Ss][Tt][Ss]? 加 (/|$) 結尾以涵蓋不分大小寫與改名。檔名規則（test_、_test.py、conftest.py）同樣編進沙箱。這些規則由 subagent review 以實驗驗證可行，並確認工作目錄路徑含 a+b(c) 這類字元時若不跳脫，保護會悄悄失效。路徑全部以 -D 參數傳入，不直接拼進規則字串，而且全部要先轉成真實路徑：2026-10-17 實驗，用 /var/folders/... 這個捷徑寫的規則永遠對不上（macOS 的 /var 是 /private/var 的符號連結），連工作目錄都寫不進去，錯誤訊息只有 Operation not permitted。每次執行另建一個專屬的暫存目錄（TMPDIR 指向它，規則多放行寫入它，跑完刪掉）：沙箱擋掉 /tmp 後，pytest 的 tmp_path 會退回寫進目前目錄，實測在工作目錄留下 pytest-of-使用者 資料夾，弄髒結束時的差異比較。沒有沙箱可用（非 macOS，或找不到 sandbox-exec）時直接執行，入口一開始印出一行 `sandbox: on` 或 `sandbox: OFF (…)`，不悄悄不啟用；Claude Code 的官方文件（2026-10-17）寫，沙箱在 macOS（Seatbelt）、Linux 與 WSL2（bubblewrap 加 socat）上可用，原生 Windows 上指令不經沙箱直接執行，沙箱不可用時預設也是直接執行，另有 failIfUnavailable 設定可以改成啟動即中止，它的沙箱也放行「每個使用者的暫存目錄」；本專案採同樣的預設（直接執行但讓使用者看得到），中止選項先不做。結構參考高見龍 kesi.py 的 sandbox_spec（allow default 再逐項收緊、-D 參數、放行 file-read-metadata、寫入白名單），規則文字與放行範圍不同，已在 sandbox.py 開頭附上來源與他的 MIT 授權全文。已知限制：硬連結能指向工作目錄外的檔案而沙箱只檢查路徑，階段 1 不處理，只在 README 列為已知限制。
 
 ### blocked 旗標只留給路徑逃逸與受保護檔案
 
@@ -194,6 +194,9 @@ Workspace 登記工具時只存 properties 與 required；tool_specs() 產生送
 - [空回覆的回饋寫成 `Your tool call was invalid: empty response ... Please call a tool with valid arguments.`，但 3.12 的兩次實跑裡，空回覆都出現在模型已經驗證完畢、只差說一句結論的時候（回覆只有思考內容，沒有文字也沒有工具呼叫，思考模式開著），回饋卻要求它「呼叫工具」，措辭有誤導，模型要再多回一次才給出結論，各白花 1 步] → 這是我們訊息的缺陷，不是模型能力的問題。建議把空回覆的回饋改成同時涵蓋兩種情況，例如：`Your reply was empty. If you are finished, reply with a short final message; otherwise call a tool.` 這會動到 agent-loop 規格的 Empty reply 情境與測試，已於 2026-10-17 修正：措辭改成上述建議，agent-loop 規格的 Empty reply 情境加了一條，tests/test_loop.py 有對應的測試。實跑當時（README 的紀錄）用的是舊措辭，修正後用同樣條件重跑了 2 次（2026-10-17），兩次都沒有再出現空回覆（原本是 2 次裡 2 次），所以新措辭沒有被實際檢驗到，是否真的省掉那一步仍未驗證；重跑的第 1 次還在改檔後連續跑了 3 次相同的測試，目前沒有重複呼叫偵測，留到階段 2。
 
 - [write_file 直接覆寫目標檔，寫到一半被中斷會留下半個檔案；建立新檔是先檢查不存在、再寫，檢查與寫入之間若有別的程式剛好建立同名檔，會被蓋掉] → 階段 1 單一程序、一次一個工具呼叫，風險低，先不處理；之後可改成暫存檔加 os.replace，新檔用 `open(path, "xb")`（高見龍的做法）。
+
+- [測試用到 tmp_path 或 tempfile 以外，還有些程式把暫存檔寫到固定位置（例如 /tmp/xxx），在沙箱裡會被擋而失敗] → 失敗會顯示在測試輸出，不會被當成通過；階段 1 的範例專案沒有這種測試，遇到時再決定要不要放行更多位置。
+- [沒有沙箱可用（非 macOS）時，run_tests 直接以使用者的權限執行被測程式] → 入口開始時印出 `sandbox: OFF (…)`；README（7.1）列為已知限制；是否提供「沙箱不可用就拒絕執行」的選項（Claude Code 的 failIfUnavailable）留到階段 2。
 
 ## Open Questions
 

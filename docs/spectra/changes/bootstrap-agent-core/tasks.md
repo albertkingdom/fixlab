@@ -32,7 +32,7 @@
 
 ## 5. 隔離與沙箱
 
-- [ ] 5.1 實作 fixlab/sandbox.py 的基本規則：依「沙箱：禁網路、限制讀寫範圍、測試檔不可寫」，Tests run in a sandbox 的禁網路、家目錄、專案與 deny_read 目錄不可讀（所有 deny 規則寫在放行工作目錄與 .venv 的 allow 之前）、只能寫工作目錄與 /dev、路徑一律用 -D 參數且規則文字不含字面路徑，並套到 run_tests。驗證：tests/test_isolation.py 的網路、讀取表格七列（含家目錄裡的假金鑰檔與 ~/.ssh 列表，假金鑰檔由測試建立在家目錄的暫存子目錄並在結束時刪除）、家目錄寫入、規則文字無字面路徑（含家目錄路徑）四組測試（僅 macOS，其他平台標記 skip）。
+- [x] 5.1 實作 fixlab/sandbox.py 的基本規則：依「沙箱：禁網路、限制讀寫範圍、測試檔不可寫」，Tests run in a sandbox 的禁網路、家目錄、專案與 deny_read 目錄不可讀（所有 deny 規則寫在放行工作目錄與 .venv 的 allow 之前）、只能寫工作目錄與 /dev、路徑一律用 -D 參數且規則文字不含字面路徑，並套到 run_tests；每次執行用專屬的暫存目錄（TMPDIR 指向它，規則放行寫入，跑完刪掉），所有放進規則的路徑先轉成真實路徑；沒有沙箱可用時直接執行，入口印出 sandbox 狀態那一行；sandbox.py 開頭附上來源說明與高見龍的 MIT 授權全文；Workspace 新增 deny_read 與 project_root 參數。驗證：tests/test_isolation.py 的網路（用本機的伺服器）、讀取表格七列（含家目錄裡的假金鑰檔與 ~/.ssh 列表，假金鑰檔由測試建立在家目錄的暫存子目錄並在結束時刪除）、家目錄寫入、規則文字無字面路徑（含家目錄路徑）四組測試（僅 macOS，其他平台標記 skip）。
 - [ ] 5.2 實作沙箱的受保護路徑規則：以 string-append 加跳脫過的 WS_RE 參數，在 OS 層擋住 looks_like_test_file 標記的檔案寫入、tests 或 test 目錄改名與搬移（規則只對應這個函式，自訂的 read_only 沙箱不管），並支援 workspace 位於專案目錄內。驗證：tests/test_isolation.py 的覆寫 tests/test_report.py、新建 tests/new_helper.py、改名 tests 目錄、workspace 名為 "a+b(c)"、workspace 在專案目錄內讀寫三個結果五個情境，且 run_tests 在 tests/fixtures/timelog 就地執行不再出現 pyproject.toml 的 PermissionError。
 
 ## 6. Agent 迴圈保險

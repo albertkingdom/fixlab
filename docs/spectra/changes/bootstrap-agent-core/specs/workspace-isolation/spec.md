@@ -62,12 +62,12 @@ The Workspace is created with `looks_like_test_file` as its rule.
 
 ### Requirement: Tests run in a sandbox
 
-run_tests SHALL run pytest under macOS sandbox-exec with no network access, with reads denied for the user's home directory, the whole project directory of fixlab, and every extra deny_read directory except the workspace itself and the Python virtual environment, and with writes allowed only inside the workspace and /dev. When the Workspace uses `looks_like_test_file`, the sandbox SHALL deny, inside the workspace, writes to every path that rule marks and renaming or moving a directory named `tests` or `test`, using the same case-insensitive rules as the tool layer. The sandbox derives its rules from `looks_like_test_file` only; a custom read-only rule is enforced by the tool layer but not by the sandbox. The workspace path used in the sandbox's regular-expression rules SHALL have every regular-expression special character escaped. The sandbox profile text SHALL contain no literal workspace, project, home, or deny_read paths; they SHALL be passed as parameters.
+run_tests SHALL run pytest under macOS sandbox-exec with no network access, with reads denied for the user's home directory, the whole project directory of fixlab, and every extra deny_read directory except the workspace itself and the Python virtual environment, and with writes allowed only inside the workspace, a private temporary directory created for that run, and /dev. Every path given to the sandbox SHALL be a real path with symbolic links resolved, because the sandbox compares real paths (on macOS `/var` is a link to `/private/var`). On a platform without sandbox-exec, run_tests SHALL run pytest without a sandbox, and the command-line entry SHALL print a status line saying whether the sandbox is on. When the Workspace uses `looks_like_test_file`, the sandbox SHALL deny, inside the workspace, writes to every path that rule marks and renaming or moving a directory named `tests` or `test`, using the same case-insensitive rules as the tool layer. The sandbox derives its rules from `looks_like_test_file` only; a custom read-only rule is enforced by the tool layer but not by the sandbox. The workspace path used in the sandbox's regular-expression rules SHALL have every regular-expression special character escaped. The sandbox profile text SHALL contain no literal workspace, project, home, or deny_read paths; they SHALL be passed as parameters.
 
 #### Scenario: Network access
 
-- **WHEN** code under test opens a TCP connection to 93.184.216.34 port 80 during run_tests
-- **THEN** the connection fails and the test output shows an error
+- **WHEN** code under test opens a TCP connection during run_tests to a server that is listening on 127.0.0.1 (so the connection would succeed without the sandbox)
+- **THEN** the connection fails with PermissionError
 
 #### Scenario: Reading outside the workspace
 
@@ -111,6 +111,31 @@ run_tests SHALL run pytest under macOS sandbox-exec with no network access, with
 - **WHEN** the workspace is tests/fixtures/timelog inside the fixlab project directory
 - **THEN** reads of AGENTS.md at the project root fail with PermissionError, reads of timelog/parser.py succeed, and writing timelog/parser.py succeeds
 
+#### Scenario: Workspace given as a symbolic link
+
+- **WHEN** the Workspace is created from a path that is a symbolic link to the real directory
+- **THEN** code under test can still write a file inside the workspace
+
+#### Scenario: Workspace inside the home directory
+
+- **WHEN** the workspace is a directory under the user's home directory
+- **THEN** reads and writes inside the workspace succeed, while writing elsewhere in the home directory fails with PermissionError
+
+#### Scenario: Temporary files stay out of the workspace
+
+- **WHEN** a test uses pytest's tmp_path during run_tests
+- **THEN** the temporary directory is outside the workspace, no new file or directory appears in the workspace, and the temporary directory is gone after the run
+
+#### Scenario: No sandbox available
+
+- **WHEN** sandbox-exec is not available
+- **THEN** run_tests still runs the tests, and the status line reports that the sandbox is off
+
+#### Scenario: Interpreter that fails to start
+
+- **WHEN** the Python interpreter exits with an error before running any test
+- **THEN** `tests_passed` is false
+
 #### Scenario: Profile has no literal paths
 
 - **WHEN** the sandbox profile text is generated for a workspace
@@ -118,7 +143,7 @@ run_tests SHALL run pytest under macOS sandbox-exec with no network access, with
 
 ### Requirement: Child processes get a minimal environment
 
-run_tests SHALL start pytest with an environment containing only PATH, LANG, LC_ALL, and TMPDIR copied from the parent process when present, plus PYTHONDONTWRITEBYTECODE set to 1. All other variables, including any whose names contain KEY, TOKEN, or SECRET, SHALL NOT be passed. The Python interpreter path SHALL be used as given, without resolving symbolic links, so the virtual environment is found.
+run_tests SHALL start pytest with an environment containing only PATH, LANG, and LC_ALL copied from the parent process when present, TMPDIR set to a private temporary directory created for that run and deleted afterwards, and PYTHONDONTWRITEBYTECODE set to 1. All other variables, including any whose names contain KEY, TOKEN, or SECRET, SHALL NOT be passed. The Python interpreter path SHALL be used as given, without resolving symbolic links, so the virtual environment is found.
 
 #### Scenario: API key in the parent environment
 
