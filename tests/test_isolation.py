@@ -149,3 +149,43 @@ def test_custom_rule_locks_only_the_files_it_names(tmp_path):
     r = edit(w, "tests/test_report.py")
     assert not r.ok and r.flags == {"blocked": True}
     assert edit(w, "tests/helpers.py").ok  # 一般會被當成測試檔的其他檔案，這個規則下可以改
+
+
+# ---- 子行程的環境變數：對應規格的 Child processes get a minimal environment ----
+
+
+def workspace_with_test(tmp_path, body):
+    """只有一個測試的 Workspace，測試印出環境然後故意失敗（失敗時 pytest 才會顯示印出的內容）。"""
+    root = tmp_path / "ws"
+    (root / "tests").mkdir(parents=True)
+    (root / "tests" / "test_env.py").write_text(body)
+    w = Workspace(root)
+    register_tools(w)
+    return w
+
+
+# Scenario: API key in the parent environment
+def test_child_process_does_not_get_api_keys(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-123")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test-123")
+    w = workspace_with_test(tmp_path, "import os\n\ndef test_env():\n    print(dict(os.environ))\n    assert False\n")
+
+    output = w.call("run_tests", {}).output
+
+    assert "1 failed" in output  # 測試真的跑了，也真的印出了環境
+    assert "sk-test-123" not in output
+    assert "OPENAI_API_KEY" not in output and "OPENROUTER_API_KEY" not in output
+
+
+# Scenario: Allowed variables pass through
+def test_allowed_variables_reach_the_child_process(tmp_path, monkeypatch):
+    monkeypatch.setenv("LANG", "en_US.UTF-8")
+    w = workspace_with_test(tmp_path, "import os\n\ndef test_lang():\n    print(os.environ['LANG'])\n    assert False\n")
+
+    assert "en_US.UTF-8" in w.call("run_tests", {}).output
+
+
+def test_run_tests_writes_no_bytecode_into_the_workspace(tmp_path):
+    w = workspace_with_test(tmp_path, "def test_ok():\n    assert True\n")
+    w.call("run_tests", {})
+    assert not list(w.root.rglob("__pycache__"))

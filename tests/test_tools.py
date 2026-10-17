@@ -390,3 +390,87 @@ def test_edit_file_applies_the_real_fix_to_the_fixture(tmp_path):
 
     result = run_pytest(project)
     assert result.returncode == 0, result.stdout
+
+
+# ---- run_tests：對應規格的 run_tests runs pytest in the workspace ----
+
+
+@pytest.fixture
+def tws(tmp_path):
+    """timelog 範例專案的複本，登記了真的工具。未修時恰好 1 個測試失敗。"""
+    w = Workspace(copy_fixture(tmp_path))
+    register_tools(w)
+    return w
+
+
+def run_tests(w, **args):
+    return w.call("run_tests", args)
+
+
+def write_test(w, name, body):
+    path = w.root / "tests" / name
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(body)
+
+
+# Scenario: Failing fixture project
+def test_run_tests_reports_a_failing_project(tws):
+    r = run_tests(tws)
+    assert r.ok  # 測試失敗不是工具錯誤
+    assert r.flags == {"tests_passed": False, "timed_out": False}
+    assert "1 failed" in r.output and "3.75 != 4.25" in r.output
+
+
+def test_run_tests_passes_after_the_fix(tws):
+    assert tws.call("edit_file", {"path": "timelog/parser.py", "old_string": BUGGY, "new_string": FIXED}).ok
+    r = run_tests(tws)
+    assert r.ok and r.flags["tests_passed"] is True and "5 passed" in r.output
+
+
+# Scenario: Target a single test file
+def test_run_tests_can_target_one_file(tws):
+    r = run_tests(tws, target="tests/test_report.py")
+    assert "1 failed, 1 passed" in r.output  # 這個檔案只有 2 個測試；全部是 5 個
+
+
+# Scenario: Target that looks like an option
+def test_run_tests_option_like_target_is_a_path(tws):
+    r = run_tests(tws, target="--version")
+    assert r.flags["tests_passed"] is False
+    assert "not found" in r.output  # 當成路徑找不到，pytest 沒有印出版本
+
+
+# Scenario: Target outside the workspace
+def test_run_tests_target_outside_the_workspace_is_blocked(tws):
+    r = run_tests(tws, target="../other")
+    assert not r.ok and r.flags == {"blocked": True}
+
+
+# Scenario: Infinite loop in the code under test
+def test_run_tests_stops_an_endless_test(rws, monkeypatch):
+    monkeypatch.setattr("fixlab.tools.RUN_TESTS_TIMEOUT_S", 1)  # 規格是 10 秒，測試不想真的等
+    write_test(rws, "test_forever.py", "def test_forever():\n    while True:\n        pass\n")
+    r = run_tests(rws)
+    assert r.ok and r.flags == {"tests_passed": False, "timed_out": True}
+    assert "timed out after 1s" in r.output
+
+
+# Scenario: No cache directory left behind
+def test_run_tests_leaves_no_cache_directories(tws):
+    run_tests(tws)
+    assert not list(tws.root.rglob(".pytest_cache"))
+    assert not list(tws.root.rglob("__pycache__"))
+
+
+def test_run_tests_shortens_long_output_but_keeps_the_summary(rws):
+    write_test(rws, "test_big.py", 'def test_big():\n    print("x" * 10000)\n    assert False\n')
+    r = run_tests(rws)
+    assert len(r.output) < 4300
+    assert "[truncated: " in r.output
+    assert "1 failed" in r.output.splitlines()[-1]  # 最後一行的結果沒有被截掉
+
+
+def test_run_tests_is_offered_to_the_model(rws):
+    spec = {s["function"]["name"]: s["function"] for s in rws.tool_specs()}["run_tests"]
+    assert spec["parameters"]["required"] == []
+    assert set(spec["parameters"]["properties"]) == {"target"}

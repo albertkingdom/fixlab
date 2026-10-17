@@ -9,14 +9,12 @@ description = "教學導向的最小 CLI coding agent，修多檔小專案的 bu
 requires-python = ">=3.11"
 dependencies = [
     "openai",
+    "pytest",  # run_tests 執行時需要它
     "regex",
 ]
 
 [project.scripts]
 fixlab = "fixlab.cli:main"
-
-[project.optional-dependencies]
-dev = ["pytest"]
 
 [tool.setuptools]
 packages = ["fixlab"]

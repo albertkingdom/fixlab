@@ -4,6 +4,8 @@
 每個工具都是一個函式：第一個參數是 Workspace（要用它檢查路徑），其餘是模型給的參數。
 """
 
+import os
+import subprocess
 from functools import partial
 
 from fixlab.workspace import ToolError, ToolResult, Workspace, iter_files
@@ -11,6 +13,12 @@ from fixlab.workspace import ToolError, ToolResult, Workspace, iter_files
 # 工具輸出一律有上限：輸出會留在對話歷史裡每一輪重送，是成本與小模型 context 的主要壓力。
 MAX_READ_CHARS = 20000
 MAX_LIST_ENTRIES = 200
+MAX_TEST_OUTPUT_CHARS = 4000
+RUN_TESTS_TIMEOUT_S = 10  # 做成模組常數，測試無窮迴圈的案例時可以改短，不用真的等 10 秒
+
+# 測試子行程唯一能看到的環境變數。用白名單：金鑰的名字無法窮舉（OPENAI_KEY、STRIPE_SK、GH_PAT……），
+# 而且被執行的程式包含模型改寫過的檔案，只要印出環境，金鑰就會進入測試輸出與對話。
+CHILD_ENV_NAMES = ("PATH", "LANG", "LC_ALL", "TMPDIR")
 
 READ_FILE_DESCRIPTION = (
     "Read a text file in the working directory. Every line is prefixed with its line number. "
@@ -46,6 +54,13 @@ EDIT_FILE_SCHEMA = {
     },
     "required": ["path", "old_string", "new_string"],
 }
+RUN_TESTS_DESCRIPTION = (
+    "Run the project's pytest tests and return the output. "
+    "target is an optional file or directory inside the working directory (default: the whole project). "
+    f"Tests are stopped after {RUN_TESTS_TIMEOUT_S} seconds. "
+    f"Output longer than {MAX_TEST_OUTPUT_CHARS} characters is shortened: the start and the end are kept."
+)
+RUN_TESTS_SCHEMA = {"properties": {"target": {"type": "string"}}, "required": []}
 
 
 def read_file(ws: Workspace, path: str, start_line: int | None = None, end_line: int | None = None) -> ToolResult:
@@ -159,8 +174,52 @@ def count_occurrences(text: str, piece: str) -> int:
     return count
 
 
+def run_tests(ws: Workspace, target: str = ".") -> ToolResult:
+    # 目標先過路徑守門（跑出工作目錄 → blocked），再用相對於工作目錄的路徑交給 pytest。
+    relative_target = ws.resolve_inside(target).relative_to(ws.root).as_posix()
+    if relative_target != ".":
+        # 加 ./ 前綴，讓 --version 這樣的名字變成路徑。實測 pytest 9.1.1 連 `-- --version` 都會先攔下來當選項，
+        # 印出版本後以 0 結束，會被誤判成測試通過。
+        relative_target = "./" + relative_target
+    # 指令固定：-c /dev/null、--rootdir、--confcutdir 讓 pytest 不往上層目錄找設定與 conftest；
+    # -p no:cacheprovider 不在工作目錄留下 .pytest_cache；-- 與目標的 ./ 前綴一起，確保目標只會被當成路徑。
+    command = [ws.python, "-m", "pytest", "-q", "-p", "no:cacheprovider",
+               "-c", "/dev/null", "--rootdir=.", "--confcutdir=.", "--", relative_target]
+    try:
+        done = subprocess.run(command, cwd=ws.root, env=child_environment(), stdin=subprocess.DEVNULL,
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=RUN_TESTS_TIMEOUT_S)
+        output, timed_out, passed = done.stdout, False, done.returncode == 0
+    except subprocess.TimeoutExpired as e:
+        output, timed_out, passed = e.stdout or b"", True, False
+    text = output.decode("utf-8", errors="replace")
+    if timed_out:
+        text += f"\n[tests timed out after {RUN_TESTS_TIMEOUT_S}s]"
+    # 測試失敗不是工具錯誤：失敗的測試正是模型需要的資訊，所以一律回成功，結果放在旗標裡。
+    return ToolResult(clip_middle(text), True, {"tests_passed": passed, "timed_out": timed_out})
+
+
+def child_environment() -> dict:
+    """測試子行程的環境變數：只放白名單裡有設的，再加上不產生 .pyc 的設定。"""
+    env = {}
+    for name in CHILD_ENV_NAMES:
+        if name in os.environ:
+            env[name] = os.environ[name]
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    return env
+
+
+def clip_middle(text: str, limit: int = MAX_TEST_OUTPUT_CHARS) -> str:
+    """太長就留頭尾各一半、中間註明省略。pytest 最重要的資訊（失敗摘要與最後一行 1 failed）在尾端，只留開頭會看不到結果。"""
+    if len(text) <= limit:
+        return text
+    half = limit // 2
+    note = f"[truncated: {len(text)} characters in total, showing the first {half} and the last {half}]"
+    return text[:half] + "\n" + note + "\n" + text[-half:]
+
+
 def register_tools(ws: Workspace) -> None:
     """把所有工具登記到 ws。之後每個工具的任務各加一行 ws.register(...)。"""
     ws.register("read_file", partial(read_file, ws), READ_FILE_SCHEMA, READ_FILE_DESCRIPTION)
     ws.register("list_files", partial(list_files, ws), LIST_FILES_SCHEMA, LIST_FILES_DESCRIPTION)
     ws.register("edit_file", partial(edit_file, ws), EDIT_FILE_SCHEMA, EDIT_FILE_DESCRIPTION)
+    ws.register("run_tests", partial(run_tests, ws), RUN_TESTS_SCHEMA, RUN_TESTS_DESCRIPTION)
