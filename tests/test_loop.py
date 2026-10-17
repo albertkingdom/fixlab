@@ -1,6 +1,5 @@
 # agent 迴圈的單元測試：用寫好劇本的假模型驗證 agent-loop 規格，不需要真的 LLM。
-# 這個檔案涵蓋任務文字、模型自己決定、步數上限、提示文字、回覆異常、同一回覆的多個呼叫、重試、連續失敗保險。
-# trace 的情境（Every step is traced）還沒補。
+# 這個檔案涵蓋任務文字、模型自己決定、步數上限、提示文字、回覆異常、同一回覆的多個呼叫、重試、trace、連續失敗保險。
 import json
 from types import SimpleNamespace as NS
 
@@ -217,6 +216,72 @@ def test_a_request_that_keeps_failing_ends_the_run_without_raising(ws, no_wait):
 
     assert r.stop_reason == "error"
     assert r.counters["rate_limit_retries"] == 2 and r.counters["request_errors"] == 1
+
+
+# ---- Every step is traced ----
+
+# Scenario: Trace for a tool step
+def test_each_answered_model_call_gets_one_trace_record(ws):
+    records = []
+    client = FakeClient([(None, [native("read_file", path="rules.py")]), ("Done.", None)])
+    run_agent(client, "m", ws, TASK, trace=records.append)
+
+    assert [r["event"] for r in records] == ["tool_calls", "done"]
+    first, last = records
+    assert first["step"] == 1 and first["finish_reason"] == "stop"
+    assert first["prompt_tokens"] == 10 and first["completion_tokens"] == 5
+    assert first["content"] is None and first["parse_errors"] == []
+    assert first["latency_s"] >= 0
+    assert first["tool_calls"] == [{
+        "name": "read_file", "args": {"path": "rules.py"}, "ok": True, "flags": {},
+        "output": "     1\tdef grace_days():\n     2\t    return 2"}]
+    assert last["step"] == 2 and last["content"] == "Done." and last["tool_calls"] == []
+
+
+def test_an_invalid_reply_is_traced_with_its_parse_errors(ws):
+    records = []
+    client = FakeClient([(None, [native("edit_file", path="rules.py")]), ("Done.", None)])
+    run_agent(client, "m", ws, TASK, trace=records.append)
+
+    assert [r["event"] for r in records] == ["invalid_tool_call", "done"]
+    assert records[0]["parse_errors"] and records[0]["tool_calls"] == []
+
+
+def test_a_tool_step_records_every_call_of_the_reply_and_its_flags(ws):
+    records = []
+    two_calls = (None, [native("run_tests"), native("read_file", path="nope.py")])
+    client = FakeClient([two_calls, ("Done.", None)])
+    run_agent(client, "m", ws, TASK, trace=records.append)
+
+    run_tests_entry, read_entry = records[0]["tool_calls"]
+    assert run_tests_entry["name"] == "run_tests" and run_tests_entry["flags"] == {"tests_passed": False}
+    assert read_entry["name"] == "read_file" and read_entry["ok"] is False
+
+
+# Scenario: Long arguments and outputs are truncated
+def test_arguments_and_outputs_over_2000_characters_are_truncated_in_the_record(ws):
+    records = []
+    (ws.root / "big.py").write_text("x = 1\n" * 1000)  # 讀回來的輸出遠超過 2000 字元
+    long_edit = native("edit_file", path="rules.py", old_string="return 2", new_string="return 3" + "#" * 3000)
+    client = FakeClient([(None, [native("read_file", path="big.py"), long_edit]), ("Done.", None)])
+    run_agent(client, "m", ws, TASK, trace=records.append)
+
+    read_entry, edit_entry = records[0]["tool_calls"]
+    assert len(read_entry["output"]) == 2000
+    assert edit_entry["args"]["new_string"] == ("return 3" + "#" * 3000)[:2000] + "..."
+    assert edit_entry["args"]["old_string"] == "return 2"  # 短的參數不動
+    # 截斷只影響紀錄：工具真的收到完整的字串
+    assert (ws.root / "rules.py").read_text() == "def grace_days():\n    return 3" + "#" * 3000 + "\n"
+
+
+def test_an_argument_of_exactly_2000_characters_is_kept_whole(ws):
+    records = []
+    exactly = "x" * 2000
+    client = FakeClient([(None, [native("edit_file", path="rules.py", old_string="return 2", new_string=exactly)]),
+                         ("Done.", None)])
+    run_agent(client, "m", ws, TASK, trace=records.append)
+
+    assert records[0]["tool_calls"][0]["args"]["new_string"] == exactly
 
 
 # ---- 連續失敗保險：對應規格的 Consecutive failing rounds stop the loop ----

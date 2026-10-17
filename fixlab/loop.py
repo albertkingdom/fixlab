@@ -198,7 +198,7 @@ def _run_tool_calls(ws: Workspace, it: Interpretation, msg, messages: list, coun
             if val:  # 例如 tests_passed、blocked（被擋下）
                 _count(counters, "blocked_calls" if flag == "blocked" else flag)
         rec["tool_calls"].append({"name": x.name,
-                                  "args": {k: (v if len(str(v)) < 2000 else str(v)[:2000] + "...")
+                                  "args": {k: (v if len(str(v)) <= 2000 else str(v)[:2000] + "...")
                                            for k, v in x.arguments.items()},
                                   "ok": result.ok, "flags": result.flags, "output": result.output[:2000]})
     return not any_succeeded
