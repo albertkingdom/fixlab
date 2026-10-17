@@ -102,6 +102,8 @@ def run_agent(
         round_failed = _run_tool_calls(ws, it, msg, messages, c, rec)
         if it.errors:
             # 同一個回覆裡有合法的、也有壞掉的呼叫：壞的沒有執行，要說一聲，否則模型會以為每個呼叫都做了。
+            # KNOWN-ISSUE: 通知是接在 tool 訊息後面的獨立 user 訊息，trace 沒有明確記它，只能從 parse_errors 推知；
+            # 也沒驗證過所有伺服器的 chat template 都接受 tool 後面接 user。有不接受的，就改成併進最後一則 tool 訊息。
             messages.append({"role": "user", "content": _skipped_calls_notice(it)})
         trace({**rec, "event": "tool_calls"})
 
