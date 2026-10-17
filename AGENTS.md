@@ -47,12 +47,12 @@ Verilog／EDA、SWE-bench 與真實大型 repo（需 Docker、小模型成功率
 
 ### 目錄結構
 ```
-fixlab/                 套件本體（約 1100 行）：cli、loop、toolparse、tools、workspace、sandbox
+fixlab/                 套件本體（約 1600 行）：cli、display、loop、toolparse、tools、workspace、sandbox、telemetry
 tests/                  fixlab 自己的測試；tests/fixtures/timelog 是給 agent 修的範例專案（pytest 不收集它）
 tests/golden/           黃金 trace（tests/test_trace_golden.py 比對的基準）
 docs/spectra/           Spectra 的規格（specs/）與變更提案（changes/）
 docs/articles/          教學文章，每篇對應一個 article-NN tag
-runs/                   真模型實跑的原始紀錄（不進版控）
+runs/                   真模型實跑的原始紀錄（不進版控）；每次執行的事件檔預設在 ~/.fixlab/runs/
 ```
 
 ## 4. 階段
