@@ -83,6 +83,7 @@ When a reply contains no valid tool call but has parse errors, the loop SHALL ap
 
 - **WHEN** the model returns empty content and no tool calls
 - **THEN** the loop does not stop, `empty_responses` is 1, `parse_errors` is 1, and the model is asked again
+- **AND** the next request contains a user message saying the reply was empty and that the model may either give a short final message or call a tool, because an empty reply often comes from a model that has finished and only lacks a closing message
 
 #### Scenario: Truncated reply
 

@@ -40,7 +40,7 @@
 ## 6. Agent 迴圈保險
 
 - [ ] 6.1 實作連續失敗保險：Consecutive failing rounds stop the loop，有執行且全失敗才累計、沒執行工具的回合不動計數、blocked 算失敗、run_tests 測試失敗不算失敗、第 3 次以 stuck 結束並記 stuck_failures。驗證：tests/test_loop.py 的三輪全失敗、成功後歸零、混合輪、無效回覆夾在中間、blocked 三次、測試失敗三次六個情境。
-- [ ] 6.2 替整檔搬入的回覆異常處理與重試補規格情境測試：Invalid replies become feedback, not completion（缺參數、空回覆、被截斷）、All native calls in one reply are executed、Transient provider errors are retried, timeouts are not；程式已隨迴圈搬入，此任務只補測試，缺口若暴露行為差異就一併修正。驗證：tests/test_loop.py 對應的六個情境，重試延遲在測試中設為 0。
+- [ ] 6.2 替整檔搬入的回覆異常處理與重試補規格情境測試（空回覆的情境已在實跑後連同回饋措辭一起補上測試）：Invalid replies become feedback, not completion（缺參數、空回覆、被截斷）、All native calls in one reply are executed、Transient provider errors are retried, timeouts are not；程式已隨迴圈搬入，此任務只補測試，缺口若暴露行為差異就一併修正。驗證：tests/test_loop.py 對應的六個情境，重試延遲在測試中設為 0。
 - [ ] 6.3 替 trace 回呼補規格情境測試：依「保留 trace 回呼，不在階段 1 決定 telemetry 格式」，Every step is traced 每個回覆一筆紀錄、參數與輸出超過 2000 字元截斷；程式已隨迴圈搬入，此任務只補測試。驗證：tests/test_loop.py 的 read_file 步驟紀錄檢查，加一筆過長輸出被截斷的檢查。
 - [ ] 6.4 建立黃金 trace 測試：用假模型跑完 timelog 修復流程，把 trace 存成 tests/golden/trace_golden.json 當行為基準，沿用 code-agent-eval 的 _normalize 輔助函式去除耗時與呼叫 id，避免測試不穩。驗證：tests/test_trace_golden.py 連跑 3 次都通過，且故意改一個工具輸出格式時會失敗（手動確認一次）。
 
