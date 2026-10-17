@@ -112,8 +112,12 @@ def edit_file(ws: Workspace, path: str, old_string: str, new_string: str) -> Too
     if p.is_dir():
         raise ToolError(f"{path!r} is a directory, not a file")
     if old_string == "":
-        # 空字串在任何檔案裡都「出現」，空檔還會剛好算成一次，等於把 new_string 塞進檔案。
-        raise ToolError("old_string must not be empty")
+        # 空字串沒有明確的位置：非空檔會算成「字元數加一」次而被拒絕，空檔卻剛好算成一次而成功，行為不一致。
+        # 所以明確拒絕，並告訴模型插入文字的做法：拿檔案裡已有的一段文字當錨點。
+        raise ToolError(
+            "old_string must not be empty. To insert text, use a nearby line that already exists as "
+            "old_string and repeat it in new_string together with the new text."
+        )
     if old_string == new_string:
         # 這種「修改」什麼都沒改卻回成功，模型會以為已經修好。
         raise ToolError("old_string and new_string are identical, nothing to change")

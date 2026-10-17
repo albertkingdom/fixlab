@@ -314,6 +314,19 @@ def test_edit_rejects_pointless_requests(rws, old, new, message):
     assert parser.read_text() == "x = 1\n"
 
 
+def test_edit_empty_old_string_message_explains_how_to_insert(rws):
+    write_parser(rws.root, "x = 1\n")
+    r = edit(rws, "timelog/parser.py", "", "y = 2\n")
+    assert not r.ok and "To insert text" in r.output and "new_string" in r.output
+
+
+def test_edit_inserts_text_next_to_an_anchor(rws):
+    parser = write_parser(rws.root, "import re\n\n\ndef f():\n    pass\n")
+    r = edit(rws, "timelog/parser.py", "import re\n", "import re\nimport os\n")
+    assert r.ok
+    assert parser.read_text() == "import re\nimport os\n\n\ndef f():\n    pass\n"
+
+
 def test_edit_empty_old_string_does_not_fill_an_empty_file(rws):
     parser = write_parser(rws.root, "")
     r = edit(rws, "timelog/parser.py", "", "x = 1\n")
