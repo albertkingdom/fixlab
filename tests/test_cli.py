@@ -339,3 +339,76 @@ def test_changed_files_lists_added_modified_and_deleted_sorted():
 
     assert changed_files(before, after) == {"added": ["d.py", "z.py"], "modified": ["a.py"], "deleted": ["b.py"]}
 
+
+# ── --meta 與 --log-dir：對應 Experiment conditions come from --meta、The event log stays outside the target directory ──
+
+
+def test_meta_values_are_recorded_as_strings_in_run_start(project, home):
+    run_fix(project, FakeClient([("Done.", None)]), "--meta", "quantization=Q4_K_M", "--meta", "context_length=32768")
+
+    run_start = event_lines(home)[0]
+    assert run_start["meta"] == {"quantization": "Q4_K_M", "context_length": "32768"}
+
+
+def test_a_meta_value_keeps_any_equals_signs_after_the_first(project, home):
+    run_fix(project, FakeClient([("Done.", None)]), "--meta", "note=a=b")
+    assert event_lines(home)[0]["meta"] == {"note": "a=b"}
+
+
+# Scenario: Missing equals sign
+def test_meta_without_an_equals_sign_exits_2_and_writes_nothing(project, home, capsys):
+    client = FakeClient([("Done.", None)])
+    exit_code = run_fix(project, client, "--meta", "quantization")
+
+    assert exit_code == 2
+    assert "--meta" in capsys.readouterr().err
+    assert not (home / ".fixlab").exists()
+    assert client.sent == []  # agent 沒有啟動
+
+
+# Scenario: Custom log directory
+def test_log_dir_option_moves_the_event_file(project, home, tmp_path):
+    exp = tmp_path / "exp1"
+    run_fix(project, FakeClient([("Done.", None)]), "--log-dir", str(exp))
+
+    assert len(list(exp.glob("*/events.jsonl"))) == 1
+    assert not (home / ".fixlab").exists()
+
+
+# Scenario: Log directory inside the target
+def test_a_log_dir_inside_the_target_is_refused(project, home, capsys):
+    before = take_snapshot(project)
+    exit_code = run_fix(project, FakeClient([("Done.", None)]), "--log-dir", str(project / "logs"))
+
+    assert exit_code == 2
+    assert "log directory" in capsys.readouterr().err
+    assert take_snapshot(project) == before and not (project / "logs").exists()
+
+
+def test_the_target_itself_cannot_be_the_log_dir(project):
+    assert run_fix(project, FakeClient([("Done.", None)]), "--log-dir", str(project)) == 2
+
+
+def test_a_symbolic_link_cannot_hide_a_log_dir_inside_the_target(project, tmp_path):
+    (project / "inside").mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(project / "inside")
+
+    assert run_fix(project, FakeClient([("Done.", None)]), "--log-dir", str(link / "logs")) == 2
+
+
+# Scenario: PATH is the home directory
+def test_when_the_target_is_the_home_directory_the_default_log_dir_is_inside_it(home, capsys):
+    exit_code = main([str(home), "--model", "m"], client=FakeClient([("Done.", None)]))
+
+    assert exit_code == 2
+    assert "log directory" in capsys.readouterr().err
+
+
+# Scenario: Snapshot diff is not polluted
+def test_the_printed_diff_never_lists_the_event_file(project, capsys):
+    run_fix(project, FakeClient([("Done.", None)]))
+
+    out = capsys.readouterr().out
+    assert ".fixlab" not in out and "events.jsonl" not in out
+

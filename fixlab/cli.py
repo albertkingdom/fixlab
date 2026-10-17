@@ -36,6 +36,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-steps", type=int, default=DEFAULT_MAX_STEPS)
     parser.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS)
     parser.add_argument("--task", default=DEFAULT_TASK, help="replace the default task text")
+    parser.add_argument("--log-dir", help="where event logs go (default: ~/.fixlab/runs)")
+    parser.add_argument("--meta", action="append", default=[], metavar="KEY=VALUE",
+                        help="record an experiment condition in the event log, e.g. quantization=Q4_K_M (repeatable)")
     return parser
 
 
@@ -55,14 +58,22 @@ def main(argv=None, client=None) -> int:
         client = OpenAI(timeout=600, max_retries=0)
 
     root = Path(args.path).resolve()
+    try:
+        meta = parse_meta(args.meta)
+    except ValueError as error:
+        return fail(str(error))
+    log_dir = Path(args.log_dir).expanduser() if args.log_dir else default_log_dir()
+    if is_inside(log_dir, root):
+        # 事件檔放在被修的目錄裡，快照 diff 會把它當成新檔，模型與被測的程式也碰得到自己的紀錄
+        return fail(f"the log directory {log_dir} is inside the target {root}; use --log-dir to put it elsewhere")
     print(f"editing in place: {root}", file=sys.stderr)
     print(f"sandbox: {sandbox_status()}", file=sys.stderr)  # 沙箱是安全功能，沒開要讓使用者看得到
     before = take_snapshot(root)
 
-    log = EventLog(default_log_dir(), model)
+    log = EventLog(log_dir, model)
     if log.path is not None:
         print(f"log: {log.path}", file=sys.stderr)
-    log.write("run_start", **run_conditions(args, model, root))
+    log.write("run_start", **run_conditions(args, model, root, meta))
     log.write("task_start", task=1, text=args.task)
 
     # 修 bug：測試檔是評分標準，模型不能改，被執行的程式也不能改
@@ -105,13 +116,30 @@ def fail(message: str) -> int:
     return 2
 
 
-def run_conditions(args, model: str, root: Path) -> dict:
+def parse_meta(items: list[str]) -> dict[str, str]:
+    """把 ["quantization=Q4_K_M", ...] 變成 {"quantization": "Q4_K_M"}。只切第一個等號，值裡面還可以有等號。"""
+    meta = {}
+    for item in items:
+        key, equals, value = item.partition("=")
+        if not equals or not key:
+            raise ValueError(f"--meta needs KEY=VALUE, got {item!r}")
+        meta[key] = value
+    return meta
+
+
+def is_inside(folder: Path, root: Path) -> bool:
+    """folder 是不是 root 本身或在它底下。先解析成真實路徑，符號連結藏不住重疊。"""
+    real = folder.resolve()
+    return real == root or root in real.parents
+
+
+def run_conditions(args, model: str, root: Path, meta: dict) -> dict:
     """run_start 事件的內容：這次執行的條件。只放程式本來就知道的；量化方式之類 API 不會告訴我們的，之後由 --meta 補。"""
     return {
         "schema": 1, "mode": "once", "model": model, "base_url": os.environ.get("OPENAI_BASE_URL"),
         "path": str(root), "max_steps": args.max_steps, "max_tokens": args.max_tokens,
         "sandbox": sandbox_status(), "fixlab_commit": fixlab_commit(),
-        "python": platform.python_version(), "openai": openai.__version__, "meta": {},
+        "python": platform.python_version(), "openai": openai.__version__, "meta": meta,
     }
 
 
