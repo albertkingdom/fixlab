@@ -36,7 +36,7 @@ fixlab 是能實際使用的工具，沿用它的評測方法（可見／隱藏�
 「誰決定下一步」才是 agent 與 workflow 的差別。LLM 自己決定先做什麼、何時完成；程式只設保險（步數上限、連續失敗上限）。不得退化成寫死流程。
 
 ## 3. 範圍
-- 工具：`read_file`（行號）、`list_files`、`glob`、`grep`、`edit_file`、`write_file`、`run_tests`（七個）。**不提供任意 shell**；之後若要加，需先有白名單與確認機制。
+- 工具：`read_file`（行號）、`list_files`、`grep`、`edit_file`、`write_file`、`run_tests`（六個）。`glob`（依檔名樣式找檔案）暫緩：`list_files` 是遞迴的，目前沒有需要依檔名過濾的情境，有實測依據再加。**不提供任意 shell**；之後若要加，需先有白名單與確認機制。
 - 安全：路徑限制在工作目錄、測試檔不可改（整組測試檔算指紋）、macOS 沙箱（禁網路）、傳給子行程的環境變數要清理。
 - Telemetry：每步事件寫 JSONL（模型版本、runtime、context 長度、token、延遲、工具、結果、是否撞步數上限／被截斷／改測試）。
 - Benchmark：自寫 15–20 題多檔 Python bug（跨檔、斷言不透露原因、有干擾檔）；隱藏測試分「要修好」與「不能壞掉」兩組。
@@ -63,6 +63,7 @@ Verilog／EDA、SWE-bench 與真實大型 repo（需 Docker、小模型成功率
    - 合併前更新 `README.md` 反映新功能。
    - 開 PR 前必須完成 code review，所有 blocking 與 important 的問題都要解決。
    - review 發現的問題依 `review-findings` skill（`.claude/skills/review-findings/`）處理。
+   - 每篇教學文章完成時，在它描述的程式所在的 commit 上打輕量 tag `article-NN`（例如 `article-04`），讀者可以 `git checkout article-04` 看到當時的程式。tag 只建在本機，推送要明確指定，不自動推送。
 7. **原創性**：不得複製他人專案的程式碼或題目結構（包含範例專案、bug 類型、檔案配置）。每個設計決定的依據必須是自己的實驗、自己程式的已知缺陷，或 Claude Code 的實際行為；外部文章只當參考，並在 README 與 `docs/spectra` 的設計文件註明讀過什麼、採用了哪個想法。
 
 ## 6. 參考來源（只是參考，不是設計依據）
