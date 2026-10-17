@@ -477,6 +477,55 @@ def test_run_tests_is_offered_to_the_model(rws):
     assert set(spec["parameters"]["properties"]) == {"target"}
 
 
+# ---- run_tests 的結果不能被被測的程式偽造（code review 發現）----
+
+def failing_project(rws):
+    write_test(rws, "test_bad.py", "from timelog import parser\n\ndef test_bad():\n    assert 1 == 2\n")
+    (rws.root / "timelog").mkdir(exist_ok=True)
+    (rws.root / "timelog" / "__init__.py").write_text("")
+    (rws.root / "timelog" / "parser.py").write_text("x = 1\n")
+    assert run_tests(rws).flags["tests_passed"] is False  # 先確認真的是失敗的專案
+    return rws
+
+
+def test_a_fake_pytest_module_in_the_workspace_is_not_loaded(rws):
+    failing_project(rws)
+    (rws.root / "pytest.py").write_text('print("1 passed in 0.00s")\n')
+    r = run_tests(rws)
+    assert r.flags["tests_passed"] is False
+    assert "1 failed" in r.output
+
+
+def test_a_fake_internal_pytest_package_in_the_workspace_is_not_loaded(rws):
+    failing_project(rws)
+    (rws.root / "_pytest").mkdir()
+    (rws.root / "_pytest" / "__init__.py").write_text("import os\nos._exit(0)\n")
+    r = run_tests(rws)
+    assert r.flags["tests_passed"] is False
+    assert "1 failed" in r.output
+
+
+def test_exiting_with_zero_before_pytest_reports_anything_is_not_a_pass(rws):
+    failing_project(rws)
+    (rws.root / "timelog" / "parser.py").write_text("import os\nos._exit(0)\n")
+    r = run_tests(rws)
+    assert r.flags["tests_passed"] is False  # 結束碼是 0，但輸出裡沒有 pytest 的 passed 摘要
+
+
+def test_workspace_modules_can_still_be_imported_by_the_tests(rws):
+    write_test(rws, "test_ok.py", "from timelog import parser\n\ndef test_ok():\n    assert parser.x == 1\n")
+    (rws.root / "timelog").mkdir()
+    (rws.root / "timelog" / "__init__.py").write_text("")
+    (rws.root / "timelog" / "parser.py").write_text("x = 1\n")
+    assert run_tests(rws).flags["tests_passed"] is True
+
+
+def test_a_run_where_every_test_is_skipped_is_not_a_pass(rws):
+    write_test(rws, "test_skip.py", "import pytest\n\n@pytest.mark.skip\ndef test_skipped():\n    pass\n")
+    r = run_tests(rws)
+    assert r.flags["tests_passed"] is False  # 什麼都沒驗證到
+
+
 # ---- grep：對應規格的 grep searches file contents ----
 
 

@@ -5,6 +5,7 @@
 """
 
 import os
+import re
 import subprocess
 import tempfile
 import time
@@ -26,6 +27,11 @@ MAX_GREP_SHOWN_CHARS = 200   # 輸出時每行最多顯示這麼多字元；100 
 GREP_LINE_TIMEOUT_S = 1      # 比對一行的時間上限，擋災難性回溯
 GREP_TOTAL_TIMEOUT_S = 5     # 整個搜尋的時間上限。這幾個秒數做成模組常數，測試可以改短
 RUN_TESTS_TIMEOUT_S = 10  # 做成模組常數，測試無窮迴圈的案例時可以改短，不用真的等 10 秒
+
+# 啟動 pytest 的程式。不用 `python -m pytest`：-m 會把工作目錄放在模組搜尋路徑的最前面，
+# 工作目錄裡的 pytest.py 或 _pytest/ 就會取代真的 pytest（被測的程式可以偽造「1 passed」）。
+# 改成 -P（不自動加入工作目錄），先載入真的 pytest，再把工作目錄加到最後面，讓測試仍然找得到專案的模組。
+START_PYTEST = "import os, sys; sys.path.append(os.getcwd()); import pytest; sys.exit(pytest.main(sys.argv[1:]))"
 
 # 測試子行程從父行程繼承的環境變數。用白名單：金鑰的名字無法窮舉（OPENAI_KEY、STRIPE_SK、GH_PAT……），
 # 而且被執行的程式包含模型改寫過的檔案，只要印出環境，金鑰就會進入測試輸出與對話。
@@ -312,7 +318,7 @@ def run_tests(ws: Workspace, target: str = ".") -> ToolResult:
         relative_target = "./" + relative_target
     # 指令固定：-c /dev/null、--rootdir、--confcutdir 讓 pytest 不往上層目錄找設定與 conftest；
     # -p no:cacheprovider 不在工作目錄留下 .pytest_cache；-- 與目標的 ./ 前綴一起，確保目標只會被當成路徑。
-    command = [ws.python, "-m", "pytest", "-q", "-p", "no:cacheprovider",
+    command = [ws.python, "-P", "-c", START_PYTEST, "-q", "-p", "no:cacheprovider",
                "-c", "/dev/null", "--rootdir=.", "--confcutdir=.", "--", relative_target]
     # 每次執行用專屬的暫存目錄：很多程式與測試（pytest 的 tmp_path）需要暫存檔，沙箱又不准寫工作目錄以外的地方。
     # 沒有它，pytest 會把暫存檔悄悄寫進工作目錄，弄髒結束時的差異比較。跑完整個刪掉。
@@ -323,7 +329,8 @@ def run_tests(ws: Workspace, target: str = ".") -> ToolResult:
         try:
             done = subprocess.run(command, cwd=ws.root, env=child_environment(tmpdir), stdin=subprocess.DEVNULL,
                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=RUN_TESTS_TIMEOUT_S)
-            output, timed_out, passed = done.stdout, False, done.returncode == 0
+            output, timed_out = done.stdout, False
+            passed = done.returncode == 0 and ends_with_a_passed_summary(done.stdout.decode("utf-8", errors="replace"))
         except subprocess.TimeoutExpired as e:
             output, timed_out, passed = e.stdout or b"", True, False
     text = output.decode("utf-8", errors="replace")
@@ -331,6 +338,12 @@ def run_tests(ws: Workspace, target: str = ".") -> ToolResult:
         text += f"\n[tests timed out after {RUN_TESTS_TIMEOUT_S}s]"
     # 測試失敗不是工具錯誤：失敗的測試正是模型需要的資訊，所以一律回成功，結果放在旗標裡。
     return ToolResult(clip_middle(text), True, {"tests_passed": passed, "timed_out": timed_out})
+
+
+def ends_with_a_passed_summary(text: str) -> bool:
+    """pytest 最後一行要有 "N passed"。只看結束碼 0 不夠：被測的程式可以在 pytest 開始前用 os._exit(0) 結束，什麼都沒跑。"""
+    lines = [line for line in text.splitlines() if line.strip()]
+    return bool(lines) and re.search(r"\d+ passed", lines[-1]) is not None
 
 
 def child_environment(tmpdir: Path) -> dict:
