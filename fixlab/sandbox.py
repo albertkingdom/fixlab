@@ -46,7 +46,8 @@
     SOFTWARE.
 
 第 6 條的樣式要與 workspace.looks_like_test_file 對得上（測試會逐條比對兩邊）；
-自訂的 read_only 只在工具層生效，沙箱不管。已知缺口：把「含有測試資料夾的上層資料夾」改名不會被擋。
+自訂的 read_only 只在工具層生效，沙箱不管。
+第 6 條還擋 __pycache__（偽造 .pyc 等於改寫測試）與資料夾的刪除、改名、搬移（不然把含有測試的上層資料夾改名再複製回來，測試就消失了）。
 
 限制：sandbox-exec 已被 Apple 標為棄用，而且只有 macOS 有。其他平台上 run_tests 直接執行，
 不套任何沙箱；入口會在開始時印出 sandbox_status()，讓使用者看得到。
@@ -73,24 +74,20 @@ def sandbox_status() -> str:
     return "OFF (sandbox-exec not found: tests run without a sandbox)"
 
 
-def any_case(text: str) -> str:
-    """每個字母改寫成 [Tt] 的形式，規則就不分大小寫：macOS 的檔案系統預設不分大小寫，TEST_X.PY 與 test_x.py 是同一個檔。"""
-    result = ""
-    for letter in text:
-        if letter.isalpha():
-            result += "[" + letter.upper() + letter.lower() + "]"
-        else:
-            result += letter
-    return result
+def protected_path_patterns() -> list[str]:
+    """與 looks_like_test_file 對應的路徑樣式，加上位元碼快取。每個都從工作目錄之後的 / 開始比對，(.*/)? 表示中間可以隔任意層資料夾。
 
-
-def test_file_patterns() -> list[str]:
-    """與 looks_like_test_file 對應的四種路徑樣式。每個都從工作目錄之後的 / 開始比對，(.*/)? 表示中間可以隔任意層資料夾。"""
+    不用特別處理大小寫：SBPL 的正規表示式本來就不分大小寫（2026-10-17 在區分大小寫的磁碟映像上實測，
+    全小寫的樣式照樣擋下 TEST_Y.PY 與 Tests/）。
+    """
     return [
-        f"/(.*/)?{any_case('tests?')}(/.*)?$",                   # 任何一層資料夾叫 tests 或 test：資料夾本身與底下全部（所以也擋改名）
-        f"/(.*/)?{any_case('test_')}[^/]*$",                      # 檔名以 test_ 開頭
-        f"/(.*/)?[^/]*{any_case('_test')}[.]{any_case('py')}$",   # 檔名以 _test.py 結尾（[.] 是一個真正的點）
-        f"/(.*/)?{any_case('conftest')}[.]{any_case('py')}$",     # conftest.py
+        "/(.*/)?tests?(/.*)?$",             # 任何一層資料夾叫 tests 或 test：資料夾本身與底下全部
+        "/(.*/)?test_[^/]*$",               # 檔名以 test_ 開頭
+        "/(.*/)?[^/]*_test[.]py$",          # 檔名以 _test.py 結尾（[.] 是一個真正的點）
+        "/(.*/)?conftest[.]py$",            # conftest.py
+        # pytest 載入測試時會先讀 __pycache__ 裡的 .pyc；偽造一個 .pyc 就等於改寫了測試，所以整個資料夾都擋。
+        # 位元碼本來就被 PYTHONDONTWRITEBYTECODE=1 關掉，正常的流程不需要寫它。
+        "/(.*/)?__pycache__(/.*)?$",
     ]
 
 
@@ -107,8 +104,12 @@ def build_profile(deny_count: int, protect_tests: bool = False) -> str:
         '(deny file-write* (require-not (require-any (subpath (param "WS")) (subpath (param "TMP")) (subpath "/dev"))))'
     )
     if protect_tests:
+        patterns = "|".join(protected_path_patterns())
         # ^ 加上被跳脫的工作目錄開頭，所以工作目錄「上層」有叫 tests 的資料夾（例如 tests/fixtures/x）不受影響
-        profile += '(deny file-write* (regex (string-append "^" (regex-quote (param "WS")) "(' + "|".join(test_file_patterns()) + ')")))'
+        profile += f'(deny file-write* (regex (string-append "^" (regex-quote (param "WS")) "({patterns})")))'
+        # 資料夾不能刪除、改名、搬移：否則把含有測試的上層資料夾改名、再複製一份不含測試的回來，測試就憑空消失了
+        # （pytest 會略過 .old 這種點開頭的資料夾）。代價：被測的程式不能 rmdir 或改名工作目錄裡的資料夾。
+        profile += '(deny file-write-unlink (require-all (subpath (param "WS")) (vnode-type DIRECTORY)))'
     return profile
 
 

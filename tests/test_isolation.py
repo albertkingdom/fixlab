@@ -489,7 +489,9 @@ PROTECTED_ACTIONS = [
     ("write a source file",                  "open('timelog/parser.py', 'a').write('#')",                        "ok"),
     ("tests.py is not collected by pytest",  "open('tests.py', 'w').write('x')",                                 "ok"),
     ("contest.py only looks similar",        "open('contest.py', 'w').write('x')",                               "ok"),
-    ("rename an ancestor folder (known gap)", "__import__('os').rename('timelog', 'timelog2')",                  "ok"),
+    ("rename an ancestor folder",           "__import__('os').rename('timelog', 'timelog2')",                   "denied"),
+    ("remove an empty folder (the price)",  "__import__('os').mkdir('empty'); __import__('os').rmdir('empty')", "denied"),
+    ("write into __pycache__",              "__import__('os').makedirs('timelog/__pycache__', exist_ok=True); open('timelog/__pycache__/x.pyc', 'wb').write(b'x')", "denied"),
 ]
 
 
@@ -500,11 +502,64 @@ def test_protected_path_actions(tmp_path, label, action, expected):
     assert probe(w, action) == expected
 
 
+def fresh_protected_workspace(root):
+    """沒有預先失敗的測試：基準是全部通過，攻擊成功才會看得出差別。"""
+    w = sandboxed_workspace(root, protect_tests=True)
+    (w.root / "tests").mkdir(exist_ok=True)
+    (w.root / "tests" / "test_ok.py").write_text("def test_ok():\n    assert True\n")
+    return w
+
+
+# code review 發現 1：改名上層資料夾，再複製一份不含測試檔的回來，共置的測試就消失了
+@macos_only
+def test_hiding_tests_by_renaming_a_parent_folder_does_not_fake_a_pass(tmp_path):
+    w = fresh_protected_workspace(tmp_path / "ws")
+    (w.root / "timelog" / "test_inner.py").write_text("def test_inner():\n    assert 1 == 2\n")
+    assert w.call("run_tests", {}).flags["tests_passed"] is False
+    attack = ("__import__('os').rename('timelog', '.old'); "
+              "__import__('shutil').copytree('.old', 'timelog', ignore=__import__('shutil').ignore_patterns('test_*'))")
+    assert probe(w, attack) == "denied"
+    (w.root / "tests" / "test_probe.py").unlink()
+    r = w.call("run_tests", {})
+    assert r.flags["tests_passed"] is False
+    assert "1 failed" in r.output
+
+
+# code review 發現 2：偽造 __pycache__ 裡的 .pyc，換掉 *_test.py 或 conftest.py 的內容
+FORGE_PYC = """
+import importlib.util, marshal, os, struct, sys
+import _pytest
+source = "timelog/formatting_test.py"
+info = os.stat(source)
+tag = sys.implementation.cache_tag + "-pytest-" + _pytest._version.version
+os.makedirs("timelog/__pycache__", exist_ok=True)
+code = compile("def test_fmt():\\n    assert True\\n", source, "exec")
+with open("timelog/__pycache__/formatting_test." + tag + ".pyc", "wb") as f:
+    f.write(importlib.util.MAGIC_NUMBER + b"\\x00\\x00\\x00\\x00")
+    f.write(struct.pack("<LL", int(info.st_mtime) & 0xFFFFFFFF, info.st_size & 0xFFFFFFFF))
+    marshal.dump(code, f)
+"""
+
+
+@macos_only
+def test_a_forged_bytecode_file_cannot_replace_a_test_file(tmp_path):
+    w = fresh_protected_workspace(tmp_path / "ws")
+    (w.root / "timelog" / "formatting_test.py").write_text("def test_fmt():\n    assert 1 == 2\n")
+    (w.root / "forge_pyc.py").write_text(FORGE_PYC)
+    assert w.call("run_tests", {}).flags["tests_passed"] is False
+    assert probe(w, "exec(open('forge_pyc.py').read())") == "denied"
+    (w.root / "tests" / "test_probe.py").unlink()
+    r = w.call("run_tests", {})
+    assert r.flags["tests_passed"] is False
+    assert "1 failed" in r.output
+
+
 # 沙箱的樣式要和工具層的 looks_like_test_file 對得上：同一個相對路徑，兩邊的判斷一致
 SAME_VERDICT_PATHS = [
     "tests/a.py", "test/a.py", "Tests/a.py", "pkg/tests/data.json", "a/b/test_c.py", "x_test.py", "X_TEST.PY",
     "conftest.py", "pkg/conftest.py",
     "tests.py", "contest.py", "testing/a.py", "pkg/attests/a.py", "latest.py", "timelog/parser.py", "notes/test.txt",
+    "foo_testxpy", "conftestxpy",   # 點必須是真正的點，不是「任意字元」
 ]
 
 
@@ -515,6 +570,16 @@ def test_sandbox_and_tool_layer_agree_on_which_paths_are_test_files(tmp_path, re
     action = f"p = {rel!r}; d = __import__('os').path.dirname(p); d and __import__('os').makedirs(d, exist_ok=True); open(p, 'w').write('x')"
     expected = "denied" if looks_like_test_file(rel) else "ok"
     assert probe(w, action) == expected, rel
+
+
+# 沙箱比工具層多保護的地方（刻意的）：名叫 test 或 tests 的檔案（正規表示式分不出是檔案還是資料夾），以及 __pycache__
+@macos_only
+@pytest.mark.parametrize("rel", ["bin/test", "bin/tests", "timelog/__pycache__/x.pyc"])
+def test_the_sandbox_protects_a_little_more_than_the_tool_layer(tmp_path, rel):
+    assert not looks_like_test_file(rel)  # 工具層不認為它是測試檔
+    w = protected_workspace(tmp_path / "ws")
+    action = f"p = {rel!r}; d = __import__('os').path.dirname(p); d and __import__('os').makedirs(d, exist_ok=True); open(p, 'w').write('x')"
+    assert probe(w, action) == "denied"
 
 
 # 預設不保護：通用的用法裡，補測試是正常的任務
