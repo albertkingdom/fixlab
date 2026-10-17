@@ -45,6 +45,16 @@ fixlab 是能實際使用的工具，沿用它的評測方法（可見／隱藏�
 ### 非目標
 Verilog／EDA、SWE-bench 與真實大型 repo（需 Docker、小模型成功率低）、Web UI、記憶、微調。
 
+### 目錄結構
+```
+fixlab/                 套件本體（約 1100 行）：cli、loop、toolparse、tools、workspace、sandbox
+tests/                  fixlab 自己的測試；tests/fixtures/timelog 是給 agent 修的範例專案（pytest 不收集它）
+tests/golden/           黃金 trace（tests/test_trace_golden.py 比對的基準）
+docs/spectra/           Spectra 的規格（specs/）與變更提案（changes/）
+docs/articles/          教學文章，每篇對應一個 article-NN tag
+runs/                   真模型實跑的原始紀錄（不進版控）
+```
+
 ## 4. 階段
 1. **骨架與規格**：Spectra 規格；從 code-agent-eval 搬迴圈、解析、沙箱。（tag `stage-1`）
 2. **CLI 與 telemetry**：互動模式、權限提示、事件記錄。（`stage-2`）

@@ -1,24 +1,108 @@
 # fixlab
 
-教學導向的最小 CLI coding agent：給它一個有 bug 的多檔小專案，它自己找、改、驗證，並記錄每一步的 telemetry。
+教學導向的最小 CLI coding agent：給它一個有 bug 的多檔小專案，它自己找、改、驗證。
 
-目前處於規劃階段，背景與範圍見 [AGENTS.md](AGENTS.md)。
+背景與範圍見 [AGENTS.md](AGENTS.md)。這個專案同時是一套教學文章：每個工具、每道保險各有一篇，從最天真的版本寫起，附真實的輸出（見最後的〈教學文章〉）。
 
-## 為什麼做
+## 目前做到哪裡
 
-想實際量測 coding agent 在「多檔小專案修 bug」上可靠到什麼程度，而不只是 demo 能跑。規劃涵蓋：
+| 階段 | 內容 | 狀態 |
+|---|---|---|
+| 1 骨架與規格 | agent 迴圈、六個工具、原生 tool call 解析、macOS 沙箱、`fixlab PATH` 最小入口 | 完成 |
+| 2 CLI 與 telemetry | 互動模式、權限提示、事件寫成 JSONL | 未做 |
+| 3 Benchmark 與實驗 | 15–20 題多檔 bug、隱藏測試、有／無 `run_tests` 對照、多模型比較 | 未做 |
+| 4 選做 | 多 agent 對照、MCP 或 GitHub issue connector | 未做 |
 
-- **Tool-use agent**：由 LLM 決定下一步與何時完成；六個工具（讀、列、搜尋、改、寫、跑測試），只解析原生的 tool call，程式只設步數與連續失敗上限。
-- **程式碼修改的自動化驗證**：用 pytest 驗證；隱藏測試分「要修好」與「不能壞掉」兩組；測試檔指紋偵測竄改（階段 3）；量測假通過與未驗證就宣稱完成。
-- **評估與實驗框架**：自建 15–20 題多檔 Python bug benchmark；有／無 `run_tests` 的對照實驗，比較修好率、步數、token 與成本。
-- **Telemetry**：每步事件寫成 JSONL（模型版本、context 長度、token、延遲、工具與結果）。
-- **開源與商用模型對照**：透過 Ollama／OpenRouter 跑 Qwen、Gemma 等開源模型，與商用模型在同一套 benchmark 上比較。
-- **Prompt／Context Engineering**：system prompt 規則消融、tool output 截斷策略。
-- **安全隔離**：路徑限制在工作目錄、macOS 沙箱禁網路、子行程環境變數白名單。
-- **CLI 開發者工具**：`fixlab <repo>` 一次性修復與互動模式。
-- **選做**：多 agent 對照（修復者＋審查者）、MCP 或 GitHub issue connector。
+所以現在**還沒有 benchmark 的數字**。下面「實跑紀錄」是 1 題、1 個模型、少數幾次執行的觀察，不能當作這個 agent 的成績。
 
-前身是 `../code-agent-eval`（單檔函式題的評測），fixlab 把它擴展成能實際使用的多檔修復工具。
+## 快速開始
+
+需要 Python 3.11 以上。
+
+```
+python3 -m venv .venv
+.venv/bin/pip install -e .
+.venv/bin/pytest                     # fixlab 自己的測試，約 20 秒
+```
+
+跑 agent 要有一個 OpenAI 相容的端點。三個環境變數（或用 `--model` 覆寫模型）：
+
+```
+export OPENAI_BASE_URL=https://openrouter.ai/api/v1   # 用 Ollama 就是 http://localhost:11434/v1
+export OPENAI_API_KEY=...                              # Ollama 隨便填一個占位值
+export FIXLAB_MODEL=qwen/qwen3.5-9b
+```
+
+然後對**範例專案的複本**執行（`fixlab` 會直接修改你指定的目錄）：
+
+```
+cp -R tests/fixtures/timelog /某個暫存目錄/timelog-try
+.venv/bin/fixlab /某個暫存目錄/timelog-try
+```
+
+選項：`--max-steps`（預設 20）、`--max-tokens`（預設 8192）、`--task`（換掉預設的任務文字）。
+
+### 它會印什麼
+
+- **執行中**（stderr）：被修改的目錄、沙箱狀態（`sandbox: on` 或 `sandbox: OFF (原因)`），之後每個工具呼叫一行，例如 `read_file  ok=True  flags={}`。
+- **結束後**（stdout）：stop reason（`done` 模型自己宣告完成、`max_steps` 步數用完、`stuck` 連續三輪全失敗、`error` 請求失敗）、步數、token，然後是**快照 diff**，再來是 fixlab **自己再跑一次**測試的輸出，最後一行固定是 `RESULT: tests passed` 或 `RESULT: tests FAILED`。
+- **結束碼**：0 最後那次測試通過；1 沒通過；2 輸入有誤（路徑不是目錄、沒設金鑰、沒指定模型）。
+
+最後那次測試不聽模型怎麼說：模型可能沒跑測試就宣稱完成，所以結果以 fixlab 自己跑的為準。
+
+### 快照 diff 是什麼，限制在哪
+
+開始前，`fixlab` 把目錄裡每個檔案的內容記在記憶體裡；結束後再記一次，比對出新增、刪除、修改的檔案（不能以 UTF-8 解碼的檔只印 `binary file changed`）。**測試檔也在範圍內**，所以測試被改了看得到。限制：
+
+- 跳過 `.git`、`.venv`、`__pycache__`、`.pytest_cache`，也不看符號連結；這些地方的變動不會出現。
+- 只比對 PATH 底下。程式如果寫到目錄之外（沙箱會擋，見下），diff 看不到。
+- 整棵樹讀進記憶體，不適合很大的專案。
+- 它不是版本控制。`fixlab` 直接改你的檔案，**請對有備份或已 commit 的目錄使用**。
+
+## 讀程式的順序
+
+全部約 1100 行。每個檔案的開頭都有說明它在整體流程中的角色。
+
+| 順序 | 檔案 | 做什麼 |
+|---|---|---|
+| 1 | `fixlab/cli.py` | `fixlab PATH` 的入口：檢查參數、拍快照、跑 agent、自己再跑一次測試、印結果 |
+| 2 | `fixlab/loop.py` | agent 迴圈：問模型 → 解讀回覆 → 執行工具；步數上限、連續失敗上限、重試、trace 回呼 |
+| 3 | `fixlab/toolparse.py` | 把模型的回覆解析成工具呼叫：只認原生 `tool_calls`，參數對照 schema 驗證 |
+| 4 | `fixlab/tools.py` | 六個工具的實作與登記 |
+| 5 | `fixlab/workspace.py` | 工作目錄：路徑必須落在根目錄內、測試檔唯讀、工具分派、錯誤不丟例外 |
+| 6 | `fixlab/sandbox.py` | 用 macOS `sandbox-exec` 包住 `run_tests`：禁網路、限制讀寫 |
+
+## 六個工具
+
+| 工具 | 做什麼 | 值得知道的規則 |
+|---|---|---|
+| `read_file` | 讀檔，每行附行號，可指定行範圍 | 輸出上限 20000 字元，超過會註明總量 |
+| `list_files` | 遞迴列出所有檔案 | 上限 200，跳過 `.git`、`.venv` 等 |
+| `grep` | 搜尋檔案內容，輸出 `路徑:行號:內容` | 自己實作；單行 1 秒、整體 5 秒的時間上限，上限 100 行 |
+| `edit_file` | 把檔案裡**恰好出現一次**的字串換掉 | 0 次或多次都不改，並回報實際次數 |
+| `write_file` | 建立新檔，或整個覆寫 | 覆寫既有檔案前必須先整檔讀過，而且讀過之後沒被別人改 |
+| `run_tests` | 在工作目錄跑 pytest | 固定指令、10 秒逾時、輸出最多 4000 字元（留頭尾）、在沙箱裡跑 |
+
+**沒有任意 shell**，也沒有 `glob`（`list_files` 是遞迴的，目前沒有需要依檔名過濾的情境）。
+
+## 安全做了什麼
+
+- 所有路徑必須落在工作目錄內：`../`、絕對路徑、`~`、符號連結逃逸都被擋，並在回傳裡設 `blocked` 旗標。
+- **測試檔不可寫**：`edit_file`、`write_file` 碰到測試檔會被拒絕；`run_tests` 跑的程式在沙箱裡也寫不了測試檔（防止模型在原始碼裡塞「執行時改寫測試」的程式來假通過）。這是修 bug 模式的政策，不是通用限制，由入口決定。
+- **`run_tests` 在沙箱裡跑**（macOS）：不能連網、不能讀家目錄與 fixlab 自己的專案目錄、只能寫工作目錄。
+- **子行程環境變數白名單**：只傳 `PATH`、`LANG`、`LC_ALL`、`TMPDIR` 與 `PYTHONDONTWRITEBYTECODE=1`，API 金鑰不會被被測的程式看到。
+- **判定測試通過不只看結束碼**：用 `python -P` 啟動以免根目錄的 `pytest.py` 取代真的 pytest，並要求輸出最後一行有 `N passed`。
+- **保險**：步數上限 20、連續三輪工具呼叫全失敗就停（`stuck`）。這兩個數字是初始值，沒有實測依據。
+
+## 已知限制
+
+- **沙箱只有 macOS 有效**，而且 `sandbox-exec` 在 Apple 的說明裡標為 **DEPRECATED**（已棄用）。其他平台只剩工具層的限制加結束時的 diff；沒有沙箱時入口會印 `sandbox: OFF (原因)`。
+- **硬連結**：事先在沙箱外建好、指向工作目錄之外的硬連結，沙箱只檢查路徑所以擋不到。
+- **被測專案的第三方依賴**：`run_tests` 用 fixlab 自己的 Python 直譯器跑，被測專案需要的套件要裝在同一個環境。範例專案只用標準函式庫。
+- **沙箱擋不到的偽造**：被測的程式在 pytest 行程內部竄改 pytest 本身（測試與原始碼在同一個行程）。根治要靠階段 3 的做法：計分用乾淨的環境重跑，並比對測試案例清單。見第 10 篇。
+- **沒有重複呼叫偵測**：模型一直重讀同一個檔案（成功的呼叫）不會觸發 `stuck`。
+- **只解析原生 tool call**：不支援把工具呼叫寫在文字裡的模型。
+- **證據很薄**：真模型的紀錄只有 1 題、1 個模型（qwen3.5-9b）、少數幾次執行（見下面的實跑紀錄與第 4、6 篇）。穩定度與多模型比較屬於階段 3。
 
 ## 實跑紀錄：第一次完整的修復（階段 1）
 
@@ -116,3 +200,48 @@ fixlab /某個暫存目錄/timelog-try
 
 原始的每步紀錄放在 `runs/3.12-qwen3.5-9b-20261017/`（不進版本控制，保留在本機）。
 
+## 教學文章
+
+在 `docs/articles/`。每篇對應一個 git tag，可以 `git checkout article-NN` 看到當時的程式。
+
+| 篇 | 主題 |
+|---|---|
+| 01 | 模型說要呼叫工具，程式怎麼接住（tool call 與 Workspace） |
+| 02 | 讓模型看得到專案（`read_file`、`list_files`） |
+| 03 | 讓迴圈跑起來，`fixlab PATH` 與第一次真模型探索 |
+| 04 | 讓模型改檔案（`edit_file`） |
+| 05 | 讓模型跑測試（`run_tests`） |
+| 06 | 第一次完整的真模型修復 |
+| 07 | 在檔案內容裡搜尋（`grep`） |
+| 08 | 建立與覆寫整個檔案（`write_file`） |
+| 09 | 限制測試程式能做什麼（沙箱） |
+| 10 | 不讓測試檔被偷偷改掉（沙箱的受保護路徑，與兩輪 code review） |
+| 11 | 模型卡住時要停下來（連續失敗保險，與迴圈的測試補齊） |
+
+## 規格與設計文件
+
+用 Spectra 管理，在 `docs/spectra/`：`specs/` 是行為規格，`changes/bootstrap-agent-core/` 是階段 1 的提案、設計（每個決定的替代方案與取捨，以及風險清單）和任務。
+
+## 前身專案
+
+`../code-agent-eval` 是前一個評測實驗（單檔函式題，agent 是受測對象）。fixlab 沿用它的評測方法（可見／隱藏測試、假通過）與部分程式（迴圈、tool call 解析、沙箱），並把題目擴展成多檔。
+
+## 參考來源
+
+只是參考，不是設計依據：每個設計決定的依據是自己的實驗、自己程式的已知缺陷，或 Claude Code 的實際行為。以下是讀過什麼、採用了哪個想法（詳細的對照在設計文件〈設計依據與參考來源〉一節與各篇文章）。範例專案、bug 類型、檔案結構、規格與測試都是自己設計的。
+
+**高見龍〈用 AI 打造自己的 Claude Code〉連載與 KeSi 專案**（<https://kaochenlong.com/build-your-own-claude-code>、<https://github.com/kaochenlong/KeSi>，MIT 授權，Copyright (c) 2026 Eddie Kao；讀過 Day 01–18 與 repo，2026-10-17 查證 LICENSE）
+
+- 連續失敗只算「整輪全失敗」（第 11 篇）；步數上限 20 與失敗上限 3 的數字也相同，不能排除受他影響。
+- 環境變數洩漏列為風險、重視 token 與成本量測、沙箱的風險清單。
+- 〈讓 Agent 看見專案〉：空結果要明確回報，讓模型分得出「沒找到」與「沒執行成功」。他的 `list_files` 只列一層，這裡選遞迴。
+- `kesi.py`（commit `dfa0cd0`）：`edit_file` 用 bytes 讀寫以保留換行字元、判斷唯一時把重疊的匹配也算進去；`write_file` 記讀的當下的 sha256、覆寫前比對；沙箱用 `(regex (string-append "^" (regex-quote (param …)) …))` 接路徑（他用來禁止讀、這裡用來禁止寫測試檔）、沙箱不可用時直接執行並顯示狀態。
+- Day 13 示範：結束後印 diff、再跑一次測試、用「沒有 shell」對照；與這裡的快照 diff、結束後再跑一次測試、有／無 `run_tests` 實驗是相同的想法，不能排除受他影響。
+- 〈用 ripgrep 搜尋程式碼〉讀過，`grep` 目前自己實作，尚未決定是否改用 `rg`。
+- 沙箱規則（`fixlab/sandbox.py`）的結構參考 `sandbox_spec`，檔頭附有他的 MIT 授權全文。
+
+**Claude Code**（官方文件與實際行為，2026-10-17 查閱）
+
+- `Edit` 的「唯一字串替換」與 `Write`「覆寫前需先讀過」：`edit_file`、`write_file` 的規則。
+- 沙箱文件的「Protected paths」：「裁判用的東西，不能被受審的程式改寫」，這裡對應測試檔。
+- `/diff` 與 `/rewind` 的快照：用快照回答「這一次改了什麼」。
