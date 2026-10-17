@@ -36,9 +36,24 @@
 
 ## Impact
 
-- Affected specs: `docs/spectra/specs/run-telemetry/spec.md`、`docs/spectra/specs/interactive-session/spec.md`、`docs/spectra/specs/tool-permissions/spec.md`（新增）；`docs/spectra/specs/agent-loop/spec.md`、`docs/spectra/specs/workspace-isolation/spec.md`（增加需求）
+- Affected specs:
+  - New: docs/spectra/specs/run-telemetry/spec.md
+  - New: docs/spectra/specs/interactive-session/spec.md
+  - New: docs/spectra/specs/tool-permissions/spec.md
+  - Modified (增加需求): docs/spectra/specs/agent-loop/spec.md
+  - Modified (增加需求): docs/spectra/specs/workspace-isolation/spec.md
 - Affected code:
-  - New: fixlab/telemetry.py、tests/test_telemetry.py、tests/test_interactive.py
-  - Modified: fixlab/cli.py、fixlab/loop.py、fixlab/workspace.py、tests/test_loop.py、tests/test_cli.py、tests/test_isolation.py、tests/test_trace_golden.py、README.md、AGENTS.md
+  - New: fixlab/telemetry.py
+  - New: tests/test_telemetry.py
+  - New: tests/test_interactive.py
+  - Modified: fixlab/cli.py
+  - Modified: fixlab/loop.py
+  - Modified: fixlab/workspace.py
+  - Modified: tests/test_loop.py
+  - Modified: tests/test_cli.py
+  - Modified: tests/test_isolation.py
+  - Modified: tests/test_trace_golden.py
+  - Modified: README.md
+  - Modified: AGENTS.md
   - Removed: （無）
 - 對應 JD：評估、Telemetry、實驗框架（工作 5、加分 1）靠事件記錄；CLI AI Assistant（工作 8、加分 3）靠互動模式與權限提示。
