@@ -1,6 +1,7 @@
 {
  "counters": {
   "blocked_calls": 1,
+  "protected_write_calls": 1,
   "tests_passed": 1
  },
  "final_parser": "\"\"\"把工時字串換成分鐘數。\n支援 \"2h\"、\"45m\"、\"1h30m\" 這類寫法。\"\"\"\n\nimport re\n\n\ndef parse_duration(text):\n    \"\"\"回傳 text 代表的分鐘數，格式不對時拋 ValueError。\"\"\"\n    text = text.strip()\n    if not re.fullmatch(r\"(\\d+[hm])+\", text):\n        raise ValueError(f\"invalid duration: {text!r}\")\n    units = re.findall(r\"(\\d+)([hm])\", text)\n    return sum(int(number) * (60 if unit == \"h\" else 1) for number, unit in units)\n",
@@ -893,7 +894,8 @@
       "path": "tests/test_report.py"
      },
      "flags": {
-      "blocked": true
+      "blocked": true,
+      "protected_write": true
      },
      "name": "edit_file",
      "ok": false,

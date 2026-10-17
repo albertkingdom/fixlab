@@ -26,6 +26,9 @@ DEFAULT_MAX_STEPS = 20
 # 連續幾輪「這一輪的工具呼叫全部失敗」就判定模型卡住了。3 是初始值，沒有實測依據，階段 3 用 telemetry 校準。
 MAX_FAILING_ROUNDS = 3
 
+# 工具回傳的旗標變成計數器時用的名稱；沒列在這裡的旗標（例如 tests_passed）就用旗標自己的名字。
+FLAG_COUNTER_NAMES = {"blocked": "blocked_calls", "protected_write": "protected_write_calls"}
+
 # 遇到限流（429）或伺服器暫時錯誤時，依序等這些秒數再重試。放在模組層，測試可以把它改成 0。
 RETRY_DELAYS_S = (5, 15, 30, 60, 120, 180, 300, 300)
 
@@ -211,7 +214,7 @@ def _run_tool_calls(ws: Workspace, it: Interpretation, msg, messages: list, coun
         messages.append({"role": "tool", "tool_call_id": i, "content": result.output})
         for flag, val in result.flags.items():
             if val:  # 例如 tests_passed、blocked（被擋下）
-                _count(counters, "blocked_calls" if flag == "blocked" else flag)
+                _count(counters, FLAG_COUNTER_NAMES.get(flag, flag))
         rec["tool_calls"].append({"name": x.name,
                                   "args": {k: (v if len(str(v)) <= 2000 else str(v)[:2000] + "...")
                                            for k, v in x.arguments.items()},

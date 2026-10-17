@@ -110,6 +110,7 @@
 寫入唯讀檔案而被擋時，`ToolResult` 的旗標除了 `blocked` 還多 `protected_write`。實作上為唯讀檔案另開 `PathBlocked` 的子類別，`Workspace.call` 依類別加旗標。
 
 - 原因：AGENTS.md 要的 telemetry 有「改測試」。階段 3 才做指紋偵測，但「模型試過改測試檔」現在就能記，成本是一個旗標。事件檔裡的 `tool_calls` 本來就帶 `flags`，不用另開欄位。
+- 迴圈把工具回傳的旗標轉成計數器時，`protected_write` 計入 `protected_write_calls`（與 `blocked_calls`、`denied_calls` 命名一致）；原本的做法是「為真的旗標用旗標自己的名字當計數器」，新旗標會自動變成名叫 `protected_write` 的計數器，名字和其他不一致，所以改用一張明確的對照表。`task_end` 的 `counters` 因此直接帶這個數字。
 - 替代方案：用錯誤訊息文字比對。不選的原因：脆弱，訊息措辭一改就失效。
 
 ### 設計依據與參考來源
@@ -142,7 +143,7 @@
 
 - `run_agent(client, model, ws, task, *, messages=None, max_steps=..., request_extra=None, trace=...)`。契約見 Decisions。結束 `done` 時追加 `{"role": "assistant", "content": 回覆文字或空字串}`。
 - 步驟紀錄新增 `truncated`（bool）、`reply_tool_calls`（int）。
-- 工具回傳旗標 `denied` 時，計數器 `denied_calls` 加一（與 `blocked_calls` 並列）。
+- 工具回傳旗標 `denied` 時，計數器 `denied_calls` 加一；旗標 `protected_write` 計入 `protected_write_calls`（都與 `blocked_calls` 並列，由一張旗標對計數器名稱的對照表決定）。
 
 **Workspace**（`fixlab/workspace.py`）
 

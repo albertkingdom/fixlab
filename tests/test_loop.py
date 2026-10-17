@@ -412,6 +412,19 @@ def test_blocked_calls_count_as_failures(tmp_path):
     assert r.counters["blocked_calls"] == 3
 
 
+# 寫入唯讀檔案的嘗試也要在計數器裡看得到（事件檔的 task_end 帶計數器）
+def test_protected_writes_are_counted_next_to_blocked_calls(tmp_path):
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_report.py").write_text("def test_a():\n    assert True\n")
+    w = Workspace(tmp_path, read_only=looks_like_test_file)
+    register_tools(w)
+    client = FakeClient([(None, [native("write_file", path="tests/test_report.py", content="x")]), ("Done.", None)])
+
+    r = run_agent(client, "m", w, TASK)
+
+    assert r.counters["blocked_calls"] == 1 and r.counters["protected_write_calls"] == 1
+
+
 # Scenario: Failing tests are not tool failures
 def test_failing_tests_are_not_tool_failures(ws):
     client = FakeClient([(None, [native("run_tests")])] * 3 + [("Done.", None)])

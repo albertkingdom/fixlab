@@ -71,7 +71,7 @@ def test_agent_cannot_edit_test_files(project, capsys):
 
     run_fix(project, client)
 
-    assert "edit_file  ok=False  flags={'blocked': True}" in capsys.readouterr().err
+    assert "edit_file  ok=False  flags={'blocked': True, 'protected_write': True}" in capsys.readouterr().err
     assert take_snapshot(project) == before  # 測試檔沒被動到
 
 

@@ -51,3 +51,12 @@ A tool call with the flag `denied` SHALL be counted in `denied_calls` and SHALL 
 
 - **WHEN** the user denies one `edit_file` call and then the model calls `list_files`, which succeeds
 - **THEN** the failure count goes back to zero and the run continues
+
+### Requirement: Protected writes are counted
+
+A tool result with the flag `protected_write` SHALL be counted in `protected_write_calls`, next to `blocked_calls`, so that the counters in `task_end` show how often the model tried to change a read-only file.
+
+#### Scenario: A refused write to a test file
+
+- **WHEN** the model calls `write_file` on `tests/test_report.py` and the Workspace treats test files as read-only
+- **THEN** the run's counters contain `"blocked_calls": 1` and `"protected_write_calls": 1`

@@ -61,6 +61,9 @@ def test_missing_file_is_not_blocked(ws):
 
 # ---- 測試檔保護：對應規格的 Test files cannot be written ----
 
+# 寫入唯讀檔案被擋時的旗標：blocked 加上 protected_write（路徑逃逸只有 blocked）
+PROTECTED_WRITE_FLAGS = {"blocked": True, "protected_write": True}
+
 PROTECTED_TABLE = [
     ("tests/test_report.py", True),
     ("tests/helpers.py", True),
@@ -102,7 +105,7 @@ def test_edit_file_protected_path_table(pws, rel, protected):
     r = edit(pws, rel)
     content = (pws.root / rel).read_text()
     if protected:
-        assert not r.ok and r.flags == {"blocked": True}
+        assert not r.ok and r.flags == PROTECTED_WRITE_FLAGS
         assert content == "x = 1\n"  # 檔案沒被動到
     else:
         assert r.ok and "blocked" not in r.flags
@@ -120,7 +123,7 @@ def test_workspace_under_a_tests_directory_is_not_affected(tmp_path):
 
     assert edit(w, "timelog/parser.py").ok
     r = edit(w, "tests/test_report.py")
-    assert not r.ok and r.flags == {"blocked": True}
+    assert not r.ok and r.flags == PROTECTED_WRITE_FLAGS
 
 
 def test_blocked_message_tells_the_model_what_to_do(pws):
@@ -130,15 +133,36 @@ def test_blocked_message_tells_the_model_what_to_do(pws):
 
 def test_protected_path_is_blocked_even_when_the_file_does_not_exist(pws):
     r = pws.call("edit_file", {"path": "tests/new_helper.py", "old_string": "a", "new_string": "b"})
-    assert not r.ok and r.flags == {"blocked": True}  # 不是 file not found：之後建立新檔的工具也要擋
+    assert not r.ok and r.flags == PROTECTED_WRITE_FLAGS  # 不是 file not found：之後建立新檔的工具也要擋
     assert not (pws.root / "tests" / "new_helper.py").exists()
 
 
 def test_symlink_to_a_test_file_cannot_be_used_to_edit_it(pws):
     (pws.root / "timelog" / "alias.py").symlink_to(pws.root / "tests" / "test_report.py")
     r = edit(pws, "timelog/alias.py")
-    assert not r.ok and r.flags == {"blocked": True}
+    assert not r.ok and r.flags == PROTECTED_WRITE_FLAGS
     assert (pws.root / "tests" / "test_report.py").read_text() == "x = 1\n"
+
+
+# ---- 寫入唯讀檔案的嘗試要有自己的旗標：對應規格的 Writes to read-only files are flagged ----
+
+# Scenario: Editing a test file
+def test_editing_a_test_file_is_flagged_protected_write(pws):
+    r = edit(pws, "tests/test_report.py")
+    assert not r.ok and r.flags == {"blocked": True, "protected_write": True}
+
+
+# Scenario: Writing a new test file
+def test_creating_a_test_file_is_flagged_protected_write(pws):
+    r = write(pws, "tests/new_helper.py")
+    assert not r.ok and r.flags == {"blocked": True, "protected_write": True}
+    assert not (pws.root / "tests" / "new_helper.py").exists()
+
+
+# Scenario: Path escape
+def test_a_path_escape_is_blocked_but_not_protected_write(pws):
+    r = pws.call("edit_file", {"path": "../outside.py", "old_string": "a", "new_string": "b"})
+    assert not r.ok and r.flags == {"blocked": True}  # 事件檔要分得出「碰了測試檔」與「路徑逃逸」
 
 
 # Scenario: No rule by default
@@ -156,7 +180,7 @@ def test_custom_rule_locks_only_the_files_it_names(tmp_path):
     register_tools(w)
 
     r = edit(w, "tests/test_report.py")
-    assert not r.ok and r.flags == {"blocked": True}
+    assert not r.ok and r.flags == PROTECTED_WRITE_FLAGS
     assert edit(w, "tests/helpers.py").ok  # 一般會被當成測試檔的其他檔案，這個規則下可以改
 
 
@@ -214,7 +238,7 @@ def test_write_file_protected_path_table(pws, rel, protected):
     r = write(pws, rel)
     content = (pws.root / rel).read_text()
     if protected:
-        assert not r.ok and r.flags == {"blocked": True}
+        assert not r.ok and r.flags == PROTECTED_WRITE_FLAGS
         assert content == "x = 1\n"
     else:
         assert r.ok and "blocked" not in r.flags
@@ -223,20 +247,20 @@ def test_write_file_protected_path_table(pws, rel, protected):
 
 def test_write_file_cannot_create_a_new_test_file(pws):
     r = write(pws, "tests/new_helper.py")  # 這是建立新檔，不是覆寫；沒有保護的話模型就能放進一個假的測試輔助檔
-    assert not r.ok and r.flags == {"blocked": True}
+    assert not r.ok and r.flags == PROTECTED_WRITE_FLAGS
     assert not (pws.root / "tests" / "new_helper.py").exists()
 
 
 def test_read_only_check_comes_before_the_read_first_check(pws):
     r = write(pws, "tests/test_report.py")  # 沒讀過，也是唯讀：回報的是唯讀，不是「先讀」
-    assert r.flags == {"blocked": True} and "read-only" in r.output
+    assert r.flags == PROTECTED_WRITE_FLAGS and "read-only" in r.output
 
 
 def test_a_symlink_to_a_test_file_cannot_be_used_to_overwrite_it(pws):
     (pws.root / "timelog" / "alias.py").symlink_to(pws.root / "tests" / "test_report.py")
     pws.call("read_file", {"path": "timelog/alias.py"})
     r = write(pws, "timelog/alias.py")
-    assert not r.ok and r.flags == {"blocked": True}
+    assert not r.ok and r.flags == PROTECTED_WRITE_FLAGS
     assert (pws.root / "tests" / "test_report.py").read_text() == "x = 1\n"
 
 

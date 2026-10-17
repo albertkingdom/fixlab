@@ -90,10 +90,10 @@ def test_golden_covers_the_intended_cases():
     golden = json.loads(GOLDEN.read_text())
     assert [r["event"] for r in golden["trace"]] == ["tool_calls"] * 7 + ["done"]
     assert golden["stop_reason"] == "done" and golden["steps"] == 8
-    assert golden["counters"] == {"tests_passed": 1, "blocked_calls": 1}
+    assert golden["counters"] == {"tests_passed": 1, "blocked_calls": 1, "protected_write_calls": 1}
     two_reads = golden["trace"][2]["tool_calls"]
     assert [c["name"] for c in two_reads] == ["read_file", "read_file"]  # 同一個回覆的兩個呼叫都有紀錄
     failed_run = golden["trace"][3]["tool_calls"][0]  # 測試失敗是旗標，不是工具失敗
     assert failed_run["ok"] is True and failed_run["flags"]["tests_passed"] is False
-    assert golden["trace"][4]["tool_calls"][0]["flags"] == {"blocked": True}  # 改測試檔被擋
+    assert golden["trace"][4]["tool_calls"][0]["flags"] == {"blocked": True, "protected_write": True}  # 改測試檔被擋
     assert FIXED in golden["final_parser"] and BUGGY not in golden["final_parser"]

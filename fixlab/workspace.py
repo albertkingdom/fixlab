@@ -81,6 +81,12 @@ class PathBlocked(ToolError):
     """路徑逃逸（絕對路徑、~、跑出工作目錄、符號連結指向外面）或寫入唯讀檔案。會設 blocked 旗標。"""
 
 
+class ReadOnlyBlocked(PathBlocked):
+    """寫入唯讀檔案（例如測試檔）。除了 blocked，還會設 protected_write 旗標，事件檔才分得出「碰了測試檔」與「路徑逃逸」。
+
+    用子類別而不是比對錯誤訊息：訊息的措辭一改，比對就失效了。"""
+
+
 @dataclass
 class ToolResult:
     output: str
@@ -153,7 +159,7 @@ class Workspace:
         p = self.resolve_inside(rel)
         # 用解析後的真實路徑判定：指向唯讀檔案的符號連結，不能拿來繞過。
         if self.read_only(p.relative_to(self.root)):
-            raise PathBlocked(f"{rel!r} is read-only and cannot be modified. If it is a test file, fix the source code instead.")
+            raise ReadOnlyBlocked(f"{rel!r} is read-only and cannot be modified. If it is a test file, fix the source code instead.")
         return p
 
     def _check_args(self, name: str, tool: Tool, args: dict) -> None:
@@ -178,6 +184,8 @@ class Workspace:
                 raise ToolError(f"unknown tool: {name!r}")
             self._check_args(name, tool, args)
             return tool.func(**args)
+        except ReadOnlyBlocked as e:  # 要放在 PathBlocked 前面：它是 PathBlocked 的子類別
+            return ToolResult(f"error: {e}", False, {"blocked": True, "protected_write": True})
         except PathBlocked as e:
             return ToolResult(f"error: {e}", False, {"blocked": True})
         except ToolError as e:
