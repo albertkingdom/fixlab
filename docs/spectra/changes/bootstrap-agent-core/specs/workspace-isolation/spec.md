@@ -126,7 +126,7 @@ The workspace has `protect_tests` on and contains tests/test_report.py, tests/he
 #### Scenario: Sandbox and tool layer agree
 
 - **WHEN** a path relative to the workspace is tried for writing in a workspace with `protect_tests` on, for each of tests/a.py, test/a.py, Tests/a.py, pkg/tests/data.json, a/b/test_c.py, x_test.py, X_TEST.PY, conftest.py, pkg/conftest.py, tests.py, contest.py, testing/a.py, pkg/attests/a.py, latest.py, timelog/parser.py and notes/test.txt
-- **THEN** the sandbox denies the write exactly when `looks_like_test_file` marks the path; the paths foo_testxpy and conftestxpy (no real dot) are not denied. The sandbox is deliberately a little stricter in two places: a file named test or tests (a regular expression cannot tell a file from a folder) and anything under `__pycache__`
+- **THEN** the sandbox denies the write exactly when `looks_like_test_file` marks the path; the paths foo_testxpy and conftestxpy (no real dot) are not denied. The sandbox is deliberately a little stricter in three places: a file or folder named test or tests (a regular expression cannot tell a file from a folder), the creation of a folder whose name starts with test_ (an existing one stays writable), and anything under `__pycache__`
 
 #### Scenario: Test protection is off by default
 

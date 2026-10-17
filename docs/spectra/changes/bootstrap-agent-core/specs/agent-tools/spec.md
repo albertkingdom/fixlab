@@ -156,17 +156,27 @@ write_file SHALL create the file, including missing parent directories, when it 
 
 ### Requirement: run_tests runs pytest in the workspace
 
-run_tests SHALL start pytest with `python -P`, loading the real pytest before the workspace is added to the end of the module search path, so a pytest.py or _pytest directory inside the workspace is never loaded; the pytest arguments SHALL be exactly `-q -p no:cacheprovider -c /dev/null --rootdir=. --confcutdir=. --` followed by the target (default `.`), with the workspace as the current directory. It SHALL return the combined stdout and stderr. When the output is longer than 4000 characters, the result SHALL keep the first 2000 and the last 2000 characters with a note between them that states the total length, because pytest puts its summary at the end. A target SHALL be a path inside the workspace; a target outside the workspace SHALL be rejected as blocked. A target other than `.` SHALL be passed to pytest with a leading `./`, so a target starting with `-` is treated as a path, never as a pytest option (pytest 9.1.1 treats `--version` as an option even after `--`). A run longer than 10 seconds SHALL be stopped and reported as timed out. The result SHALL be ok=true whether or not the tests pass, and the flags SHALL include `tests_passed` and `timed_out`. `tests_passed` SHALL be true only when the exit code is 0 and the last non-empty output line contains "N passed", so a run that exits with 0 before pytest reports anything, or in which every test is skipped, is not a pass. The run SHALL NOT create a .pytest_cache directory in the workspace.
+run_tests SHALL start pytest with `python -P`, loading the real pytest and then adding the workspace to the end of the module search path, so a pytest.py or _pytest directory inside the workspace is never loaded; the pytest arguments SHALL be exactly `-q -p no:cacheprovider -c /dev/null --rootdir=. --confcutdir=. --` followed by the target (default `.`), with the workspace as the current directory. It SHALL return the combined stdout and stderr. When the output is longer than 4000 characters, the result SHALL keep the first 2000 and the last 2000 characters with a note between them that states the total length, because pytest puts its summary at the end. A target SHALL be a path inside the workspace; a target outside the workspace SHALL be rejected as blocked. A target other than `.` SHALL be passed to pytest with a leading `./`, so a target starting with `-` is treated as a path, never as a pytest option (pytest 9.1.1 treats `--version` as an option even after `--`). A run longer than 10 seconds SHALL be stopped and reported as timed out. The result SHALL be ok=true whether or not the tests pass, and the flags SHALL include `tests_passed` and `timed_out`. `tests_passed` SHALL be true only when the exit code is 0 and some output line is a pytest summary of the form "N passed ... in Ns", so a run that exits with 0 before pytest reports anything, or in which every test is skipped, is not a pass; output printed after the summary does not matter. These checks guard against accidents and simple fakery only: code that tampers with the pytest process from inside, or that exploits pytest's plugin loading or collection rules (for example a module named like an optional dependency in the workspace root, or a pyvenv.cfg inside a folder), is outside what run_tests guarantees. Trustworthy scoring needs a separate run in a clean environment (stage 3). The run SHALL NOT create a .pytest_cache directory in the workspace.
 
 #### Scenario: Failing fixture project
 
 - **WHEN** run_tests is called on the unfixed timelog fixture project
 - **THEN** the flag `tests_passed` is false, the result is ok=true, and the output contains "1 failed"
 
-#### Scenario: Result cannot be faked by the code under test
+#### Scenario: Simple fakery of the result is rejected
 
 - **WHEN** the workspace contains a pytest.py that prints "1 passed", or a _pytest directory whose __init__.py calls os._exit(0), or source code that calls os._exit(0) when imported, and the tests would otherwise fail
 - **THEN** the flag `tests_passed` is false and, for the first two, the output still contains "1 failed"
+
+#### Scenario: Output after the summary
+
+- **WHEN** the tests pass and the code under test prints another line when the interpreter exits
+- **THEN** the flag `tests_passed` is true
+
+#### Scenario: A line that only mentions passed
+
+- **WHEN** the code under test prints "all tests passed" and exits with code 0 before pytest reports anything
+- **THEN** the flag `tests_passed` is false
 
 #### Scenario: All tests skipped
 
