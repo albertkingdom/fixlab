@@ -4,7 +4,7 @@
 import pytest
 
 from fixlab.cli import DEFAULT_TASK, diff_report, main, take_snapshot
-from test_fixture import copy_fixture  # 把 timelog 複製到暫存目錄
+from test_fixture import BUGGY, FIXED, copy_fixture  # 把 timelog 複製到暫存目錄；bug 與修法
 from test_loop import FakeClient, native  # 依序回傳劇本回覆的假 client
 
 
@@ -27,7 +27,7 @@ def test_read_only_run_leaves_directory_unchanged(project, capsys):
     code = run_fix(project, client)
 
     out, err = capsys.readouterr()
-    assert code == 0
+    assert code == 1  # 沒有人修 bug，最後那次測試還是失敗
     assert take_snapshot(project) == before
     assert "no changes" in out
     assert "stop reason: done  steps: 2" in out
@@ -82,6 +82,43 @@ def test_default_task_can_be_overridden(project):
     custom_client = FakeClient([("Done.", None)])
     run_fix(project, custom_client, "--task", "Look at report.py")
     assert custom_client.sent[0][1] == {"role": "user", "content": "Look at report.py"}
+
+
+# ── main：結束後自己再跑一次測試 ──────────────────────────────────────────
+
+
+def test_done_without_testing_still_shows_the_failing_tests(project, capsys):
+    client = FakeClient([("Fixed it!", None)])  # 模型直接宣稱完成，什麼都沒做
+
+    code = run_fix(project, client)
+
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "1 failed" in out
+    assert out.rstrip().splitlines()[-1] == "RESULT: tests FAILED"  # 結論在最後一行
+
+
+def test_fixed_project_shows_passing_tests_and_only_the_fix_in_the_diff(project, capsys):
+    client = FakeClient([
+        (None, [native("edit_file", path="timelog/parser.py", old_string=BUGGY, new_string=FIXED)]),
+        ("Fixed it!", None),
+    ])
+
+    code = run_fix(project, client)
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert out.rstrip().splitlines()[-1] == "RESULT: tests passed"
+    assert out.count("--- a/") == 1 and "--- a/timelog/parser.py" in out  # 差異裡只有 parser.py
+
+
+def test_files_touched_by_the_final_test_run_show_up_in_the_diff(project, capsys):
+    (project / "tests" / "test_side_effect.py").write_text(
+        "def test_writes_a_file():\n    open('side_effect.txt', 'w').write('hi')\n")
+
+    run_fix(project, FakeClient([("Done.", None)]))
+
+    assert "new file: side_effect.txt" in capsys.readouterr().out
 
 
 # ── main：錯誤情境 ────────────────────────────────────────────────────────

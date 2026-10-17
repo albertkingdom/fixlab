@@ -1,6 +1,7 @@
 """fixlab 的最小入口（smoke 用，不是階段 2 的正式 CLI）。
 
-流程：檢查參數與金鑰 → 對 PATH 拍快照 → 跑 agent → 印結果與快照 diff。
+流程：檢查參數與金鑰 → 對 PATH 拍快照 → 跑 agent → 自己再跑一次測試 → 印結果與快照 diff。
+最後那次測試不聽模型怎麼說，結果決定結束碼：0 是測試通過，1 是沒通過，2 是輸入有誤。
 agent 直接修改 PATH，不複製、不寫回；一次性執行沒有人在旁邊授權，所以改成事後審查，
 diff 涵蓋測試檔，竄改看得到。沙箱完成前只對自己寫的 fixture 的手動複本執行。
 """
@@ -57,11 +58,26 @@ def main(argv=None, client=None) -> int:
     result = run_agent(client, model, ws, args.task, max_steps=args.max_steps,
                        request_extra={"max_tokens": args.max_tokens}, trace=print_step)
 
+    # 模型可能沒跑測試就宣告完成，所以結束後自己再跑一次，看真正的結果。
+    # 先跑測試、再拍「之後」的快照：測試程式在跑的過程中動了什麼檔案，也會出現在差異裡。
+    final = ws.call("run_tests", {})
+    after = take_snapshot(root)
+
     print(f"stop reason: {result.stop_reason}  steps: {result.steps}  "
           f"tokens: {result.prompt_tokens} prompt + {result.completion_tokens} completion")
     print("\nchanges since start:")
-    print(diff_report(before, take_snapshot(root)))
-    return 0
+    print(diff_report(before, after))
+    print("\nfinal test run:")
+    print(final.output)
+
+    passed = final.flags.get("tests_passed", False)
+    if passed:
+        print("RESULT: tests passed")  # 結論放在最後一行，一眼就看得到
+    elif final.flags.get("timed_out"):
+        print("RESULT: tests FAILED (timed out)")
+    else:
+        print("RESULT: tests FAILED")
+    return 0 if passed else 1
 
 
 def fail(message: str) -> int:
