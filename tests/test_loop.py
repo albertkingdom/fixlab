@@ -306,6 +306,39 @@ def test_an_argument_of_exactly_2000_characters_is_kept_whole(ws):
     assert records[0]["tool_calls"][0]["args"]["new_string"] == exactly
 
 
+# ---- Step records show truncation and the original call count ----
+
+# Scenario: Cut-off reply
+def test_a_cut_off_reply_is_marked_truncated_in_its_record(ws):
+    records = []
+    cut_off = (None, [native("edit_file", path="rules.py", old_string="return 2", new_string="return 3")], "length")
+    client = FakeClient([cut_off, ("Done.", None)])
+    run_agent(client, "m", ws, TASK, trace=records.append)
+
+    assert records[0]["truncated"] is True and records[0]["reply_tool_calls"] == 1
+    assert records[0]["tool_calls"] == []  # 被截斷的呼叫沒有執行
+    assert (ws.root / "rules.py").read_text() == "def grace_days():\n    return 2\n"
+
+
+# Scenario: One valid and one invalid call
+def test_the_record_counts_invalid_calls_too(ws):
+    records = []
+    mixed = (None, [native("read_file", path="rules.py"), native("edit_file", path="rules.py")])  # 第二個缺參數
+    client = FakeClient([mixed, ("Done.", None)])
+    run_agent(client, "m", ws, TASK, trace=records.append)
+
+    assert records[0]["reply_tool_calls"] == 2 and records[0]["truncated"] is False
+    assert len(records[0]["tool_calls"]) == 1 and len(records[0]["parse_errors"]) == 1
+
+
+# Scenario: Reply without tools
+def test_a_reply_without_tools_has_zero_calls(ws):
+    records = []
+    run_agent(FakeClient([("Done.", None)]), "m", ws, TASK, trace=records.append)
+
+    assert records[0]["reply_tool_calls"] == 0 and records[0]["truncated"] is False
+
+
 # ---- 連續失敗保險：對應規格的 Consecutive failing rounds stop the loop ----
 
 def missing_file():

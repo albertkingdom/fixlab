@@ -190,7 +190,9 @@ def _step_record(step: int, latency: float, resp, it: Interpretation) -> dict:
             "prompt_tokens": resp.usage.prompt_tokens if resp.usage else None,
             "completion_tokens": resp.usage.completion_tokens if resp.usage else None,
             "content": msg.content, "reasoning_chars": len((msg.model_extra or {}).get("reasoning") or ""),
-            "parse_errors": it.errors, "tool_calls": []}
+            "parse_errors": it.errors, "tool_calls": [],
+            # 事件檔要分得出是哪一步被截斷，也要知道回覆原本帶幾個呼叫（包含不合法、被丟掉的）
+            "truncated": it.truncated, "reply_tool_calls": len(msg.tool_calls or [])}
 
 
 def _run_tool_calls(ws: Workspace, it: Interpretation, msg, messages: list, counters: dict, rec: dict) -> bool:
