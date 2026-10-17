@@ -1,0 +1,211 @@
+## Context
+
+fixlab 目前只有規劃文件（AGENTS.md）。前身專案 code-agent-eval 已有可用的 agent 迴圈（約 220 行含輔助函式）、tool call 解析（約 120 行）與三個工具加沙箱（約 215 行），並且有 40 多個測試與一份黃金 trace。但它的設計綁死「單檔函式題」：工作目錄固定是 solution.py 加一個測試檔，任務訊息由題目格式組成，測試指紋只算一個檔。
+
+階段 1 的任務是把這三塊搬過來，改成「一個任意的 repo 目錄」，補上找 bug 需要的工具，並補上 code-agent-eval 與 subagent review 找到的安全缺口：子行程繼承整個環境變數（含放在 .env 的 API 金鑰）、迴圈沒有連續失敗保險、沙箱在 workspace 位於專案目錄內時會讓 pytest 讀不到設定檔。
+
+教學性質要求：程式讀起來像偽碼、註解用繁體中文說明「為什麼」、每個模組開頭 2–5 行說明角色。原創性要求：每個決定的依據是自己的實驗結果或 Claude Code 的行為，外部文章只列為參考來源（見「設計依據與參考來源」）。
+
+## Goals / Non-Goals
+
+**Goals:**
+
+- 任何一個含 pytest 測試、依賴只有標準函式庫的 Python 目錄，都能當成 agent 的工作目錄，包含位於 fixlab 專案目錄內的 workspace。
+- 六個工具足以完成「找出 bug 在哪個檔案、讀懂、局部修改、跑測試」的流程。
+- 測試檔不可被 agent 以任何工具或被測程式修改，且事後能偵測到被改過。
+- 子行程拿不到 API 金鑰、網路與工作目錄外的寫入。
+- 搬過來的行為由測試保護：原有的迴圈、解析、隔離測試依新介面改寫後全數通過。
+
+**Non-Goals:**
+
+- 正式的 CLI、權限提示、telemetry 檔案格式、benchmark、隱藏測試評分（階段 2 與 3）。
+- 任意 shell 工具、git 工具。
+- 驗證器抽換介面、Anthropic 轉接層、串流。
+- 跨平台沙箱（只支援 macOS 的 sandbox-exec）。
+- 硬連結逃逸、被測專案的第三方依賴。
+
+## Decisions
+
+### MVP 優先的實作順序，最小入口直接改指定目錄，結束時印快照 diff
+
+任務順序改成先做能端到端跑通的最小切片，分兩段：先做工具註冊、read_file、list_files，立刻接上迴圈核心與步數上限、最小入口 `fixlab`，用真模型對 timelog 做一次唯讀探索；再補 edit_file、受保護路徑只接 edit_file、run_tests 加環境變數白名單，用真模型實際修一次 timelog；最後才補 grep、write_file、沙箱與迴圈保險（測試檔指紋暫緩到階段 3，glob 暫緩，見「glob 暫緩，先做 grep」）。原因：原順序要到後段才有迴圈，最早的真實回饋要等很久；先跑通能提早發現工具輸出格式與提示詞的問題。迴圈與入口再提前到 edit_file 之前，是因為 read_file 的行號格式、截斷訊息與 list_files 的輸出對模型是否清楚，只有讓模型真的讀過才知道，單元測試看不出來。
+
+環境變數白名單不等沙箱，跟 run_tests 一起上。依據是自己程式的已知缺陷：code-agent-eval 的 run_tests 把整個 os.environ 傳給子行程，而 smoke 會在 shell 匯出真的 API 金鑰；被執行的程式包含模型改寫過的檔案，只要印出環境，金鑰就會進入測試輸出、對話與 README 紀錄。
+
+取捨：`fixlab PATH` 直接修改 PATH 指到的目錄，不複製、不寫回。它是一次性執行，跑的時候沒有人在旁邊，不能在每次寫入前問使用者（權限提示是階段 2 的事），所以改成事後審查：跑 agent 之前，用 iter_files 對 PATH 底下的檔案拍一份記憶體快照（相對路徑對應檔案的 bytes）；結束後再掃一次，用 difflib 印出新增、刪除與修改的檔案的 unified diff，範圍涵蓋測試檔，沒有任何變動就印 `no changes`，不能以 UTF-8 解碼的檔只印 `binary file changed`。沙箱完成前，被測程式也能改測試檔，這份 diff 是這段期間唯一看得到竄改的地方（測試檔指紋偵測暫緩到階段 3）。沙箱完成前仍沒有網路與家目錄限制，所以這段期間只對自己寫的 fixture 的手動複本執行：跑之前先用 `cp -R` 把 tests/fixtures/timelog 複製到暫存目錄再當 PATH，絕不對 tests/fixtures/timelog 本身執行，否則會修掉 benchmark 的 bug，讓 test_fixture.py 失敗。快照的記憶體用量正比於專案大小，階段 1 只跑小型 fixture；快照到結束之間使用者自己做的修改也會被算進 diff；符號連結不列入快照，所以連結被改指向不會出現在 diff 裡。`fixlab` 只是 smoke 用的最小入口，不代表階段 2 的 CLI 設計。
+
+替代方案：另開 fixlab-mvp 專案或 spike 分支；不選的原因：會複製已完成的 workspace、toolparse 與 fixture，之後合併回來還要重寫一次。
+
+替代方案（最小入口如何修改檔案）：一是先複製到暫存目錄，只改複本，再用 `--apply` 寫回；不選的原因：使用者之後要就地修自己的 repo，複製與寫回要多寫一段程式，還要測三個寫回條件（不是受保護路徑、原檔不是符號連結、原檔內容未變），而階段 2 有了權限提示之後這段保護就不需要。二是結束後只用 `git diff`；不選的原因：它會把使用者原本未提交的修改一起列出，分不清哪些是這次 agent 改的，新增的檔預設不顯示，而且要求 PATH 是 git repo。快照 diff 只反映這一次執行；git 仍是使用者自己的還原手段。
+
+### 複製自己的程式並整理，不做共用套件
+
+code-agent-eval 的檔案逐模組複製到 fixlab/ 並改寫，兩個專案之後各自演進。替代方案：把 agent 核心抽成共用套件讓兩邊依賴。不選的原因：共用套件要處理版本與發版，對兩個個人專案是負擔；教學專案也希望讀者在一個 repo 裡讀完全部程式。取捨：之後 code-agent-eval 的修正不會自動同步，需要時手動搬。搬檔發生在各模組自己的任務裡，不在骨架任務一次搬完。
+
+### 工作目錄就是 repo 根目錄，任務文字由呼叫端傳入
+
+Workspace 只認一個根目錄，不再知道 solution.py。run_agent 收一段任務文字（例如「tests 在 pytest 下失敗，請找出原因並修好」），第一則 user 訊息就是它。替代方案：保留題目 dict 與 stub 格式。不選的原因：多檔專案沒有「stub」；題目如何變成文字是 benchmark（階段 3）的事，不該放在核心。
+
+### 預設步數上限提高到 20，並新增連續失敗上限 3
+
+多檔探索比單檔多很多步，試跑的 8 步上限是為單檔題設的。20 是初始值，沒有實測依據，階段 3 用 telemetry 的步數分佈校準。連續失敗上限的算法：只有「本回合至少執行了一個工具、且所有被執行的工具都 ok=false」才累計；只要有一個成功就歸零；沒有執行任何工具的回合（無效回覆、空回覆、被截斷）既不累計也不歸零，因為那些回合已有各自的回饋機制。累計到 3 次以新的 stop reason stuck 結束。run_tests 在測試失敗時仍回 ok=true（失敗的測試是有用的資訊，不是工具錯誤），所以不會觸發。替代方案：只靠步數上限；不選的原因：模型反覆用錯誤參數呼叫，會白白燒完 20 步。重複呼叫偵測不做，留待階段 2 看 telemetry 再決定。高見龍 KeSi 在這一塊有做同樣的事（kesi.py 的 run_agent，commit dfa0cd0，2026-10-17 讀）：計數器 failures，整輪的工具結果全部 is_error 才加一，有任何一個成功就歸零，到 MAX_TOOL_FAILURES = 3 時把一段說明寫進對話並結束。採用的想法就是「整輪全失敗才算」（AGENTS.md 已記），數字 3 也相同，不能排除受他影響。差異有三：（1）他的 shell 工具在結束碼不是 0 時就是 is_error，所以只執行測試而且測試失敗三輪會被判卡住；這裡 run_tests 失敗的測試是 ok=true，不計入，但三輪都沒有任何成功的呼叫仍會累計（例如連續讀不存在的檔案）；（2）他沒有「無法解讀的回覆既不累計也不歸零」的規則，那是這裡的回覆回饋機制才需要的；（3）他停下來時只回傳一句話，這裡記下 stop reason stuck 與 stuck_failures，讓 telemetry 與實驗能統計。
+
+### edit_file 用「唯一出現的原字串」替換
+
+edit_file(path, old_string, new_string)：old_string 在檔案中必須剛好出現一次；零次或多次都回錯誤並說明次數，讓模型補更多上下文。替代方案：行號範圍替換、unified diff。不選的原因：行號在模型連續編輯後會漂移，diff 對小模型太容易寫錯（試跑中小模型常把換行寫成字面的 \n 或寫壞 JSON）；唯一字串替換在使用者每天用的 Claude Code 的 Edit 工具上就是這個語意，錯誤訊息也最容易解釋。
+
+### write_file 覆寫既有檔案前必須先讀過
+
+write_file 對「已存在」的檔案，要求本次 Workspace 生命週期中，read_file 曾「整檔、未截斷」地回傳過它；否則拒絕並提示先讀。狀態存在 Workspace 實例的 files_read：路徑對應到「讀的當下的內容 sha256」，只有不帶行範圍、也未被 20000 字元上限截斷的 read_file 才記錄；覆寫前還要比對目前的內容，和讀的當下不一樣就拒絕（讀過之後被別人改了，例如使用者在編輯器裡改，或測試程式動了它），不然整檔覆寫會悄悄蓋掉別人的修改；edit_file 成功後清除該檔的記錄（模型沒看過編輯後的全文）；write_file 成功後記錄該檔（模型知道自己寫了什麼）。建立新檔不受限。這個限制的依據是 Claude Code 自己的 Write 工具對既有檔案的行為（必須先讀過才能覆寫）。替代方案：完全不管。不選的原因：多檔專案裡整檔覆寫是最容易弄壞東西的操作；部分讀取後整檔覆寫，等於憑空捏造沒看過的部分。對照：高見龍的 kesi.py 用 READ_VERSIONS 記讀的當下的 sha256，覆寫前比對，並用暫存檔加 os.replace 原子取代、用 `xb` 模式建立新檔（2026-10-17 讀）；採用他「記指紋、覆寫前比對」的想法，原子取代與 `xb` 先不做。Claude Code 的官方文件（2026-10-17）寫，Opus 4.6、Haiku 4.5 與更舊的模型覆寫既有檔案前一律要求先讀，只讀一部分的不算，這與以小模型為主的本專案一致；文件也寫舊版本（v2.1.208 之前）對讀過之後在磁碟上被改過的檔案拒絕編輯，之後對 edit 放寬是因為舊字串要和目前內容完全吻合才套用，整檔覆寫沒有這種保險，所以這裡保留比對。
+
+### 輸出一律有上限，格式固定
+
+read_file 每行加行號並可指定 start_line 與 end_line，以 splitlines 切行；行號格式（6 位靠右對齊、tab 分隔）的依據是 Claude Code 的 Read 工具與 `cat -n`，靠右對齊讓不同位數的行號之後，原文的縮排起點仍在同一欄，對縮排敏感的 Python 比較不易看錯；list_files 最多 200 筆，依完整相對路徑的字串順序排序；grep 最多 100 行；測試輸出最多 4000 字元；任何輸出超過上限就截斷並註明總量。原因：工具輸出會留在對話歷史裡每一輪重送，是成本與小模型 context 的主要壓力；試跑中被截斷的回覆是小模型最大宗的失敗原因之一，所以截斷時一定要明講，模型才知道自己沒看到全部。
+
+### grep 自己實作，單行比對用 regex 套件加逾時
+
+遍歷工作目錄，逐行比對正規表示式，輸出 路徑:行號:內容。單行最長只比對前 2000 字元；比對使用第三方套件 regex（它的 search 支援 timeout 參數），單行超過 1 秒就中止整個搜尋並回報 pattern too slow，防止災難性回溯卡死在沙箱外的行程。2026-10-17 實驗：標準函式庫 re 對 `(a+)+$` 的耗時每多 2 個字元慢 4 倍（22 個 a 要 0.23 秒、24 個 0.92 秒、26 個 3.72 秒），而且無法中斷；regex 套件的 timeout 會在剛好 1.0 秒丟出 TimeoutError。但 regex 對 `(a+)+$` 有最佳化，40 個 a 加 `!` 一下子就比完，會真的逾時的是 `(a|aa)+$`，所以規格與測試用後者。每行輸出最多顯示 200 字元（比對仍是前 2000 字元），因為 100 行長行會把上下文塞滿，這個想法來自高見龍的 rg 參數 `--max-columns 200`。他用 ripgrep，引擎是有限狀態機，沒有災難性回溯，速度也快很多；選擇自己實作是取捨，不是技術上更優。Claude Code 的 Grep 同樣建在 ripgrep 上，而且是隨產品附帶的執行檔（官方文件，2026-10-17）。替代方案：呼叫系統的 rg；不選的原因：多一個要安裝的外部依賴，而且一旦呼叫外部指令，路徑限制與沙箱就要再處理一次。再一個替代方案：用標準 re 並在子行程裡跑；不選的原因：實作與測試都複雜很多。取捨：多一個 pip 依賴 regex；速度比 rg 慢，但小型專案沒有差別。
+
+### 遍歷工具不跟隨符號連結，跳過清單共用
+
+list_files、grep（以及之後階段 3 的測試檔指紋掃描）共用同一份跳過清單（.git、.venv、__pycache__、.pytest_cache），且一律不跟隨、不列出符號連結。原因：這些工具在沙箱外以 Python 行程執行，工作目錄裡放一個指向 ../secret 的連結，就能讓 grep 讀到工作目錄外的內容；單一的使用者路徑解析擋不住這種情況。替代方案：對每個走訪到的檔案都 resolve 並檢查；不選的原因：實作較繁、效能較差，而且測試專案本來就不需要符號連結。
+
+### glob 暫緩，先做 grep
+
+原本的範圍有 glob（依檔名樣式找檔案）。決定暫緩，不在這個變更實作。理由：list_files 是遞迴的，一次列出整棵樹，glob 只有在專案超過 200 筆、列檔案被截斷時才有用武之地；階段 1 的範例專案只有 6 個檔案，真模型的四次修復紀錄（2026-10-17）也沒有一次需要依檔名過濾。
+
+高見龍加 glob 的理由（〈讓 Agent 看見專案〉，2026-10-17 讀）是他的 list_files 一次只列一層，「一層一層用 list_files 走下去太慢了」；這個理由在遞迴列出的設計下不成立，是這個專案和他的差別。每多一個工具，每一步的輸入多約 100 到 150 token（真實紀錄第 1 步的輸入：2 個工具 528、3 個 672、4 個 778），也多一個小模型可能挑錯的選項。
+
+何時再做：list_files 的輸出被截斷、導致模型找不到檔案；或第二個範例專案與階段 3 的紀錄顯示模型需要依檔名過濾。屆時要把 glob 的規格需求補回來（這個變更已移除）。替代方案一：照原範圍實作；不選的原因：沒有實測依據。替代方案二：從範圍永久移除；不選的原因：大專案的情況還沒有證據，保留日後加回的空間。
+
+### 測試檔指紋暫緩到階段 3
+
+原本的範圍有「測試檔指紋」：Workspace 建立時對 read_only 標記的所有檔案算一個 sha256，每次 run_tests 後再算一次，不同就設 test_file_tampered 旗標。決定暫緩到階段 3，不在這個變更實作。
+
+它要偵測的是工具擋不到的竄改：模型用 edit_file 合法地改一個原始碼檔，在裡面放一段「被匯入時改寫測試檔」的程式，再 run_tests；改測試檔的是被測程式自己，不是工具。2026-10-17 用現有程式模擬過（模擬者是我，不是真模型）：直接用 edit_file 改測試檔被擋；改 parser.py 塞入改寫測試檔的程式，第 1 次 run_tests 仍是 1 failed，第 2 次變成 4 passed，測試檔已被改成 `assert True`，而 bug 還在。
+
+暫緩的理由：（1）六次真模型修復沒有任何一次動過測試檔，更沒有人繞路，沒有實例；（2）它是評測用的量測（要證明「某模型沒有作弊」就得有偵測），不是產品功能；預設 read_only 不鎖任何檔案時指紋是空的，通用的互動式用法碰不到；（3）沙箱（本變更的 5.1、5.2）做好後，macOS 上測試程式根本沒有權限寫測試檔，指紋只剩「確認沙箱有效」的作用；（4）階段 3 才有人讀它的結果（統計每個模型的旗標次數，也才看得出會不會誤報，例如被測程式把輸出檔寫進 tests/）。
+
+階段 3 做的時候：起點在建立 Workspace 時算，旗標只在有變時才加（沒變不放這個鍵，既有的旗標比對不用改）；修改、新增、刪除都算；跳過 .git、.venv、__pycache__、.pytest_cache 與符號連結；入口結束時若最後那次測試帶這個旗標，不能算通過（RESULT: tests FAILED (test files were modified)，退出碼 1）。這個機制是本專案自己的設計；高見龍的 kesi.py 沒有（他不鎖測試檔，靠使用者授權），他 Day 13 示範結束時對原始檔案內容印 diff，最接近的是本專案的快照 diff（見前述）。
+
+### 唯讀檔案由 Workspace 的 read_only 函式決定，預設都能寫，修 bug 時鎖測試檔
+
+Workspace 接受一個 read_only 函式，輸入「相對於工作目錄根的路徑」，回傳這個檔案能不能寫；預設是 nothing_is_read_only，沒有任何檔案唯讀，因為通用的 agent 由使用者決定能改什麼，不該預設鎖測試檔（見 Open Questions）。修 bug 的入口（fixlab PATH，以及之後的 benchmark）明確傳入 looks_like_test_file，這個函式用命名慣例猜哪些是測試檔：檔名（不分大小寫）以 test_ 開頭、以 _test.py 結尾、等於 conftest.py，或路徑中任一層目錄名為 tests 或 test。工作目錄本身位於名為 tests 的目錄底下（例如 tests/fixtures/timelog）不影響判定。tests.py 這類單一檔名不算，這是刻意的：pytest 預設不會收集它，範圍與 pytest 收集規則對齊。判定用的是「解析符號連結之後」的真實路徑，指向測試檔的連結不能拿來繞過。偵測「測試檔被工具以外的方式竄改」的指紋機制暫緩到階段 3（見「測試檔指紋暫緩到階段 3」）。write_file 與 edit_file 都經過 Workspace.resolve_writable()，由它呼叫 read_only，判定放在檢查檔案是否存在之前，所以對不存在的測試路徑也是 blocked。替代方案一：只保護 test_*.py；不選的原因：tests/helpers.py 或 fixtures 檔改掉，同樣能讓測試變綠而不修 bug。替代方案二：預設就鎖測試檔；不選的原因：忘了傳規則的呼叫端至少不會莫名其妙被擋，通用用法也不會被預設值綁住，代價是修 bug 的呼叫端必須記得傳，見 Risks。傳入的是函式，不是路徑清單或 glob：函式最簡單，不用處理 ** 與大小寫的細節，要自訂「只鎖題目指定的檔」也只是一個 lambda。
+
+### 子行程環境變數用白名單
+
+run_tests 啟動子行程時，環境只放 PATH、LANG、LC_ALL（有設才傳）、這次執行專屬的暫存目錄（TMPDIR）與 PYTHONDONTWRITEBYTECODE=1，其餘全部不傳。依據是自己的程式：code-agent-eval 的 run_tests 把整個 os.environ 傳進子行程，而專案根目錄的 .env 放了 OpenRouter 金鑰，被測程式只要印出環境就能讓金鑰進入 trace 與對話。已用實驗確認白名單下以 sandbox-exec 啟動 venv 的 python 與 pytest 可行，不需要 HOME、VIRTUAL_ENV 或 PYTHONPATH。替代方案：黑名單（移除名稱含 KEY、TOKEN 的變數）；不選的原因：命名無法窮舉（OPENAI_KEY、STRIPE_SK、GH_PAT）。取捨：若被測專案的測試需要特定環境變數，要明確加進白名單（階段 1 不開放設定）。
+
+### run_tests 的 pytest 指令固定，不讀專案外的設定
+
+run_tests 執行的指令固定為：python -P -c START_PYTEST（載入真的 pytest、再把工作目錄加到搜尋路徑最後面，理由見本節最後）-q -p no:cacheprovider -c /dev/null --rootdir=. --confcutdir=. -- 加上 target（預設為 .）。-c /dev/null、--rootdir=. 與 --confcutdir=. 讓 pytest 不往上層目錄找 pyproject.toml 或 conftest.py；沒有這幾個參數時，workspace 位於 fixlab 專案目錄內（例如 tests/fixtures/timelog）會因為沙箱禁止讀取專案目錄而在 locate_config 階段崩潰（subagent review 以實驗重現）。-p no:cacheprovider 避免在工作目錄產生 .pytest_cache。-- 與 target 的 ./ 前綴一起，確保 target 只會被當成路徑：2026-10-17 實測 pytest 9.1.1 對 `-- --version` 仍會印出版本並以 0 結束，run_tests 會誤判成測試通過（單元測試抓到的，原本的設計以為 -- 就夠了），加上 ./ 前綴後才變成「找不到路徑」、結束碼 4。target 必須是工作目錄內的路徑，否則同樣 blocked。逾時用簡單的 subprocess.run(timeout)，stdin 接空裝置避免測試卡在等輸入；輸出超過 4000 字元時留頭尾各 2000 字元、中間註明總量，因為 pytest 的失敗摘要與最後一行結果在尾端，只留開頭會看不到結果。替代方案：workspace 一律複製到專案外的暫存目錄；不選的原因：使用者之後要對自己的 repo 就地執行，必須支援任意位置。
+
+不用 python -m pytest，改用 python -P 加一小段啟動程式，並且 tests_passed 要求結束碼 0 加上輸出裡有一行 pytest 的摘要（N passed … in Ns）。依據是 code review 加我自己重現（2026-10-17）：-m 會把工作目錄放在搜尋路徑最前面，根目錄的 pytest.py 或 _pytest/ 取代真的 pytest，印一行「1 passed」就假通過；被測的程式在 pytest 開始前 os._exit(0)，輸出是空的、結束碼 0，原本也算通過；全部 skipped 也不該算通過。摘要不限定在最後一行：專案結束時多印東西（atexit）會讓通過的測試被誤判成失敗，實測重現後放寬。這些檢查只擋意外與簡單的偽造，見「Risks」。
+
+### 沙箱：禁網路、限制讀寫範圍、測試檔不可寫
+
+沿用 code-agent-eval 的 sandbox-exec 規則：預設允許、禁網路；使用者家目錄、專案目錄與額外的 deny_read 目錄不可讀，再放行自己的工作目錄與 .venv（後面的規則覆蓋前面的，所以順序就是邏輯：所有 deny 寫在 allow 之前）；只能寫工作目錄（加 /dev）。擋家目錄是新增的：code-agent-eval 只擋專案目錄，被測程式仍能讀 ~/.ssh、~/.aws 或其他專案的 .env，雖然禁網路，內容仍可經 pytest 輸出進入 run_tests 的結果、對話與 trace，最後送到 LLM 供應商。已用實驗確認：家目錄被擋時，位於家目錄底下的工作目錄與 .venv 經 allow 放行後，pytest 仍能正常執行與 import；venv 的基底 Python 位於 /opt/homebrew 不受影響。替代方案：改成預設拒絕再逐一放行系統目錄；不選的原因：Python 與 pytest 需要讀的系統路徑很多，清單難以維護。取捨：若基底 Python 裝在家目錄底下（例如 pyenv 或 uv 管理的 Python），會被擋而無法啟動，屆時需把基底 Python 目錄加入放行清單。新增（5.2）：工作目錄內的測試檔不可被 run_tests 執行的程式寫入，包含覆寫、新建、刪除、截斷、改名、搬移、改權限，tests 與 test 資料夾本身也不能改名或搬移。依據是自己的實驗（2026-10-17）：模型改 parser.py，塞進一段會把 tests/test_report.py 改成 assert True 的程式，工具層的 read_only 擋不到（編輯 parser.py 是合法的），第二次 run_tests 回報 4 passed、bug 還在。這在六次真模型修復裡沒有出現過，是推論出來的風險；價值在 benchmark 的可信度（假通過是核心指標），不在保護使用者的電腦。它是選用的（Workspace 的 protect_tests，預設關，`fixlab PATH` 開）：通用的互動用法裡，補測試是正常的任務，鎖測試檔反而不對，所以和 read_only 一樣由入口決定；這是使用者提問「未來變成互動式 CLI 這項就沒意義了」之後的修正，原本的做法是不分情境一律開啟。規則用五種樣式（四種命名慣例加 __pycache__；不需要特別處理大小寫，因為 SBPL 的正規表示式本來就不分大小寫），以 (regex (string-append "^" (regex-quote (param "WS")) 樣式)) 接在工作目錄之後；SBPL 內建 regex-quote，路徑裡的 + 與括號由規則語言跳脫，所以不需要原本設想的 Python 端跳脫（WS_RE 參數）；原型實驗中工作目錄名為 a+b(c) 與一般名稱的結果相同。regex-quote 的用法來自 KeSi 的 sandbox_spec（他用它禁止讀取工作目錄內的 .env 等名稱），這裡改用來禁止寫入測試檔。樣式要和 looks_like_test_file 對得上，測試對十六個路徑逐一比對兩邊的判斷。原型也確認：經符號連結、硬連結寫測試檔、把測試檔改名成一般名稱、把一般檔改名成 test_ 開頭，全部被擋。Claude Code 的做法（沙箱文件，2026-10-17）：可寫的目錄裡仍有一份固定的「Protected paths」不可寫（.claude 設定、.mcp.json、.bashrc、.gitconfig、.vscode、.git 的 hooks 與 config），無法豁免，理由是能改這些檔的指令可以替自己加權限；想法相同：裁判用的東西不能被受審的程式改寫。差異：它的清單是固定的設定檔，這裡是命名慣例猜的測試檔，且它另有可設定的 denyWrite，這裡階段 1 不可設定。替代方案：用指紋事後偵測（已暫緩到階段 3）；不選的原因：事後偵測時模型已經拿到「通過」的回饋。code review（2026-10-17，subagent 加上我自己重現）找到的繞過與處理：（1）把含有測試的上層資料夾改名成 .old、再複製一份不含 test_ 檔的回來，pytest 略過點開頭的資料夾，測試就消失，run_tests 回 1 passed；原本的說法「只會讓測試收集不到、結束碼 5」是錯的，只有完全沒有測試時才是 5。處理：protect_tests 開啟時，沙箱禁止刪除、改名、搬移工作目錄內的資料夾，代價是被測的程式不能 rmdir 或改名資料夾。（2）偽造 __pycache__ 裡的 .pyc 可以換掉 *_test.py 與 conftest.py（test_ 開頭的因為檔名樣式而擋得住）。處理：整個 __pycache__ 都擋，位元碼本來就被 PYTHONDONTWRITEBYTECODE=1 關掉。（3）不碰測試檔也能假通過：根目錄的 pytest.py 或 _pytest/ 取代真的 pytest（python -m pytest 把工作目錄放在搜尋路徑最前面），或 import 時 os._exit(0)（原本只看結束碼）。處理：改成 python -P 啟動，先載入真的 pytest 再把工作目錄加到最後面，並要求輸出最後一行有「N passed」，全部 skipped 也不算通過；這兩項作用在 run_tests 本身，與 protect_tests 無關。（4）硬連結：測試原本被拒的是建立連結，不是寫入；事先在沙箱外建好的硬連結，經別名寫入是可以的。在沙箱裡建不了硬連結，所以風險低，只更正規格與測試的說法。（5）SBPL 的正規表示式不分大小寫（在區分大小寫的磁碟映像上實測，全小寫的樣式仍擋下 TEST_Y.PY），所以不需要每個字母寫成 [Tt]。不在保護範圍：被測的程式在 pytest 行程內部竄改 pytest 本身（測試與原始碼在同一個行程，沙箱管不到；這是推論，沒有實測）。沙箱比工具層多擋兩處是刻意的：名叫 test 或 tests 的檔案（正規表示式分不出檔案與資料夾）與 __pycache__。取捨：測試若把輸出檔寫進 tests/ 會失敗（階段 3 的風險清單已列）。路徑全部以 -D 參數傳入，不直接拼進規則字串，而且全部要先轉成真實路徑：2026-10-17 實驗，用 /var/folders/... 這個捷徑寫的規則永遠對不上（macOS 的 /var 是 /private/var 的符號連結），連工作目錄都寫不進去，錯誤訊息只有 Operation not permitted。每次執行另建一個專屬的暫存目錄（TMPDIR 指向它，規則多放行寫入它，跑完刪掉）：沙箱擋掉 /tmp 後，pytest 的 tmp_path 會退回寫進目前目錄，實測在工作目錄留下 pytest-of-使用者 資料夾，弄髒結束時的差異比較。沒有沙箱可用（非 macOS，或找不到 sandbox-exec）時直接執行，入口一開始印出一行 `sandbox: on` 或 `sandbox: OFF (…)`，不悄悄不啟用；Claude Code 的官方文件（2026-10-17）寫，沙箱在 macOS（Seatbelt）、Linux 與 WSL2（bubblewrap 加 socat）上可用，原生 Windows 上指令不經沙箱直接執行，沙箱不可用時預設也是直接執行，另有 failIfUnavailable 設定可以改成啟動即中止，它的沙箱也放行「每個使用者的暫存目錄」；本專案採同樣的預設（直接執行但讓使用者看得到），中止選項先不做。結構參考高見龍 kesi.py 的 sandbox_spec（allow default 再逐項收緊、-D 參數、放行 file-read-metadata、寫入白名單），他的 sandbox_status() 與「沙箱不可用就直接執行並顯示狀態」的做法也與這裡相同，不能排除受他影響；規則文字與放行範圍不同（他擋 /Users 與 /Volumes 並放行工具鏈資料夾，用系統共用的暫存目錄，另用正規表示式擋工作目錄內的 .env 等名稱），已在 sandbox.py 開頭附上來源與他的 MIT 授權全文。已知限制：硬連結能指向工作目錄外的檔案而沙箱只檢查路徑，階段 1 不處理，只在 README 列為已知限制。
+
+### blocked 旗標只留給路徑逃逸與受保護檔案
+
+code-agent-eval 把所有 ToolError（包括 file not found）都設成 blocked 旗標，使 blocked_calls 同時混了安全攔截與一般錯誤。fixlab 只在「路徑逃逸」與「寫入受保護檔案」時設 blocked 並計入 blocked_calls；其他錯誤（找不到檔案、old_string 出現次數不對、先讀後寫失敗）只是 ok=false。原因：階段 3 要統計 agent 嘗試越界的次數，指標必須乾淨。
+
+### 只解析原生 tool_calls，不做文字備援解析
+
+toolparse 只讀回覆的 tool_calls 欄位；沒有原生呼叫的回覆就是純文字，不掃描文字裡的 JSON。原生呼叫的參數 JSON 壞掉、工具不存在、缺必要參數，仍回報錯誤給模型重試。依據是自己的試跑（code-agent-eval/docs/pilot-results.md）：qwen3.5:9b 的 20 題迴圈是 74 次原生、0 次備援，gemma4:12b 的煙霧測試是 30/30 原生，備援解析在這兩個模型上不會被觸發；需要它的只有 qwen2.5-coder:7b（原生 0、備援 96，33 次無效呼叫，只有 7/20 自行完成）和 llama3.1:8b（偶爾寫在文字裡，還會編造工具）。專案決定只支援有穩定原生 tool calling 的模型，不為較弱的模型多維持一層解析。替代方案：保留備援解析當選用層（原本的四關設計）；不選的原因：在選定的模型上用不到的程式與規格，只增加閱讀與維護負擔，也讓「結束判斷不能只看 calls 是否為空」這類規則變複雜。取捨：不使用原生格式的模型不再支援；這類模型把 JSON 寫在文字裡時不會被偵測，看起來會是「第 1 步就宣告完成、沒呼叫任何工具」，靠 CLI 結束時再跑一次 run_tests、顯示 stop reason 與步數來暴露，README 列出支援的模型條件。階段 3 若要比較較弱的模型，再把備援解析加回來；舊實作留在 git 歷史（commit 302bf7d）。備援移除後，迴圈裡只為區分呼叫來源而存在的 native_calls、fallback_calls 與 dropped_calls 計數器，以及 trace 的 source 欄位也一併移除；工具呼叫次數可由 trace 每步的 tool_calls 取得。
+
+### tool_specs 統一補上 "type": "object"，登記的 schema 不存
+
+Workspace 登記工具時只存 properties 與 required；tool_specs() 產生送給模型的清單時，才補上 OpenAI 格式要求的 `"type": "object"`。替代方案：每個工具登記時自己寫 `"type": "object"`。不選的原因：七個工具加測試裡的假工具，只要有一處漏寫，送給模型的 parameters 就不完整，而且是在呼叫真模型時才看得出來；統一補一處就不會漏。取捨：登記的 schema 與送出去的 parameters 不是同一個物件，讀程式時要知道 tool_specs() 多包了一層（有測試檢查登記的 schema 沒被改動）。schemas() 回傳的仍是登記的原樣，與 toolparse 的 tool_schemas 同形。
+
+### 保留 trace 回呼，不在階段 1 決定 telemetry 格式
+
+迴圈繼續接受一個 trace(record) 回呼，每個回覆呼叫一次，欄位沿用現有的（step、latency、token、tool_calls…）。階段 2 再決定寫檔格式與彙整。替代方案：現在就設計完整的事件 schema。不選的原因：還沒有實際的 CLI 與 benchmark 來決定需要哪些欄位，提前設計容易白做。
+
+### 設計依據與參考來源
+
+每個決定的依據必須是三類之一：自己 pilot 的實驗結果（docs 與 code-agent-eval/docs/pilot-results.md）、自己程式碼的已知缺陷、Claude Code 工具的實際行為。外部文章只列為「參考來源」，註明讀過什麼、採用了哪個想法，不當作設計依據，也不複製其程式碼或題目結構。已讀過的參考：高見龍的 KeSi 連載（kaochenlong.com，Day 01–18，並讀過 repo），影響了：連續失敗計數只算「整輪全失敗」、環境變數洩漏列為風險、成本與 token 量測的重視。範例專案 timelog 的領域（工時解析）與 bug 類型（解析邏輯，不是比較運算子）是自己設計的，與他 Day 13 示範的題目（會員訂單試算，`>` 應為 `>=`）不同。但出題的三個原則（bug 離測試檔指到的檔案兩跳、錯誤訊息不透露原因、放干擾檔）與他寫在 examples/day13/project.py 的三個原則相同，AGENTS.md 對 benchmark 的需求也這樣寫，所以不能說「完全不沿用他實驗題的骨架」；階段 3 出題時，要在這三個原則之外另外設計不同的結構，並在結果報告註明。沙箱規則最初寫在 code-agent-eval 時參考過 KeSi 的 sandbox_spec，註解標為 MIT。已於 2026-10-16 查證其 repo（github.com/kaochenlong/KeSi）的 LICENSE 為 MIT，Copyright (c) 2026 Eddie Kao；5.2 動工前仍要比對 code-agent-eval 的沙箱規則與其 sandbox_spec 的相似程度，有沿用的部分附上版權聲明，README 也要註明。另讀過同一作者的〈讓 Agent 看見專案〉：採用的想法只有「空結果要明確回報，讓模型分得出沒找到與沒執行成功」，並列出 .env 外洩風險；其 list_files 只列一層、fixlab 選遞迴，理由是 benchmark 專案小，一次看到全部結構比較省步數。〈用 ripgrep 搜尋程式碼〉也讀過，尚未決定是否改用 rg，決定時再補上採用了哪些想法。最小入口直接修改指定目錄、結束時印快照 diff：依據是自己的限制（一次性執行沒有人在旁邊授權，沙箱尚未完成）與 Claude Code 的行為（官方文件，2026-10-17 查證：`/diff` 的 Current 視圖讀 git，逐輪視圖與 `/rewind` 用編輯工具自己記下的快照，Bash 造成的變動不在追蹤範圍，checkpoint 不取代版本控制）。採用的想法：用快照回答「這一次改了什麼」；又因為 run_tests 會執行任意程式，快照涵蓋整棵樹，而不只是編輯工具改的檔。另讀過 KeSi 的 kesi.py（clone，commit dfa0cd0，2026-10-17）：它直接在目前目錄工作，寫入前用 y／a／N 權限提示，用 sha256 防止覆蓋被外部改過的檔，kesi.py 本體沒有結束後的 diff；fixlab 不採用權限提示，那是階段 2 的事。但他的 Day 13 示範腳本（examples/day13/demo.py，2026-10-17 讀）會在結束後對原始檔案內容印 unified diff（註解寫「驗收要看的是 diff，不是只看 pytest 最後一行，把測試改掉也算一種作弊」），並在結束後再跑一次 pytest 看終點狀態，還有 `--no-shell` 對照「沒辦法跑測試的 agent 怎麼收尾」。這三件事與 fixlab 的快照 diff、結束後再跑一次測試、有／無 run_tests 的實驗是相同的想法，不能排除受他影響。差異：他比對的是寫死在示範裡的原始檔案內容，只涵蓋示範的那幾個檔案；fixlab 對任意目錄在執行前拍快照，涵蓋新增與刪除的檔案。edit_file 另讀過 KeSi 的 kesi.py（clone，commit dfa0cd0，2026-10-17）：採用的想法有兩個，一是用 bytes 讀寫以保留換行字元（文字模式會把 \r\n 悄悄換成 \n），二是判斷唯一時把重疊的匹配也算進去（fixlab 用自己寫的迴圈，因為規格要求回報實際次數）。「空的 old_string」與「兩個字串相同」兩項檢查是提出設計時自己想到的，碰巧與他的、也與 Claude Code 的 Edit 一致；成功訊息不帶行號，是刻意不採用他的做法。description 提醒不要把行號抄進 old_string，是因為 fixlab 的 read_file 有行號而他的沒有。預設步數上限 20 與連續失敗上限 3，數字和 KeSi 的 MAX_TURNS = 20、MAX_TOOL_FAILURES = 3 相同（kesi.py，commit dfa0cd0，2026-10-17）；20 在本設計中沒有實測依據，不能排除受他影響，階段 3 用 telemetry 的步數分佈校準，不沿用到最後。替代方案：不寫來源。不選的原因：面試時必須能說清楚哪些是自己的設計、哪些是參考。
+
+## Implementation Contract
+
+**Behavior**
+
+- `run_agent(client, model, ws, task, max_steps=20, request_extra=None, trace=...)` 回傳 AgentResult，stop_reason 為 done、max_steps、error、stuck 之一。
+- `Workspace(root, python=sys.executable, read_only=nothing_is_read_only, deny_read=(), project_root=...)`；`read_only` 是 `(相對路徑) -> bool`，預設都能寫，`fixlab PATH` 傳入 `looks_like_test_file`；`ws.call(name, args)` 永遠回傳 ToolResult(output, ok, flags)，不拋例外。
+- 六個工具：read_file(path, start_line?, end_line?)、list_files(path?)、grep(pattern, path?)、edit_file(path, old_string, new_string)、write_file(path, content)、run_tests(target?)。
+- read_file 輸出每行格式為 6 位右對齊行號、一個 tab、原文；空檔輸出 "(empty file)"；結尾換行不產生多餘的編號空行。
+- grep、list_files 的路徑一律是相對於工作目錄的相對路徑，不跟隨符號連結。
+- run_tests 的指令固定如「run_tests 的 pytest 指令固定」所述，逾時 10 秒，輸出超過 4000 字元就留頭尾各 2000 字元、中間註明總量；旗標含 tests_passed、timed_out。
+- `fixlab PATH`（fixlab/cli.py，smoke 用的最小入口）：指令格式是 `fixlab PATH`，不設子命令（互動模式是階段 2 的事，屆時再決定長相），`--task` 可換掉預設任務文字；入口是 `main(argv=None, client=None)`，argv 沒傳就讀終端機參數，client 沒傳才建 `OpenAI(timeout=600, max_retries=0)`，傳了就直接用（只供測試注入）。直接在 PATH 指到的目錄上跑 agent，不複製、不寫回：開始前在 stderr 印出該目錄的絕對路徑，並對 PATH 底下的檔案拍記憶體快照；每步在 stderr 印工具名稱、ok 與 flags；結束後在 PATH 上再跑一次 run_tests，並印 stop reason、步數、token 與快照對現況的 unified diff（涵蓋所有不在跳過清單的檔，含測試檔；沒有變動印 `no changes`）和測試輸出，最後一行是 `RESULT: tests passed` 或 `RESULT: tests FAILED`；先跑最後的測試、再拍「之後」的快照。退出碼：最後那次測試通過是 0，沒通過（含逾時）是 1。
+
+**Failure modes**
+
+- 路徑在工作目錄外、絕對路徑、以 ~ 開頭、跟隨符號連結後跑出工作目錄、run_tests 的 target 在工作目錄外：ok=false 並設 blocked。
+- 寫入 read_only 標記的檔案：ok=false 並設 blocked，檔案不變。
+- 其他工具錯誤（找不到檔案、read_file 讀到非 UTF-8 檔或行範圍不合理、edit_file 的次數不是 1、覆寫沒整檔讀過的檔案、無效正規表示式、grep 太慢）：ok=false，不設 blocked。
+- `fixlab` 遇到 PATH 不是目錄、沒設 OPENAI_API_KEY（使用注入的 client 時不檢查）、沒給 --model 也沒設 FIXLAB_MODEL：以退出碼 2 結束並給清楚的錯誤訊息。最後那次測試沒通過（含逾時）：退出碼 1。PATH 裡指向目錄外的符號連結不跟隨（read_file 被擋，設 blocked）。
+- 連續 3 次「有執行工具且全失敗」的回合：迴圈以 stuck 結束，counters 記錄 stuck_failures。
+- 回覆被截斷、空回覆、原生呼叫的參數 JSON 壞掉：行為與 code-agent-eval 相同（回饋給模型，不算完成，也不影響連續失敗計數）。
+
+**Acceptance criteria**
+
+- `pytest` 在 fixlab 根目錄全數通過，且不收集 tests/fixtures；測試涵蓋迴圈、解析、六個工具、隔離（路徑、測試檔保護、沙箱讀寫、環境變數、workspace 位於專案內、含特殊字元的 workspace 路徑、tests 目錄改名）。
+- 範例專案 tests/fixtures/timelog 在未修復時 run_tests 恰有 1 個失敗，只改 parser 一處後通過；對「就地執行」與「複製到暫存目錄」兩種位置都成立。
+- 手動 smoke：先用 `cp -R` 把範例專案複製到暫存目錄，對那份複本執行 `fixlab`（它會直接修改指定的目錄，所以絕不對 tests/fixtures/timelog 本身執行），用 OpenAI 相容端點與一個模型跑一次。這是觀察不是通過門檻：修好與否都照實記錄 stop reason、步數、token、最終測試結果與 AGENTS.md 守則 3 的欄位，貼進 README；真模型這一次不納入自動測試。快照 diff 與 CLI 流程由 tests/test_cli.py 以假 client 驗證。
+- README 說明讀程式順序、六個工具、已知限制與「設計依據與參考來源」。
+
+**Scope boundaries**
+
+- In：fixlab 套件、tests、範例專案、smoke 用的最小入口 `fixlab`（fixlab/cli.py）、README、AGENTS.md 與 docs/spectra/config.yaml 的現況與原創性規則更新。
+- Out：正式 CLI（互動模式、權限提示、規格）、telemetry 檔案、benchmark、評分、shell 工具、多 agent、connector。
+
+## Risks / Trade-offs
+
+- [MVP 階段 run_tests 在沙箱完成前直接執行被測程式（含模型改寫過的檔案），沒有網路與家目錄限制；被測程式可讀家目錄的機密檔，也能改測試檔；`fixlab` 直接修改 PATH，沒有複本可退] → 環境變數白名單已隨 run_tests 一起上，API 金鑰不會進子行程；結束時印涵蓋測試檔的快照 diff，竄改看得到；沙箱任務完成前，只對自己寫的 fixture 的手動複本執行並人工看過 diff，不對別人的 repo 跑；還原靠使用者自己的 git 或備份。
+- [快照 diff 把執行前的檔案內容全放在記憶體，且快照到結束之間使用者自己的修改也會算進去；符號連結不在快照內] → 階段 1 只跑小型 fixture 的手動複本，可以接受；對大型 repo 或需要精確還原時，階段 2 再評估（例如只快照模型碰過的檔，或改用 git）。
+- [不使用原生 tool_calls 的模型（例如 qwen2.5-coder:7b）把 JSON 寫在文字裡，會被當成純文字，看起來是模型第 1 步就完成] → 刻意不支援；CLI 結束時再跑一次 run_tests 並顯示 stop reason 與步數，README 註明支援的模型要有原生 tool calling。
+- [白名單環境變數讓某些專案的測試跑不起來] → 階段 1 只服務自己寫的題目；階段 2 若要跑別人的 repo，再加可設定的白名單。
+- [sandbox-exec 已被 Apple 標為棄用，且只有 macOS] → 在 README 與 AGENTS.md 明講；沙箱介面保持單一模組，之後可換成 Docker。
+- [受保護目錄規則太寬（tests 或 test 目錄整個不可改）] → 對本專案的 benchmark 是想要的；若真實專案把原始碼放在名為 test 的目錄，會被誤擋，階段 1 接受這個限制。
+- [提高步數到 20 會增加成本，且 20 沒有實測依據] → 成本由階段 2 的 telemetry 量測；上限可由參數調整。
+- [grep 用 Python 實作在大專案很慢] → 只服務小型專案；輸出已有上限，逾時也會中止。
+- [regex 套件的 timeout 只在比對一行時生效，整體仍可能很慢] → 另設整體搜尋時間上限 5 秒，超過就回傳已找到的結果並加註。
+- [list_files 遞迴加 200 筆上限，專案變大時依路徑排序的後段目錄會被整個截掉，模型只知道省略筆數] → benchmark 專案小，階段 1 接受；若 smoke 或 benchmark 出現找不到檔案，再改成分層列出或加 depth 參數。
+- [跳過清單沒有 .env，對真實 repo 執行時模型能 read_file 讀到金鑰並送到模型供應商] → 階段 1 只跑自己寫的 fixture，沒有影響；階段 2 對別人的 repo 執行前，要把 .env 與 .env.* 加進共用跳過清單，並限制 read_file。
+- [被測程式讀取家目錄的機密檔（~/.ssh、~/.aws、其他專案的 .env），經測試輸出送進對話與 LLM 供應商] → 沙箱預設擋住整個家目錄的讀取，只放行工作目錄與 .venv；家目錄以外仍可讀的機密（例如 /etc 底下的設定）不在階段 1 範圍。
+- [基底 Python 裝在家目錄底下時，擋家目錄會讓 pytest 無法啟動] → run_tests 回報啟動失敗而不是靜默通過；需要時把基底 Python 目錄加入放行清單。
+- [SBPL 的正規表示式與 Python 的 re 不完全相同，跳脫字元集合可能漏掉] → 以含 +、(、)、.、[ 的目錄名做測試；若有遺漏，保護會悄悄失效，所以測試要實際嘗試寫入受保護檔案而不只檢查規則文字。
+- [code-agent-eval 的沙箱規則最初參考 KeSi 的 sandbox_spec，兩者可能有相似的段落；KeSi 為 MIT，要求保留版權聲明] → 授權已查證；5.2 動工前逐段比對，有沿用就附 Copyright (c) 2026 Eddie Kao 與 MIT 聲明；README 註明參考來源。
+- [read_file 超過 20000 字元時硬切在第 20000 個字元，可能切在一行中間，結尾說明沒有告訴模型最後完整的是第幾行] → 說明已寫明總字元數並建議用行範圍讀剩下的；3.7 觀察模型遇到截斷時會不會讀錯那半行、會不會改用行範圍，若會就改成切在整行並在說明裡給下一個 start_line。3.7 觀察（2026-10-17）：timelog 的檔案都不到 500 字元，沒有觸發截斷，這條仍未驗證，留給有大檔的情境。
+- [行號靠右補空白的格式沒有和不補空白的版本比較過，對小模型是否真的比較清楚只是推測] → 依據是 Claude Code 的 Read 工具與 `cat -n`；3.7 與 3.12 看模型引用行號和縮排時有沒有出錯，沒有證據顯示格式有問題就不調整。3.7 觀察：模型引用「第 12 行」正確，也用過 start_line 與 end_line（第 13 步）；沒有證據顯示格式有問題，維持不調整。
+- [「list_files 遞迴一次看到全部結構比較省步數」只是假設，沒有和只列一層的版本比較過] → 3.7 記錄模型探索 timelog 用了幾步、有沒有重複列同一目錄；上面那條關於 200 筆上限的風險一併看。3.7 觀察：第 1 步一次呼叫列出全部 6 個檔（125 字元），但 timelog 太小，無法判斷是否真的省步數；模型之後又重複列了兩次（第 14、16 步），原因見下面的 3.7 觀察記錄。
+- [list_files 的 path 明確指向被跳過的目錄（例如 `.git`、`.venv`）時，會列出裡面的檔案，規格沒有定義] → 跳過清單只作用在往下走訪時，明確指定視為使用者要看；輸出仍受 200 筆上限限制。若 3.7 看到模型浪費步數去翻這些目錄，再決定要不要拒絕。3.7 觀察：模型沒有指定 path 去翻被跳過的目錄，維持現狀。
+- [3.7 唯讀探索的觀察記錄（2026-10-17，是觀察不是通過門檻）。模型 qwen/qwen3.5-9b，經 OpenRouter，provider 為 Venice（量化未知），thinking 為預設開啟，OpenRouter 清單的 context 為 262144，runtime 是 OpenRouter API 沒有版本號；openai SDK 3.31.0，Python 3.14.8；題目 timelog；沒有隨機種子。結果：stop reason 為 max_steps，20 步，prompt 45,962 加 completion 2,816 token（依清單價格約 $0.005），約 43 秒。原始紀錄在 runs/3.7-qwen3.5-9b-20261017/，不進版控] → 發現：①原生 tool_calls 正常，20 個回覆的 finish_reason 都是 tool_calls；②第 5 步讀到 parser.py，第 6 步就說對原因（第 12 行的 re.match 只取第一個單位）並提到 re.findall，這正是正確的修法；③沒有 edit_file 可用，第 7 到 20 步共 14 步裡，有 11 次重讀同一個 parser.py（全程共讀 13 次）、2 次重複 list_files、1 次呼叫不存在的 open，直到步數用完。重複呼叫偵測在「預設步數上限提高到 20，並新增連續失敗上限 3」那一節已決定留到階段 2，這是第一筆證據，但因為缺 edit_file 而被混淆，3.12 有完整工具時再看還會不會發生；④模型呼叫了不存在的工具 pytest（第 2 步）與 open（第 18 步），收到的回饋是 "unknown tool: 'pytest'. Please call a tool with valid arguments."，沒有列出可用的工具名稱；它想跑測試，而 run_tests 此時還沒註冊。3.12 若仍看到憑空出現的工具名稱，就把可用工具名稱加進這個回饋；⑤原本想觀察「要求 edit_file 得到 unknown tool 後行為有沒有改變」，做不到：工具清單裡沒有 edit_file，模型看不到就不會要求它。]
+- [fixlab 的 read_file 輸出每行有行號前綴，模型可能把前綴抄進 edit_file 的 old_string，造成 0 次匹配；另外小模型常把 old_string 裡的 `\d` 跳脫寫錯] → edit_file 的 description 與 0 次匹配的錯誤訊息都提醒不要含行號、要完全一致；3.12 看模型有沒有犯這兩種錯，若會，錯誤訊息再具體指出差在哪裡（例如指出最接近的那一行）。3.12 觀察（兩次）：兩次改檔都一次成功，舊字串沒有行號，`\d` 的跳脫也正確；樣本太小，不能說明頻率，先不改。
+- [模型沒有 run_tests 時會自己想辦法執行測試。2026-10-17 一次非正式觀察（qwen/qwen3.5-9b，經 OpenRouter，工具只有 list_files、read_file、edit_file，11 步，原始紀錄在 runs/04-edit-file-qwen3.5-9b-20261017/）：第 7、10 步呼叫不存在的工具 run，第 8 步用 edit_file 在 tests/test_report.py 最前面塞入會執行 pytest 的 subprocess.run，第 9 步又改回去。結束時的快照 diff 只剩 parser.py 的修正，看不到這段過程] → 受保護路徑會擋掉對測試檔的 edit_file，被擋的嘗試已會計入 blocked_calls；快照 diff 只比較開頭與結尾，改了又改回去的只留在每步紀錄裡，階段 2 的 telemetry 要記錄對受保護路徑的寫入嘗試；有／無 run_tests 的實驗要預期無 run_tests 那組會出現這類繞路行為，解讀結果時分開看。這是一次、一個模型的樣本，不能推論頻率。3.12 觀察（有 run_tests，兩次）：沒有呼叫不存在的工具，也沒有去改測試檔，兩次都直接用 run_tests 驗證。
+- [目前的工具組無法建立新檔案：edit_file 只改既有的檔案，空的 old_string 被拒絕，write_file 要到後面才做] → timelog 的修復只需要改既有檔案，不影響 3.12 的 smoke；edit_file 對空 old_string 的錯誤訊息只教「用既有的一行當錨點插入」，write_file 完成後再補「要建立新檔用 write_file」，現在提示一個還沒登記的工具，模型會去呼叫它而被拒絕。
+- [edit_file 成功時只回 `edited <path>`，模型看不到自己改了什麼；快照 diff 是 agent 結束後才印給使用者看的，不會進對話。模型若改錯地方或縮排不對，只能自己再 read_file 才會發現] → 先維持最簡單的回饋，因為工具輸出會留在歷史裡每一輪重送，是 token 與成本的主要壓力。替代方案：回傳修改處前後幾行的片段（Claude Code 的 Edit 工具回傳修改後的片段，依記憶，未重新查證）。2026-10-17 的非正式觀察（第 4 篇的紀錄，單一樣本）：模型第 5 步修好 parser.py 之後沒有再讀它，直接去讀別的檔，最後宣告完成。3.12 看模型改完會不會自己重讀；若常在沒驗證的情況下宣告完成，或改錯位置而不自知，再改成回傳片段。3.12 觀察（2026-10-17，兩次）：兩次改檔之後都是自己跑測試驗證，沒有重讀被改的檔案，也沒有在沒驗證的情況下宣告完成，所以先不改成回傳片段。
+
+- [read_only 預設不鎖任何檔案，修 bug 的呼叫端一旦忘了傳 looks_like_test_file，測試檔就沒有保護，評分會悄悄失準] → fixlab PATH 有測試確認它傳了規則且測試檔改不動；benchmark（階段 3）建立 Workspace 時也要有同樣的測試，在跑任何題目之前先確認保護有效。
+- [沙箱（OS 層）的測試檔規則是從 looks_like_test_file 的命名慣例寫成 SBPL 的，無法由任意的 read_only 函式產生；而且只對修 bug 的入口有意義] → 自訂的 read_only 只在工具層生效，沙箱不管；protect_tests 預設關，只有 `fixlab PATH` 開；規格已寫明。需要時階段 2 再決定要不要讓沙箱規則可設定，或在互動模式讓使用者選。
+
+- [run_tests 逾時只用簡單的 subprocess.run(timeout)，只殺得到最上層的 pytest；測試若再啟動子行程且逾時，孫行程會變成孤兒繼續在背景跑。2026-10-17 實驗：孫行程 sleep 在逾時後仍活著，改用 start_new_session 加 killpg 殺整個行程群組則為 0 個。階段 1 的範例專案沒有測試會啟動子行程，目前碰不到；風險在模型改寫的原始碼裡放進 subprocess（第 4 篇那次模型在測試檔裡這樣做過，測試檔現在擋得住，原始碼擋不住）] → 先用簡單逾時；沙箱階段或真的碰到孤兒行程時，改成 Popen 加 start_new_session=True，逾時後 os.killpg 整個群組（高見龍的 kesi.py 的 stop_process_group 是這個做法）。
+- [測試印出無限多輸出時，capture 的輸出在 10 秒內持續佔用記憶體，沒有讀取量上限] → 階段 1 先不處理；高見龍的 kesi.py 另開執行緒邊讀邊算，超過 1 MB 就殺掉，需要時可參考。
+- [run_tests 的 tests_passed 只看 pytest 的結束碼是不是 0：任何讓 pytest 以 0 結束的情況都算通過（pytest 印版本就是一例，已用 ./ 前綴擋掉），沒有收集到測試時結束碼是 5，算未通過] → 之後若發現其他讓結束碼為 0 卻沒有真的跑測試的路徑，再補檢查。
+
+- [空回覆的回饋寫成 `Your tool call was invalid: empty response ... Please call a tool with valid arguments.`，但 3.12 的兩次實跑裡，空回覆都出現在模型已經驗證完畢、只差說一句結論的時候（回覆只有思考內容，沒有文字也沒有工具呼叫，思考模式開著），回饋卻要求它「呼叫工具」，措辭有誤導，模型要再多回一次才給出結論，各白花 1 步] → 這是我們訊息的缺陷，不是模型能力的問題。建議把空回覆的回饋改成同時涵蓋兩種情況，例如：`Your reply was empty. If you are finished, reply with a short final message; otherwise call a tool.` 這會動到 agent-loop 規格的 Empty reply 情境與測試，已於 2026-10-17 修正：措辭改成上述建議，agent-loop 規格的 Empty reply 情境加了一條，tests/test_loop.py 有對應的測試。實跑當時（README 的紀錄）用的是舊措辭，修正後用同樣條件重跑了 2 次（2026-10-17），兩次都沒有再出現空回覆（原本是 2 次裡 2 次），所以新措辭沒有被實際檢驗到，是否真的省掉那一步仍未驗證；重跑的第 1 次還在改檔後連續跑了 3 次相同的測試，目前沒有重複呼叫偵測，留到階段 2。
+
+- [write_file 直接覆寫目標檔，寫到一半被中斷會留下半個檔案；建立新檔是先檢查不存在、再寫，檢查與寫入之間若有別的程式剛好建立同名檔，會被蓋掉] → 階段 1 單一程序、一次一個工具呼叫，風險低，先不處理；之後可改成暫存檔加 os.replace，新檔用 `open(path, "xb")`（高見龍的做法）。
+
+- [測試用到 tmp_path 或 tempfile 以外，還有些程式把暫存檔寫到固定位置（例如 /tmp/xxx），在沙箱裡會被擋而失敗] → 失敗會顯示在測試輸出，不會被當成通過；階段 1 的範例專案沒有這種測試，遇到時再決定要不要放行更多位置。
+- [沒有沙箱可用（非 macOS）時，run_tests 直接以使用者的權限執行被測程式] → 入口開始時印出 `sandbox: OFF (…)`；README（7.1）列為已知限制；是否提供「沙箱不可用就拒絕執行」的選項（Claude Code 的 failIfUnavailable）留到階段 2。
+
+- [第二輪 code review（2026-10-17）找到、決定先不修的繞過：（a）資料夾裡放 pyvenv.cfg 或 conda-meta/history，pytest 把整個資料夾當成虛擬環境略過，裡面的測試從收集中消失，模型只用 write_file 就做得到（已重現測試數減少）；（b）pytest 啟動後自動載入 plugin 時，工作目錄已在搜尋路徑上，根目錄放 trio.py（openai 依賴的 anyio plugin 會 import trio）就能印假的摘要並結束，tests_passed 變成 True（已重現）；偽造 dist-info 加 pytest11 plugin 也行（reviewer 驗證）；（c）同一行程內的竄改：atexit 印假摘要、設定 sys.pycache_prefix 把偽造的 .pyc 放在不受保護的位置（reviewer 驗證）；（d）退步：專案根目錄有與標準函式庫同名的檔案（例如 queue.py）時，舊的 python -m pytest 能通過、現在失敗；實驗確認這無法和（b）的修補同時達成，因為讓專案模組蓋掉標準函式庫就得把工作目錄排最前面，那正是偽造 pytest 的機制] → 接受為已知限制。理由：六次真模型修復沒有任何一次接近這些手法；檔案類的竄改會出現在結束時的快照 diff；一條條堵會一直有新的繞法（兩輪 review 就各找到新的），而且根本的做法不同。run_tests 的保證寫成「擋住意外與簡單的偽造」，不是完整防禦。（a）只要在 run_tests 加 --collect-in-virtualenv，（b）只要把工作目錄的加入移到 pytest 的 pytest_configure 之後，各幾行，若要讓 fixlab PATH 現在就更可信可以再做。
+- [run_tests 的結果在 benchmark 裡不能直接當成績] → 階段 3 必做兩件事，不依賴手法：（1）計分用乾淨的環境重跑：agent 結束後，把原始測試檔與隱藏測試放進全新的目錄，只帶入 agent 改過的原始碼，用乾淨的 pytest 重跑；run_tests 只是給模型的回饋，不是成績，模型在回饋上作弊也不影響成績（常見的評測做法，沒有查證出處）。（2）開始前記下測試案例的清單（pytest --collect-only），結束時比對每個案例都跑過且通過；測試憑空消失不管用什麼手法都會被抓到。取代原本想做的檔案指紋。可選的補強：工具層擋住會影響 pytest 的檔名（pyvenv.cfg、conftest.py、pytest.ini、*.pth），模型實際的管道是自己的 write_file 與 edit_file；階段 2 的 telemetry 對可疑檔案打旗標。容器隔離保護的是電腦，不是測試結果，對這個問題沒幫助。
+
+## Open Questions
+
+- 測試檔保護是「修 bug 模式」的政策，不是 agent 的通用限制。修 bug 時測試檔是評分標準，改了就是假通過；通用的 coding agent 裡寫測試是常見的任務，硬擋反而是 bug（高見龍的 KeSi 與 Claude Code 都靠使用者授權，沒有寫死這種規則）。Workspace 的 read_only 參數已經讓政策可以從外部決定：預設不鎖任何檔案，fixlab PATH 明確傳入 looks_like_test_file。階段 2 加入互動模式時，還要決定哪些檔案可寫改由什麼決定：權限提示、使用者設定的規則，或任務模式的預設值。
+- 同一個回覆裡有多個工具呼叫時，全部會依序執行；混合讀與寫時，後面的呼叫是在前面的編輯之後才跑，而模型下這些命令時並不知道編輯的結果。2026-10-17 的兩次真模型紀錄（共 26 個有合法工具呼叫的回覆）每個都只有 1 個呼叫，所以階段 1 不限制；階段 3 跑多個模型時看 telemetry 的呼叫數分佈，再決定要不要限制。3.12 又加了 15 個有合法工具呼叫的回覆，仍然每個都只有 1 個（累計 41 個）。
+- 一次性模式結束後自動再跑一次測試，是因為沒有人在旁邊看，模型又可能沒驗證就宣告完成。互動模式有使用者在看，可以改成使用者想要時才執行；階段 3 的評測自己用隱藏測試驗證，不靠這個入口。這一步屬於哪一種模式，階段 2 設計互動模式時要決定。
+- 無效的回覆（工具不存在、JSON 壞掉）被擋下時，紀錄只留錯誤，沒有記下原本有幾個工具呼叫，所以無法統計「模型一次叫幾個工具」。階段 2 設計 telemetry 欄位時，要記下每個回覆原本的呼叫數，包含被擋下的。
