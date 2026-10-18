@@ -21,5 +21,5 @@ packages = ["fixlab"]
 
 [tool.pytest.ini_options]
 # 覆寫 norecursedirs 會蓋掉 pytest 的預設值，所以把預設裡需要的（.*、venv 等）一起列出。
-# tests/fixtures 是給 agent 修的範例專案，裡面的測試本來就會失敗，不能被 fixlab 自己的 pytest 收集。
-norecursedirs = [".*", "*.egg", "build", "dist", "venv", "tests/fixtures"]
+# tests/fixtures 與 bench/problems 是給 agent 修的專案，裡面的測試本來就會失敗，不能被 fixlab 自己的 pytest 收集。
+norecursedirs = [".*", "*.egg", "build", "dist", "venv", "tests/fixtures", "bench/problems"]

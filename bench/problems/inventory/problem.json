@@ -1,0 +1,19 @@
+{
+  "id": "inventory",
+  "domain": "庫存",
+  "bug_type": "上游轉換錯誤",
+  "bug_files": [
+    "stock/importer.py"
+  ],
+  "distractors": [
+    "stock/legacy_import.py"
+  ],
+  "visible": {
+    "total": 2,
+    "failing": 1
+  },
+  "hidden": {
+    "fix": 3,
+    "keep": 3
+  }
+}

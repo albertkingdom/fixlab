@@ -109,3 +109,13 @@ def test_the_toy_problem_fails_as_designed_and_the_solution_passes(tmp_path):
     assert "2 passed" in run_group(solved, "tests").stdout
     assert "3 passed" in run_group(with_group(solved, problem.fix_tests), "tests_hidden").stdout
     assert "3 passed" in run_group(with_group(solved, problem.keep_tests), "tests_hidden").stdout
+
+
+def test_fixlab_does_not_collect_the_benchmark_problems():
+    """題目裡的測試本來就會失敗，fixlab 自己的 pytest 不能收集它們。"""
+    root = Path(__file__).resolve().parent.parent
+    result = subprocess.run([sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider"],
+                            cwd=root, capture_output=True, text=True, timeout=60)
+
+    assert "bench/problems" not in result.stdout
+    assert "test_bench_problems.py" in result.stdout

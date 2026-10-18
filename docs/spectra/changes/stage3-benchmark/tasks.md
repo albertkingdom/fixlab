@@ -27,14 +27,14 @@
 
 每題都包含：project（模組、規格寫在 README 或 docstring、1 到 3 個干擾、1 到 2 個失敗的可見測試，斷言整個輸出、失敗輸出不點名 bug 檔）、hidden 的 fix 與 keep 兩組、solution、problem.json；寫完以 `check` 驗證（含重跑 20 次），並人工確認隱藏測試只測規格寫明的行為。每題的驗證相同：check 對該題通過，加上規格與隱藏測試的內容審閱。題目寫完並跑過要報告的實驗後即凍結。
 
-- [ ] 5.1 inventory（庫存）：匯入時「箱」換算成件數，讀錯倍率欄位，症狀出現在庫存報表總數；干擾是一個沒被用到的同名舊匯入函式。對應 Each problem is a self-contained folder。
-- [ ] 5.2 calendar（行事曆）：兩個模組對「結束日含不含」約定不一致，症狀是會議衝突檢查漏報；規格要逐一寫明兩個模組各自的約定，隱藏測試只透過 README 列出的公開入口做端對端測試，不直接測任一模組的內部函式（兩邊改哪一邊都說得通，不能讓其中一種修法被判成弄壞既有行為）；干擾是假日模組裡看似可疑但正確的 `+1`。對應 Each problem is a self-contained folder 與 A problem does not depend on the execution environment。
-- [ ] 5.3 settings（設定載入）：模組層級的預設字典被引用後在另一個模組被修改，症狀是第二次載入帶到第一次的值；不能是 grep 找得到的 `={}` 參數寫法；干擾是舊版設定模組。對應 Each problem is a self-contained folder。
-- [ ] 5.4 billing（金額）：折扣模組 `except` 後回傳 0，症狀是結帳總額偏高但不報錯；規格要寫明例外時應有的行為；干擾是另一個寫法相同但正確的 `except`。對應 Each problem is a self-contained folder。
-- [ ] 5.5 subscription（訂閱到期）：解析模組存 UTC、檢查模組用本地時間，邊界附近判斷錯；本地時差由程式裡明確的常數決定（測試環境的 TZ 固定為 UTC，不能靠系統時區讓 bug 出現），測試用固定時間，結果穩定可重現；干擾是一個看似多餘的時區轉換輔助函式。對應 Each problem is a self-contained folder 與 A problem does not depend on the execution environment。
-- [ ] 5.6 paging（分頁）：最後一頁的邊界在分頁模組與顯示模組各算一次，症狀是最後一頁少一筆；規格逐一寫明分頁模組與顯示模組各自的約定，隱藏測試只透過公開入口做端對端測試（同樣不能讓任一種合理修法被判成弄壞既有行為）；干擾是一個正確但寫法奇怪的頁數計算。對應 Each problem is a self-contained folder。
-- [ ] 5.7 scheduler（排程）：排序鍵改成 tuple，另一個模組依賴舊的型別；可見測試的失敗來自排序，但最自然的修法會讓 keep 組失敗，題目規格要寫清楚這個陷阱的正確行為；干擾是兩個相似的排序輔助函式。對應 Each problem is a self-contained folder。
-- [ ] 5.8 permissions（權限）：自訂例外的繼承層級讓 `except` 抓錯，某些情況悄悄放行；干擾是一個命名相近的權限檢查。對應 Each problem is a self-contained folder。
+- [x] 5.1 inventory（庫存）：匯入時「箱」換算成件數，讀錯倍率欄位，症狀出現在庫存報表總數；干擾是一個沒被用到的同名舊匯入函式。對應 Each problem is a self-contained folder。
+- [x] 5.2 calendar（行事曆）：兩個模組對「結束日含不含」約定不一致，症狀是會議衝突檢查漏報；規格要逐一寫明兩個模組各自的約定，隱藏測試只透過 README 列出的公開入口做端對端測試，不直接測任一模組的內部函式（兩邊改哪一邊都說得通，不能讓其中一種修法被判成弄壞既有行為）；干擾是假日模組裡看似可疑但正確的 `+1`。對應 Each problem is a self-contained folder 與 A problem does not depend on the execution environment。
+- [x] 5.3 settings（設定載入）：模組層級的預設字典被引用後在另一個模組被修改，症狀是第二次載入帶到第一次的值；不能是 grep 找得到的 `={}` 參數寫法；干擾是舊版設定模組。對應 Each problem is a self-contained folder。
+- [x] 5.4 billing（金額）：折扣模組 `except` 後回傳 0，症狀是結帳總額偏高但不報錯；規格要寫明例外時應有的行為；干擾是另一個寫法相同但正確的 `except`。對應 Each problem is a self-contained folder。
+- [x] 5.5 subscription（訂閱到期）：解析模組存 UTC、檢查模組用本地時間，邊界附近判斷錯；本地時差由程式裡明確的常數決定（測試環境的 TZ 固定為 UTC，不能靠系統時區讓 bug 出現），測試用固定時間，結果穩定可重現；干擾是一個看似多餘的時區轉換輔助函式。對應 Each problem is a self-contained folder 與 A problem does not depend on the execution environment。
+- [x] 5.6 paging（分頁）：最後一頁的邊界在分頁模組與顯示模組各算一次，症狀是最後一頁少一筆；規格逐一寫明分頁模組與顯示模組各自的約定，隱藏測試只透過公開入口做端對端測試（同樣不能讓任一種合理修法被判成弄壞既有行為）；干擾是一個正確但寫法奇怪的頁數計算。對應 Each problem is a self-contained folder。
+- [x] 5.7 scheduler（排程）：排序鍵改成 tuple，另一個模組依賴舊的型別；可見測試的失敗來自排序，但最自然的修法會讓 keep 組失敗，題目規格要寫清楚這個陷阱的正確行為；干擾是兩個相似的排序輔助函式。對應 Each problem is a self-contained folder。
+- [x] 5.8 permissions（權限）：自訂例外的繼承層級讓 `except` 抓錯，某些情況悄悄放行；干擾是一個命名相近的權限檢查。對應 Each problem is a self-contained folder。
 
 ## 6. 實驗執行器
 
