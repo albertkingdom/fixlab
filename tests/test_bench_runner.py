@@ -254,3 +254,38 @@ def test_load_models_reads_the_file(tmp_path):
 
     assert loaded.label == "x" and loaded.temperature == 0.1 and loaded.meta == {"runtime": "OpenRouter"}
     assert loaded.price["source"] == "page"
+
+
+# ── code review：設定與參數的防呆 ──────────────────────────────────────────
+
+# Scenario: A repeat count below 1
+@pytest.mark.parametrize("command", [["run", "--repeats", "0"], ["run", "--repeats", "-2"], ["check", "--repeat", "0"]])
+def test_a_repeat_count_below_one_is_rejected(tmp_path, command):
+    arguments = [*command, "--problems-dir", str(TOY_ROOT)]
+    if command[0] == "run":
+        arguments += ["--models", str(models_file(tmp_path)), "--out", str(tmp_path / "out")]
+
+    with pytest.raises(SystemExit) as stopped:
+        bench_main(arguments)
+
+    assert stopped.value.code == 2
+
+
+# Scenario: A model entry uses a reserved meta key
+@pytest.mark.parametrize("key", ["problem", "condition", "repeat", "problem_digest"])
+def test_a_model_meta_that_uses_a_reserved_key_is_rejected(tmp_path, key):
+    path = models_file(tmp_path, labels=("x",), meta={key: "x"})
+
+    with pytest.raises(runner.ConfigError, match=key):
+        runner.load_models(path)
+
+
+# Scenario: A model without a base URL
+def test_a_model_without_a_base_url_does_not_inherit_the_callers_endpoint(problem, tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://callers-endpoint/v1")
+
+    line = run_one(RunSpec("cart", "fake", "with_tests", 1), problem, model(base_url=None), tmp_path, client=FakeClient(list(DO_NOTHING)))
+
+    run_start = json.loads(Path(line["log_path"]).read_text().splitlines()[0])
+    assert run_start["base_url"] is None  # 沒寫 base_url 的模型不能走呼叫者環境裡的端點
+    assert os.environ["OPENAI_BASE_URL"] == "http://callers-endpoint/v1"  # 執行完還原

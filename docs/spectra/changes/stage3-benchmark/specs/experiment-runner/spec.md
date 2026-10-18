@@ -4,6 +4,15 @@ The experiment runner executes the benchmark for a set of models and conditions 
 
 ## ADDED Requirements
 
+### Requirement: Repeat counts must be at least 1
+
+The `--repeats` option of `run` and the `--repeat` option of `check` SHALL accept only integers of at least 1, and SHALL exit with code 2 and a message that names the value for anything else.
+
+#### Scenario: A repeat count below 1
+
+- **WHEN** `run` is started with `--repeats 0`, or `check` with `--repeat 0`
+- **THEN** the command exits with code 2 and does not print a plan or run any test
+
 ### Requirement: The plan is shown and nothing runs without confirmation
 
 The `run` command SHALL expand its options into a list of runs, one for each combination of problem, model, condition and repeat number, and SHALL print the plan: the number of runs, the models, the conditions, the repeats and the results file path. Without the confirmation option it SHALL print the plan and exit with code 0 without calling any model. With the confirmation option it SHALL execute the runs one after another.
@@ -77,7 +86,7 @@ When a run ends because the model request failed (stop reason `error`), the runn
 
 ### Requirement: The conditions of each run are recorded
 
-The runner SHALL pass these `--meta` values to fixlab for every run so that they appear in the `run_start` event: `problem`, `condition`, `repeat`, `problem_digest`, and every key of the model's `meta` object (for example `quantization`, `runtime`, `context_length`). It SHALL also pass the model's `temperature` and `extra_body` through the matching options.
+The runner SHALL pass these `--meta` values to fixlab for every run so that they appear in the `run_start` event: `problem`, `condition`, `repeat`, `problem_digest`, and every key of the model's `meta` object (for example `quantization`, `runtime`, `context_length`). A model's `meta` SHALL NOT use the keys `problem`, `condition`, `repeat` or `problem_digest`; the runner SHALL reject such a models file with a configuration error that names the model and the key. It SHALL also pass the model's `temperature` and `extra_body` through the matching options.
 
 #### Scenario: Meta of a run
 
@@ -86,7 +95,17 @@ The runner SHALL pass these `--meta` values to fixlab for every run so that they
 
 ### Requirement: Model settings come from a file and secrets from the environment
 
-The models SHALL be described in a JSON file whose entries have `name`, `label`, `base_url`, `api_key_env` (the name of an environment variable), `temperature`, `extra_body`, `price` (with `input_per_million`, `output_per_million`, `source` and `date`) and `meta`. The file SHALL NOT contain an API key; the runner SHALL read the key from the environment variable named by `api_key_env` and SHALL exit with code 2 before running anything when that variable is not set. For each run the runner SHALL set `OPENAI_BASE_URL` to the model's `base_url` and `OPENAI_API_KEY` to that key for the duration of the run only, and restore the previous values afterwards, so that the `run_start` event records the model's own endpoint.
+The models SHALL be described in a JSON file whose entries have `name`, `label`, `base_url`, `api_key_env` (the name of an environment variable), `temperature`, `extra_body`, `price` (with `input_per_million`, `output_per_million`, `source` and `date`) and `meta`. The file SHALL NOT contain an API key; the runner SHALL read the key from the environment variable named by `api_key_env` and SHALL exit with code 2 before running anything when that variable is not set. For each run the runner SHALL set `OPENAI_BASE_URL` to the model's `base_url` and `OPENAI_API_KEY` to that key for the duration of the run only, and restore the previous values afterwards, so that the `run_start` event records the model's own endpoint. When the entry has no `base_url`, the runner SHALL remove `OPENAI_BASE_URL` for the duration of the run instead of inheriting the caller's value, so that the model's key is never sent to an endpoint chosen by the caller's environment.
+
+#### Scenario: A model entry uses a reserved meta key
+
+- **WHEN** a model entry has `meta` containing `condition`
+- **THEN** loading the models file fails with an error that names the model and the key `condition`, and no run is started
+
+#### Scenario: A model without a base URL
+
+- **WHEN** the caller's environment has `OPENAI_BASE_URL` set and a model entry has no `base_url`
+- **THEN** that model's run records `base_url` as null in `run_start`, and the caller's value is restored after the run
 
 #### Scenario: Missing key
 

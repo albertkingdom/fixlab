@@ -25,6 +25,7 @@ from fixlab.bench.problems import Problem, make_workdir, problem_digest
 
 CONDITIONS = ("with_tests", "no_tests")
 HIDDEN_TOOL = "run_tests"  # no_tests 條件隱藏的工具
+RESERVED_META = ("problem", "condition", "repeat", "problem_digest")  # 執行器自己記的 meta，模型設定不能用這些名字
 
 
 class ConfigError(ValueError):
@@ -64,6 +65,9 @@ def load_models(path) -> list[ModelConfig]:
         for key in ("name", "label", "api_key_env"):
             if key not in entry:
                 raise ConfigError(f"model entry lacks the key {key!r}: {entry}")
+        reserved = [key for key in entry.get("meta", {}) if key in RESERVED_META]
+        if reserved:
+            raise ConfigError(f"model {entry['label']!r}: meta must not use the reserved keys {', '.join(reserved)}")
         models.append(ModelConfig(
             name=entry["name"], label=entry["label"], base_url=entry.get("base_url"),
             api_key_env=entry["api_key_env"], temperature=entry.get("temperature"),
@@ -99,12 +103,15 @@ def fixlab_arguments(workdir, model: ModelConfig, spec: RunSpec, digest: str, lo
 
 @contextlib.contextmanager
 def model_environment(model: ModelConfig):
-    """這次執行期間暫時設端點與金鑰，結束後還原（包括原本沒設的）。"""
-    changes = {"OPENAI_API_KEY": os.environ[model.api_key_env]}
-    if model.base_url:
-        changes["OPENAI_BASE_URL"] = model.base_url
+    """這次執行期間暫時設端點與金鑰，結束後還原（包括原本沒設的）。
+    模型沒寫 base_url 就把 OPENAI_BASE_URL 拿掉（用 SDK 的預設端點），不沿用呼叫者環境裡的：不然這個模型的金鑰會送去別人的端點。"""
+    changes = {"OPENAI_API_KEY": os.environ[model.api_key_env], "OPENAI_BASE_URL": model.base_url or None}
     saved = {name: os.environ.get(name) for name in changes}
-    os.environ.update(changes)
+    for name, value in changes.items():
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value
     try:
         yield
     finally:

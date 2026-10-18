@@ -13,6 +13,17 @@ from fixlab.bench.selfcheck import DEFAULT_REPEAT, check_problem, check_problem_
 from fixlab.sandbox import sandbox_available
 
 
+def positive_int(text: str) -> int:
+    """--repeat 與 --repeats 的值：1 以上的整數。0 或負數會讓計畫變空、或讓檢查沒有任何一次可以比對。"""
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r} is not an integer") from None
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"{value} is not at least 1")
+    return value
+
+
 def add_problems_dir(parser) -> None:
     parser.add_argument("--problems-dir", default=str(PROBLEMS_DIR), help="where the problem folders are (default: bench/problems)")
 
@@ -113,7 +124,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     check_parser = commands.add_parser("check", help="verify the problems without calling any model")
     check_parser.add_argument("problem", nargs="*", help="problem ids to check (default: all)")
-    check_parser.add_argument("--repeat", type=int, default=DEFAULT_REPEAT,
+    check_parser.add_argument("--repeat", type=positive_int, default=DEFAULT_REPEAT,
                               help=f"how many times to repeat every run to catch flaky tests (default: {DEFAULT_REPEAT})")
     add_problems_dir(check_parser)
     check_parser.set_defaults(func=command_check)
@@ -123,7 +134,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--out", required=True, help="folder for results.jsonl and the event logs")
     run_parser.add_argument("--problem", action="append", help="only this problem id (repeatable; default: all)")
     run_parser.add_argument("--conditions", default=",".join(runner.CONDITIONS), help="comma separated (default: both)")
-    run_parser.add_argument("--repeats", type=int, default=5, help="runs per problem, model and condition (default: 5)")
+    run_parser.add_argument("--repeats", type=positive_int, default=5, help="runs per problem, model and condition (default: 5)")
     run_parser.add_argument("--confirm", action="store_true", help="really call the models; every run costs money")
     add_problems_dir(run_parser)
     run_parser.set_defaults(func=command_run)
