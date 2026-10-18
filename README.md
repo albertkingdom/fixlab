@@ -6,14 +6,16 @@
 
 ## 目前做到哪裡
 
-| 階段 | 內容 | 狀態 |
-|---|---|---|
-| 1 骨架與規格 | agent 迴圈、六個工具、原生 tool call 解析、macOS 沙箱、`fixlab PATH` 最小入口 | 完成 |
-| 2 CLI 與 telemetry | 互動模式、權限提示、事件寫成 JSONL | 未做 |
-| 3 Benchmark 與實驗 | 15–20 題多檔 bug、隱藏測試、有／無 `run_tests` 對照、多模型比較 | 未做 |
-| 4 選做 | 多 agent 對照、MCP 或 GitHub issue connector | 未做 |
+| 階段 | 內容 | 狀態 | tag |
+|---|---|---|---|
+| 1 骨架與規格 | agent 迴圈、六個工具、原生 tool call 解析、macOS 沙箱、`fixlab PATH` 最小入口 | 完成 | `stage-1` |
+| 2 CLI 與 telemetry | 事件檔（JSONL）、互動模式、權限提示 | 完成 | `stage-2` |
+| 3 Benchmark 與實驗 | 15–20 題多檔 bug、隱藏測試、有／無 `run_tests` 對照、多模型比較 | 未做 | |
+| 4 選做 | 多 agent 對照、MCP 或 GitHub issue connector | 未做 | |
 
-所以現在**還沒有 benchmark 的數字**。下面「實跑紀錄」是 1 題、1 個模型、少數幾次執行的觀察，不能當作這個 agent 的成績。
+可以用 `git checkout stage-1` 或 `git checkout stage-2` 看到各階段完成時的程式。
+
+階段 2 讓每次執行都留下事件檔，但**還沒有任何統計**，也**還沒有 benchmark 的數字**。下面「實跑紀錄」是 1 題、1 個模型、少數幾次執行的觀察，不能當作這個 agent 的成績。
 
 ## 快速開始
 
@@ -22,7 +24,7 @@
 ```
 python3 -m venv .venv
 .venv/bin/pip install -e .
-.venv/bin/pytest                     # fixlab 自己的測試，約 20 秒
+.venv/bin/pytest                     # fixlab 自己的測試，約 30 秒
 ```
 
 跑 agent 要有一個 OpenAI 相容的端點。三個環境變數（或用 `--model` 覆寫模型）：
@@ -40,15 +42,67 @@ cp -R tests/fixtures/timelog /某個暫存目錄/timelog-try
 .venv/bin/fixlab /某個暫存目錄/timelog-try
 ```
 
-選項：`--max-steps`（預設 20）、`--max-tokens`（預設 8192）、`--task`（換掉預設的任務文字）。
+選項：`-i`（互動模式，見下）、`--max-steps`（預設 20）、`--max-tokens`（預設 8192）、`--task`（換掉預設的任務文字，只用於一次性模式）、`--log-dir`、`--meta`（見〈事件檔〉）。
 
-### 它會印什麼
+### 一次性模式會印什麼
 
 - **執行中**（stderr）：被修改的目錄、沙箱狀態（`sandbox: on` 或 `sandbox: OFF (原因)`），之後每個工具呼叫一行，例如 `read_file  ok=True  flags={}`。
 - **結束後**（stdout）：stop reason（`done` 模型自己宣告完成、`max_steps` 步數用完、`stuck` 連續三輪全失敗、`error` 請求失敗）、步數、token，然後是**快照 diff**，再來是 fixlab **自己再跑一次**測試的輸出，最後一行固定是 `RESULT: tests passed` 或 `RESULT: tests FAILED`。
 - **結束碼**：0 最後那次測試通過；1 沒通過；2 輸入有誤（路徑不是目錄、沒設金鑰、沒指定模型）。
 
 最後那次測試不聽模型怎麼說：模型可能沒跑測試就宣稱完成，所以結果以 fixlab 自己跑的為準。
+
+### 互動模式
+
+`fixlab PATH -i` 一次讀一行當任務，同一個 session 內**保留對話**，所以修完 bug 之後可以接著說「幫那個函式加上說明文字」。下面是畫面的格式（用寫好劇本的假模型跑出來的，所以最後一行的 token 與耗時不代表真實的用量）：
+
+```
+fixlab> fix the failing test
+
+  ▸ run_tests .
+    Allow? [y]es / [a]lways for this tool / [N]o: n
+    ✗ declined
+  ▸ read_file timelog/parser.py
+    ✓
+  ▸ edit_file timelog/parser.py
+    - [re.match(r"(\d+)([hm])", text).groups()]
+    + re.findall(r"(\d+)([hm])", text)
+    Allow? [y]es / [a]lways for this tool / [N]o: y
+    ✓
+  ▸ run_tests .
+    Allow? [y]es / [a]lways for this tool / [N]o: y
+    ✓ 5 passed in 0.01s
+
+Fixed parse_duration: it only took the first unit.
+
+(5 steps · 50 + 25 tokens · 0 s)
+```
+
+- **每個工具呼叫一組**：標題行、改檔的差異（整個檔案改前與改後的比對，只列有變的地方，前後各 3 行上下文、帶改前的行號；每處變動的連續刪除或新增最多 10 行、最多 8 處）、問題、結果行（`✓`，或 `✗` 加原因：`declined`、`blocked`、測試失敗的摘要）。最後一行是步數、token 與耗時；耗時是牆上時間，包含你思考與回答問題的時間。全部印到標準輸出；顏色只在終端機、而且沒設 `NO_COLOR` 時才開。
+- **權限提示**：`edit_file`、`write_file`、`run_tests` 之前會問。`y` 這次放行；`a` 這個 session 內同一個工具都不再問（放行 `edit_file` 就是任何檔案，測試檔仍然唯讀）；其他任何輸入、空行、輸入結束都是拒絕。讀取類工具不問。工具一定會拒絕的呼叫（空路徑、唯讀檔、找不到要改的文字、新舊文字相同、沒讀過就覆寫）也不問，直接顯示 `✗` 和原因。被拒絕的呼叫算失敗，連續三輪全被拒絕任務會以 `stuck` 結束。
+- **指令**：`/reset` 清空對話、`/exit`（或 Ctrl-D、在提示字元按 Ctrl-C）離開、空行忽略，其他都當任務。
+- **Ctrl-C 打斷任務**：已完成的部分留在對話裡，沒有結果的工具呼叫補上「被中斷」的結果，下一個任務看得到前面做到哪裡；但被打斷的那個呼叫可能已經執行了一半，檔案可能已被改過。請求失敗也一樣：任務已經執行過工具就保留，接上說明並提醒檔案可能已被改過；還沒執行過任何工具（第一個請求就失敗、或只收到空回覆）才整個丟掉。
+- **不自動再跑一次測試**（一次性模式才會）：你在場，想驗證可以直接叫模型跑。**一次性模式從不問任何問題。**
+- **不跨 session 保存對話**，離開就沒了；對話也沒有長度上限，每一步會越來越貴，用 `/reset` 重來。
+
+### 事件檔
+
+每次執行（一次性或一個互動 session）都會寫一個 JSON Lines 檔：預設在 `~/.fixlab/runs/<UTC 時間>-<模型>/events.jsonl`，開始時 stderr 會印 `log: <路徑>`。階段 3 的統計腳本要讀的就是它。
+
+- `--log-dir DIR` 換位置；不能在被修的目錄裡面（會被拒絕，退出碼 2），不然快照 diff 會看到它，模型與被測的程式也碰得到自己的紀錄。
+- `--meta KEY=VALUE`（可重複）記下 API 不會告訴我們的實驗條件，例如 `--meta quantization=Q4_K_M --meta context_length=32768`。
+- 一行一個事件，只有四種：
+
+| 事件 | 什麼時候寫 | 內容 |
+|---|---|---|
+| `run_start` | 開始，一次 | 模式、模型、端點、步數上限、沙箱狀態、fixlab 的 git commit、`meta` |
+| `task_start` | 每個任務開始 | 任務序號與文字 |
+| `trace` | 迴圈每交出一筆紀錄（通常每步一行） | 整筆紀錄放在 `record`：步數、延遲、token、模型要求的工具呼叫與結果、是否被截斷 |
+| `task_end` | 每個任務結束 | stop reason、步數、計數器、token、耗時；一次性模式另有最後的測試結果與改了哪些檔 |
+
+**trace 是什麼**：迴圈每問模型一次（一步），就把這一步的紀錄交給一個叫 trace 回呼的函式；事件檔裡的 `trace` 行和畫面上的進度都是它產生的。欄位的完整說明與一次真實執行的內容見第 12 篇。
+
+要注意：事件檔裡有模型的回覆與工具的輸出，可能包含目標專案的原始碼或祕密，不要隨意分享。不記費用，只記 token。
 
 ### 快照 diff 是什麼，限制在哪
 
@@ -61,16 +115,18 @@ cp -R tests/fixtures/timelog /某個暫存目錄/timelog-try
 
 ## 讀程式的順序
 
-全部約 1100 行。每個檔案的開頭都有說明它在整體流程中的角色。
+全部約 1600 行。每個檔案的開頭都有說明它在整體流程中的角色。
 
 | 順序 | 檔案 | 做什麼 |
 |---|---|---|
-| 1 | `fixlab/cli.py` | `fixlab PATH` 的入口：檢查參數、拍快照、跑 agent、自己再跑一次測試、印結果 |
-| 2 | `fixlab/loop.py` | agent 迴圈：問模型 → 解讀回覆 → 執行工具；步數上限、連續失敗上限、重試、trace 回呼 |
+| 1 | `fixlab/cli.py` | 入口：檢查參數；一次性模式（拍快照、跑 agent、自己再跑一次測試、印結果）與互動模式（一次讀一行、保留對話、權限提示、中斷） |
+| 2 | `fixlab/loop.py` | agent 迴圈：問模型 → 解讀回覆 → 執行工具；步數上限、連續失敗上限、重試、trace 回呼（每一步把這一步的紀錄交給它，畫面上的進度與事件檔都由它產生） |
 | 3 | `fixlab/toolparse.py` | 把模型的回覆解析成工具呼叫：只認原生 `tool_calls`，參數對照 schema 驗證 |
 | 4 | `fixlab/tools.py` | 六個工具的實作與登記 |
 | 5 | `fixlab/workspace.py` | 工作目錄：路徑必須落在根目錄內、測試檔唯讀、工具分派、錯誤不丟例外 |
 | 6 | `fixlab/sandbox.py` | 用 macOS `sandbox-exec` 包住 `run_tests`：禁網路、限制讀寫 |
+| 7 | `fixlab/telemetry.py` | 事件檔：一次執行一個資料夾、一行一個 JSON、每行立刻寫入、寫不進去只警告 |
+| 8 | `fixlab/display.py` | 互動模式的畫面：標題行、差異、結果行、用量行、顏色（只回傳字串，不直接印） |
 
 ## 六個工具
 
@@ -92,7 +148,8 @@ cp -R tests/fixtures/timelog /某個暫存目錄/timelog-try
 - **`run_tests` 在沙箱裡跑**（macOS）：不能連網、不能讀家目錄與 fixlab 自己的專案目錄、只能寫工作目錄。
 - **子行程環境變數白名單**：只傳 `PATH`、`LANG`、`LC_ALL`、`TMPDIR` 與 `PYTHONDONTWRITEBYTECODE=1`，API 金鑰不會被被測的程式看到。
 - **判定測試通過不只看結束碼**：用 `python -P` 啟動以免根目錄的 `pytest.py` 取代真的 pytest，並要求輸出最後一行有 `N passed`。
-- **保險**：步數上限 20、連續三輪工具呼叫全失敗就停（`stuck`）。這兩個數字是初始值，沒有實測依據。
+- **互動模式會先問**：改檔、寫檔、跑測試之前問使用者；一次性模式沒有人可以問，改成事後的差異與重跑測試。
+- **保險**：步數上限 20、連續三輪工具呼叫全失敗就停（`stuck`；被使用者拒絕的呼叫也算失敗）。這兩個數字是初始值，沒有實測依據。
 
 ## 已知限制
 
@@ -102,6 +159,12 @@ cp -R tests/fixtures/timelog /某個暫存目錄/timelog-try
 - **沙箱擋不到的偽造**：被測的程式在 pytest 行程內部竄改 pytest 本身，或自己印一行假的 `N passed` 摘要再以結束碼 0 離開（測試與原始碼在同一個行程；後者我用兩行 `atexit` 重現過，bug 還在，`tests_passed` 卻是 `True`）。根治要靠階段 3 的做法：計分用乾淨的環境重跑，並比對測試案例清單。見第 10 篇。
 - **基底 Python 在家目錄底下時，沙箱會讓 `run_tests` 失敗**：用 uv、pyenv 管理的 Python 建的環境，標準函式庫在家目錄底下，被沙箱擋住，`run_tests` 一啟動就失敗（我用 uv 的 Python 重現，錯誤是 `dyld: Library not loaded`）。關掉沙箱則正常。Homebrew 的 Python 不受影響。目前沒有設定可以放行。
 - **沒有重複呼叫偵測**：模型一直重讀同一個檔案（成功的呼叫）不會觸發 `stuck`。
+- **還不能在任何目錄直接打 `fixlab`**：要用完整路徑 `.venv/bin/fixlab`，或自己把它放進 PATH（例如在 `~/.local/bin` 放一個指向它的符號連結）；API 金鑰要自己載入（`source .env`）。之後想做：放進 PATH、金鑰存系統鑰匙圈、沒給 PATH 時用目前的目錄。
+- **互動模式的對話沒有長度上限**：用久了每一步的 prompt 會很大，小模型（Ollama 設 32768）可能撞到 context 上限；用 `/reset` 重來，上限怎麼處理等有事件檔的資料再決定。
+- **互動模式的「一律放行」範圍是整個工具**，沒有 `/permissions` 看、`/revoke` 收回。
+- **互動模式沒有串流**：模型的回覆結束後才印。實測每一步等 1 到 5 秒、多半約 1.4 秒，目前不值得；本機大模型很慢時再做。
+- **管線輸入會被當成回答**：`echo ... | fixlab PATH -i` 會把管線裡的下一行拿去回答問題。
+- **畫面的顏色只用假的終端機測過格式**，實際的樣子要用過才確定。
 - **只解析原生 tool call**：不支援把工具呼叫寫在文字裡的模型。
 - **證據很薄**：真模型的紀錄只有 1 題、1 個模型（qwen3.5-9b）、少數幾次執行（見下面的實跑紀錄與第 4、6 篇）。穩定度與多模型比較屬於階段 3。
 
@@ -218,10 +281,13 @@ fixlab /某個暫存目錄/timelog-try
 | 09 | 限制測試程式能做什麼（沙箱） |
 | 10 | 不讓測試檔被偷偷改掉（沙箱的受保護路徑，與兩輪 code review） |
 | 11 | 模型卡住時要停下來（連續失敗保險，與迴圈的測試補齊） |
+| 12 | 把每次執行存下來（事件檔） |
+| 13 | 連續下指令（互動模式） |
+| 14 | 改檔和跑測試之前先問你（權限提示） |
 
 ## 規格與設計文件
 
-用 Spectra 管理，在 `docs/spectra/`：`specs/` 是行為規格，`changes/archive/2026-10-17-bootstrap-agent-core/` 是階段 1 的提案、設計（每個決定的替代方案與取捨，以及風險清單）和任務。
+用 Spectra 管理，在 `docs/spectra/`：`specs/` 是行為規格，`changes/archive/` 底下是每個階段的提案、設計（每個決定的替代方案與取捨，以及風險清單）和任務：階段 1 是 `bootstrap-agent-core`，階段 2 是 `stage2-cli-telemetry`（資料夾名稱前面有日期）。
 
 ## 參考來源
 
@@ -236,9 +302,11 @@ fixlab /某個暫存目錄/timelog-try
 - Day 13 示範：結束後印 diff、再跑一次測試、用「沒有 shell」對照；與這裡的快照 diff、結束後再跑一次測試、有／無 `run_tests` 實驗是相同的想法，不能排除受他影響。
 - 〈用 ripgrep 搜尋程式碼〉讀過，`grep` 目前自己實作，尚未決定是否改用 `rg`。
 - 沙箱規則（`fixlab/sandbox.py`）的結構參考 `sandbox_spec`，檔頭附有他的 MIT 授權全文。
+- 階段 2（互動模式，第 13、14 篇）：設計時只看過他的 commit 標題與指令名稱，`/exit`、`/reset`、整個 session 一份對話、`y`／`a`／`N` 與「這個 session 都好」的想法與他相同，不能排除受他影響；完成後才讀了 `kesi.py` 的 `main`、`run_agent`、`check_permission`、`ask_user`、`seal_dangling_tool_use`。讀完**改了做法**的一項：Ctrl-C 從「整個任務丟掉」改成「保留已完成的部分並補上結果」。採用的畫面想法是縮排分層與每輪結束一行用量。不同的地方：他串流、顯示費用、授權範圍記在每個檔案與每個指令、有 `/permissions` 與 `/revoke`；我們顯示差異與結果行、授權範圍是整個工具、沒有串流與費用。他沒有事件記錄，所以事件檔（第 12 篇）沒有可參考的做法。
 
 **Claude Code**（官方文件與實際行為，2026-10-17 查閱）
 
 - `Edit` 的「唯一字串替換」與 `Write`「覆寫前需先讀過」：`edit_file`、`write_file` 的規則。
 - 沙箱文件的「Protected paths」：「裁判用的東西，不能被受審的程式改寫」，這裡對應測試檔。
 - `/diff` 與 `/rewind` 的快照：用快照回答「這一次改了什麼」。
+- 寫檔與執行指令前問「這次允許、這個 session 一律允許、拒絕」三種：互動模式的 `y`／`a`／`N`（憑使用經驗，沒有重新查文件）。

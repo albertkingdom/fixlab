@@ -47,12 +47,12 @@ Verilog／EDA、SWE-bench 與真實大型 repo（需 Docker、小模型成功率
 
 ### 目錄結構
 ```
-fixlab/                 套件本體（約 1100 行）：cli、loop、toolparse、tools、workspace、sandbox
+fixlab/                 套件本體（約 1600 行）：cli、display、loop、toolparse、tools、workspace、sandbox、telemetry
 tests/                  fixlab 自己的測試；tests/fixtures/timelog 是給 agent 修的範例專案（pytest 不收集它）
 tests/golden/           黃金 trace（tests/test_trace_golden.py 比對的基準）
 docs/spectra/           Spectra 的規格（specs/）與變更提案（changes/）
 docs/articles/          教學文章，每篇對應一個 article-NN tag
-runs/                   真模型實跑的原始紀錄（不進版控）
+runs/                   真模型實跑的原始紀錄（不進版控）；每次執行的事件檔預設在 ~/.fixlab/runs/
 ```
 
 ## 4. 階段
@@ -71,6 +71,7 @@ runs/                   真模型實跑的原始紀錄（不進版控）
    - 新功能一律從 `main` 開新分支，命名 `feature/{feature-name}`，不直接 commit 到 `main`。
    - 實作前要有完成的 Spectra 提案（`/spectra-propose`）。
    - 合併前更新 `README.md` 反映新功能。
+   - 歸檔（`/spectra-archive`、`/spectra-wrapup` 的 archive 步驟）前必須先完成 code review，blocking 與 important 的問題都已解決；review 沒通過就不歸檔。
    - 開 PR 前必須完成 code review，所有 blocking 與 important 的問題都要解決。
    - review 發現的問題依 `review-findings` skill（`.claude/skills/review-findings/`）處理。
    - 每篇教學文章完成時，在它描述的程式所在的 commit 上打輕量 tag `article-NN`（例如 `article-04`），讀者可以 `git checkout article-04` 看到當時的程式。tag 只建在本機，推送要明確指定，不自動推送。

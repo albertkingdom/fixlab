@@ -1,9 +1,11 @@
 # fixlab 最小入口的測試：用假 client，不需要真的 LLM。
 # 目前只涵蓋參數與錯誤、每步輸出、快照 diff。結束後再跑 run_tests 的部分，等 run_tests 完成後再補。
 # 一律先把 fixture 複製到暫存目錄再當 PATH：fixlab 會直接修改指定的目錄。
+import json
+
 import pytest
 
-from fixlab.cli import DEFAULT_TASK, diff_report, main, take_snapshot
+from fixlab.cli import DEFAULT_TASK, changed_files, diff_report, fixlab_commit, main, take_snapshot
 from fixlab.sandbox import sandbox_available
 from test_fixture import BUGGY, FIXED, copy_fixture  # 把 timelog 複製到暫存目錄；bug 與修法
 from test_loop import FakeClient, native  # 依序回傳劇本回覆的假 client
@@ -12,6 +14,21 @@ from test_loop import FakeClient, native  # 依序回傳劇本回覆的假 clien
 @pytest.fixture
 def project(tmp_path):
     return copy_fixture(tmp_path)
+
+
+@pytest.fixture(autouse=True)
+def home(tmp_path_factory, monkeypatch):
+    """事件檔預設寫在 ~/.fixlab/runs：CLI 的測試一律把家目錄換成暫存目錄，不能寫進真的。
+    這個資料夾和 project 是兄弟，不是上下層，沙箱擋家目錄時才不會連 project 一起擋掉。"""
+    folder = tmp_path_factory.mktemp("home")
+    monkeypatch.setenv("HOME", str(folder))
+    return folder
+
+
+def event_lines(home):
+    """這次執行寫出的事件檔，每行解析成 dict。"""
+    (path,) = (home / ".fixlab" / "runs").glob("*/events.jsonl")
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
 def run_fix(project, client, *extra):
@@ -71,7 +88,7 @@ def test_agent_cannot_edit_test_files(project, capsys):
 
     run_fix(project, client)
 
-    assert "edit_file  ok=False  flags={'blocked': True}" in capsys.readouterr().err
+    assert "edit_file  ok=False  flags={'blocked': True, 'protected_write': True}" in capsys.readouterr().err
     assert take_snapshot(project) == before  # 測試檔沒被動到
 
 
@@ -245,3 +262,195 @@ def test_diff_explains_final_newline_only_change():
 def test_the_sandbox_status_is_printed_at_the_start(project, capsys):
     run_fix(project, FakeClient([("Done.", None)]))
     assert "sandbox: " in capsys.readouterr().err  # 沙箱是安全功能，開或沒開都要讓使用者看得到
+
+
+# ── 事件檔：對應 run-telemetry 規格（一次性模式）──────────────────────────────
+
+FIX_SCRIPT = [
+    (None, [native("read_file", path="timelog/parser.py")]),
+    (None, [native("edit_file", path="timelog/parser.py", old_string=BUGGY, new_string=FIXED)]),
+    ("Fixed.", None),
+]
+
+
+# Scenario: A one-task run
+def test_one_shot_run_writes_run_start_task_start_traces_and_task_end(project, home, capsys):
+    exit_code = run_fix(project, FakeClient(FIX_SCRIPT))
+
+    assert exit_code == 0
+    lines = event_lines(home)
+    assert [line["event"] for line in lines] == ["run_start", "task_start", "trace", "trace", "trace", "task_end"]
+    run_start, task_start, *traces, task_end = lines
+
+    assert run_start["schema"] == 1 and run_start["mode"] == "once" and run_start["model"] == "m"
+    assert run_start["path"] == str(project.resolve()) and run_start["max_steps"] == 20
+    assert run_start["max_tokens"] == 8192 and run_start["meta"] == {}
+    assert run_start["sandbox"].startswith(("on", "OFF"))
+    assert {"fixlab_commit", "python", "openai", "base_url"} <= run_start.keys()
+
+    assert task_start["task"] == 1 and task_start["text"] == DEFAULT_TASK
+    assert [t["record"]["step"] for t in traces] == [1, 2, 3] and all(t["task"] == 1 for t in traces)
+    assert traces[2]["record"]["event"] == "done"
+
+    assert task_end["task"] == 1 and task_end["stop_reason"] == "done" and task_end["steps"] == 3
+    assert task_end["prompt_tokens"] == 30 and task_end["completion_tokens"] == 15
+    assert task_end["counters"] == {}  # 這個劇本沒有 parse 錯誤、沒被擋、也沒跑 run_tests
+    assert "log: " in capsys.readouterr().err
+
+
+# Scenario: The model fixed the bug
+def test_task_end_has_the_final_test_result_and_the_changed_files(project, home):
+    run_fix(project, FakeClient(FIX_SCRIPT))
+
+    task_end = event_lines(home)[-1]
+    assert task_end["final_tests"] == {"tests_passed": True, "timed_out": False}
+    assert task_end["changed_files"] == {"added": [], "modified": ["timelog/parser.py"], "deleted": []}
+
+
+def test_a_run_that_fixes_nothing_reports_failing_tests_and_no_changes(project, home):
+    exit_code = run_fix(project, FakeClient([("I give up.", None)]))
+
+    assert exit_code == 1
+    task_end = event_lines(home)[-1]
+    assert task_end["final_tests"]["tests_passed"] is False
+    assert task_end["changed_files"] == {"added": [], "modified": [], "deleted": []}
+
+
+# Scenario: Request failure is a trace line too
+def test_a_request_error_is_a_trace_line_and_the_task_ends_with_error(project, home):
+    run_fix(project, FakeClient([RuntimeError("boom")]))
+
+    lines = event_lines(home)
+    assert [line["event"] for line in lines] == ["run_start", "task_start", "trace", "task_end"]
+    assert lines[2]["record"]["event"] == "request_error"
+    assert lines[3]["stop_reason"] == "error"
+
+
+def test_the_log_line_names_the_event_file(project, home, capsys):
+    run_fix(project, FakeClient([("Done.", None)]))
+
+    (path,) = (home / ".fixlab" / "runs").glob("*/events.jsonl")
+    assert f"log: {path}" in capsys.readouterr().err
+
+
+def test_changed_files_lists_added_modified_and_deleted_sorted():
+    before = {"a.py": b"1", "b.py": b"1", "c.py": b"1"}
+    after = {"a.py": b"2", "c.py": b"1", "z.py": b"9", "d.py": b"9"}
+
+    assert changed_files(before, after) == {"added": ["d.py", "z.py"], "modified": ["a.py"], "deleted": ["b.py"]}
+
+
+# ── --meta 與 --log-dir：對應 Experiment conditions come from --meta、The event log stays outside the target directory ──
+
+
+def test_meta_values_are_recorded_as_strings_in_run_start(project, home):
+    run_fix(project, FakeClient([("Done.", None)]), "--meta", "quantization=Q4_K_M", "--meta", "context_length=32768")
+
+    run_start = event_lines(home)[0]
+    assert run_start["meta"] == {"quantization": "Q4_K_M", "context_length": "32768"}
+
+
+def test_a_meta_value_keeps_any_equals_signs_after_the_first(project, home):
+    run_fix(project, FakeClient([("Done.", None)]), "--meta", "note=a=b")
+    assert event_lines(home)[0]["meta"] == {"note": "a=b"}
+
+
+# Scenario: Missing equals sign
+def test_meta_without_an_equals_sign_exits_2_and_writes_nothing(project, home, capsys):
+    client = FakeClient([("Done.", None)])
+    exit_code = run_fix(project, client, "--meta", "quantization")
+
+    assert exit_code == 2
+    assert "--meta" in capsys.readouterr().err
+    assert not (home / ".fixlab").exists()
+    assert client.sent == []  # agent 沒有啟動
+
+
+# Scenario: Custom log directory
+def test_log_dir_option_moves_the_event_file(project, home, tmp_path):
+    exp = tmp_path / "exp1"
+    run_fix(project, FakeClient([("Done.", None)]), "--log-dir", str(exp))
+
+    assert len(list(exp.glob("*/events.jsonl"))) == 1
+    assert not (home / ".fixlab").exists()
+
+
+# Scenario: Log directory inside the target
+def test_a_log_dir_inside_the_target_is_refused(project, home, capsys):
+    before = take_snapshot(project)
+    exit_code = run_fix(project, FakeClient([("Done.", None)]), "--log-dir", str(project / "logs"))
+
+    assert exit_code == 2
+    assert "log directory" in capsys.readouterr().err
+    assert take_snapshot(project) == before and not (project / "logs").exists()
+
+
+def test_the_target_itself_cannot_be_the_log_dir(project):
+    assert run_fix(project, FakeClient([("Done.", None)]), "--log-dir", str(project)) == 2
+
+
+def test_a_symbolic_link_cannot_hide_a_log_dir_inside_the_target(project, tmp_path):
+    (project / "inside").mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(project / "inside")
+
+    assert run_fix(project, FakeClient([("Done.", None)]), "--log-dir", str(link / "logs")) == 2
+
+
+# Scenario: PATH is the home directory
+def test_when_the_target_is_the_home_directory_the_default_log_dir_is_inside_it(home, capsys):
+    exit_code = main([str(home), "--model", "m"], client=FakeClient([("Done.", None)]))
+
+    assert exit_code == 2
+    assert "log directory" in capsys.readouterr().err
+
+
+# Scenario: Snapshot diff is not polluted
+def test_the_printed_diff_never_lists_the_event_file(project, capsys):
+    run_fix(project, FakeClient([("Done.", None)]))
+
+    out = capsys.readouterr().out
+    assert ".fixlab" not in out and "events.jsonl" not in out
+
+
+# ── One-shot mode never asks（對應 tool-permissions 規格）──────────────────
+
+
+# Scenario: Unattended run
+def test_one_shot_never_asks_and_nothing_is_denied(project, home, monkeypatch):
+    def no_input(prompt=""):
+        raise AssertionError("one-shot mode must not ask the user anything")
+
+    monkeypatch.setattr("builtins.input", no_input)
+    exit_code = run_fix(project, FakeClient(FIX_SCRIPT))
+
+    assert exit_code == 0
+    flags = [call["flags"] for line in event_lines(home) if line["event"] == "trace"
+             for call in line["record"].get("tool_calls", [])]
+    assert all("denied" not in f for f in flags)
+
+
+# ── 實驗條件：fixlab_commit 只認 fixlab 自己的 git repo ────────────────────
+
+def git_repo_with_a_commit(folder):
+    import subprocess
+    folder.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(folder)], check=True)
+    subprocess.run(["git", "-C", str(folder), "-c", "user.name=t", "-c", "user.email=t@t",
+                    "commit", "-q", "--allow-empty", "-m", "first"], check=True)
+    done = subprocess.run(["git", "-C", str(folder), "rev-parse", "HEAD"], capture_output=True, text=True, check=True)
+    return done.stdout.strip()
+
+
+def test_fixlab_commit_is_the_commit_of_the_fixlab_repo_itself(tmp_path, monkeypatch):
+    commit = git_repo_with_a_commit(tmp_path / "fixlab")
+    monkeypatch.setattr("fixlab.cli.FIXLAB_ROOT", tmp_path / "fixlab")
+    assert fixlab_commit() == commit
+
+
+def test_fixlab_commit_is_none_when_fixlab_sits_inside_someone_elses_repo(tmp_path, monkeypatch):
+    git_repo_with_a_commit(tmp_path / "project")
+    nested = tmp_path / "project" / ".venv" / "site-packages"
+    nested.mkdir(parents=True)
+    monkeypatch.setattr("fixlab.cli.FIXLAB_ROOT", nested)
+    assert fixlab_commit() is None  # 不能把別人專案的 commit 記成 fixlab 的版本

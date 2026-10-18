@@ -53,6 +53,11 @@ def nothing_is_read_only(rel) -> bool:
     return False
 
 
+def allow_everything(name, args) -> bool:
+    """預設的確認規則：每個呼叫都放行。一次性執行沒有人在旁邊可以問，所以預設不問；互動入口會傳自己的函式進來。"""
+    return True
+
+
 def looks_like_test_file(rel) -> bool:
     """rel（相對於工作目錄的路徑）看起來是不是測試檔。靠命名慣例猜的，不保證。
 
@@ -81,6 +86,12 @@ class PathBlocked(ToolError):
     """路徑逃逸（絕對路徑、~、跑出工作目錄、符號連結指向外面）或寫入唯讀檔案。會設 blocked 旗標。"""
 
 
+class ReadOnlyBlocked(PathBlocked):
+    """寫入唯讀檔案（例如測試檔）。除了 blocked，還會設 protected_write 旗標，事件檔才分得出「碰了測試檔」與「路徑逃逸」。
+
+    用子類別而不是比對錯誤訊息：訊息的措辭一改，比對就失效了。"""
+
+
 @dataclass
 class ToolResult:
     output: str
@@ -93,11 +104,15 @@ class Tool:
     func: Callable[..., ToolResult]
     schema: dict  # {"properties": {名稱: {"type": ...}}, "required": [...]}，與 toolparse 的 tool_schemas 同形
     description: str = ""  # 給模型看的用途說明
+    # 選用：只驗證、不做事。用同樣的參數呼叫，工具一定會拒絕的話就丟 ToolError。在問使用者之前先跑，
+    # 注定失敗的呼叫就不會拿去問。工具本身開頭也呼叫它，所以驗證只有一份。
+    precheck: Callable[..., object] | None = None
 
 
 class Workspace:
     def __init__(self, root: Path, python: str = sys.executable, read_only: Callable[[PurePath], bool] = nothing_is_read_only,
-                 deny_read=(), project_root: Path = FIXLAB_ROOT, protect_tests: bool = False):
+                 deny_read=(), project_root: Path = FIXLAB_ROOT, protect_tests: bool = False,
+                 confirm: Callable[[str, dict], bool] = allow_everything):
         self.root = Path(root).resolve()  # 先解析一次，之後的路徑都跟它比
         # 沙箱額外禁止測試程式讀取的資料夾（例如其他題目的工作目錄、評分用的隱藏測試），以及 fixlab 自己的專案目錄。
         self.deny_read = tuple(Path(folder).resolve() for folder in deny_read)
@@ -107,6 +122,8 @@ class Workspace:
         self.read_only = read_only
         # 沙箱要不要擋下 run_tests 執行的程式寫入測試檔（read_only 只管工具；這個管被執行的程式）。預設不擋，和 read_only 一樣由入口決定。
         self.protect_tests = protect_tests
+        # 執行工具之前問一下：confirm(工具名稱, 參數) 回 False 就不執行（使用者拒絕）。和 read_only 一樣，政策由入口決定，迴圈不管。
+        self.confirm = confirm
         self.python = python  # run_tests 用哪個直譯器；不 resolve，venv 的 python 是符號連結，解析後會找不到套件
         self._tools: dict[str, Tool] = {}
         # 模型「整檔、未截斷」讀過的檔案：解析後的真實路徑 → 讀的當下的內容指紋。write_file 覆寫既有檔案前要查它：
@@ -114,8 +131,9 @@ class Workspace:
         # 兩種情況都不能整檔覆寫，不然會憑空改寫、或蓋掉別人的修改。edit_file 成功後會把該檔移除。
         self.files_read: dict[Path, str] = {}
 
-    def register(self, name: str, func: Callable[..., ToolResult], schema: dict, description: str = "") -> None:
-        self._tools[name] = Tool(func, schema, description)
+    def register(self, name: str, func: Callable[..., ToolResult], schema: dict, description: str = "",
+                 precheck: Callable[..., object] | None = None) -> None:
+        self._tools[name] = Tool(func, schema, description, precheck)
 
     def tool_specs(self) -> list[dict]:
         """送給模型的工具清單（OpenAI 格式）。"""
@@ -153,7 +171,7 @@ class Workspace:
         p = self.resolve_inside(rel)
         # 用解析後的真實路徑判定：指向唯讀檔案的符號連結，不能拿來繞過。
         if self.read_only(p.relative_to(self.root)):
-            raise PathBlocked(f"{rel!r} is read-only and cannot be modified. If it is a test file, fix the source code instead.")
+            raise ReadOnlyBlocked(f"{rel!r} is read-only and cannot be modified. If it is a test file, fix the source code instead.")
         return p
 
     def _check_args(self, name: str, tool: Tool, args: dict) -> None:
@@ -177,7 +195,17 @@ class Workspace:
             if tool is None:
                 raise ToolError(f"unknown tool: {name!r}")
             self._check_args(name, tool, args)
+            # 結構檢查之後再做值的檢查（空路徑、唯讀檔、找不到字串…）：工具一定會拒絕的呼叫，不用拿去問使用者
+            if tool.precheck is not None:
+                tool.precheck(**args)
+            if not self.confirm(name, args):
+                return ToolResult(
+                    "error: the user declined this call. Do not retry it unchanged; "
+                    "try a different approach or ask the user what they want.",
+                    False, {"denied": True})
             return tool.func(**args)
+        except ReadOnlyBlocked as e:  # 要放在 PathBlocked 前面：它是 PathBlocked 的子類別
+            return ToolResult(f"error: {e}", False, {"blocked": True, "protected_write": True})
         except PathBlocked as e:
             return ToolResult(f"error: {e}", False, {"blocked": True})
         except ToolError as e:

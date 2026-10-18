@@ -27,7 +27,7 @@ def native(name, **args):
 class FakeClient:
     """依序回傳劇本裡的回覆，並記下每次請求收到的對話與工具清單。
 
-    劇本的每一項是 (文字, 工具呼叫) 或 (文字, 工具呼叫, finish_reason)；如果是例外物件，這次請求就丟出它。
+    劇本的每一項是 (文字, 工具呼叫) 或 (文字, 工具呼叫, finish_reason)；如果是例外物件（含 KeyboardInterrupt），這次請求就丟出它。
     """
 
     def __init__(self, replies):
@@ -40,7 +40,7 @@ class FakeClient:
         self.sent.append(list(messages))
         self.tools.append(tools)
         reply = self.replies.pop(0)
-        if isinstance(reply, Exception):
+        if isinstance(reply, BaseException):  # 例外，或 KeyboardInterrupt（模擬 Ctrl-C）
             raise reply
         content, tool_calls = reply[0], reply[1]
         finish_reason = reply[2] if len(reply) == 3 else "stop"
@@ -306,6 +306,78 @@ def test_an_argument_of_exactly_2000_characters_is_kept_whole(ws):
     assert records[0]["tool_calls"][0]["args"]["new_string"] == exactly
 
 
+# ---- A run can continue an existing conversation ----
+
+# Scenario: Default is unchanged
+def test_runs_without_messages_do_not_share_a_conversation(ws):
+    client = FakeClient([("First done.", None), ("Second done.", None)])
+    run_agent(client, "m", ws, TASK)
+    run_agent(client, "m", ws, "another task")
+
+    # 沒傳 messages：每次執行都從系統提示加任務開始，前一次的對話不會留下來
+    assert client.sent[1] == [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": "another task"}]
+
+
+# Scenario: Empty list is filled
+def test_an_empty_list_is_filled_and_kept_by_the_caller(ws):
+    session = []
+    client = FakeClient([(None, [native("read_file", path="rules.py")]), ("Done.", None)])
+    run_agent(client, "m", ws, TASK, messages=session)
+
+    assert session[0] == {"role": "system", "content": SYSTEM_PROMPT}
+    assert session[1] == {"role": "user", "content": TASK}
+    assert [m["role"] for m in session] == ["system", "user", "assistant", "tool", "assistant"]
+    assert session[-1] == {"role": "assistant", "content": "Done."}  # 最後的回覆也留在對話裡
+
+
+# Scenario: Second task continues
+def test_a_second_task_continues_the_same_conversation(ws):
+    session = []
+    client = FakeClient([("Fixed parse_duration.", None), ("Added a comment.", None)])
+    run_agent(client, "m", ws, "fix the failing test", messages=session)
+    run_agent(client, "m", ws, "add a comment", messages=session)
+
+    assert client.sent[1] == [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": "fix the failing test"},
+        {"role": "assistant", "content": "Fixed parse_duration."},
+        {"role": "user", "content": "add a comment"},
+    ]
+
+
+# ---- Step records show truncation and the original call count ----
+
+# Scenario: Cut-off reply
+def test_a_cut_off_reply_is_marked_truncated_in_its_record(ws):
+    records = []
+    cut_off = (None, [native("edit_file", path="rules.py", old_string="return 2", new_string="return 3")], "length")
+    client = FakeClient([cut_off, ("Done.", None)])
+    run_agent(client, "m", ws, TASK, trace=records.append)
+
+    assert records[0]["truncated"] is True and records[0]["reply_tool_calls"] == 1
+    assert records[0]["tool_calls"] == []  # 被截斷的呼叫沒有執行
+    assert (ws.root / "rules.py").read_text() == "def grace_days():\n    return 2\n"
+
+
+# Scenario: One valid and one invalid call
+def test_the_record_counts_invalid_calls_too(ws):
+    records = []
+    mixed = (None, [native("read_file", path="rules.py"), native("edit_file", path="rules.py")])  # 第二個缺參數
+    client = FakeClient([mixed, ("Done.", None)])
+    run_agent(client, "m", ws, TASK, trace=records.append)
+
+    assert records[0]["reply_tool_calls"] == 2 and records[0]["truncated"] is False
+    assert len(records[0]["tool_calls"]) == 1 and len(records[0]["parse_errors"]) == 1
+
+
+# Scenario: Reply without tools
+def test_a_reply_without_tools_has_zero_calls(ws):
+    records = []
+    run_agent(FakeClient([("Done.", None)]), "m", ws, TASK, trace=records.append)
+
+    assert records[0]["reply_tool_calls"] == 0 and records[0]["truncated"] is False
+
+
 # ---- 連續失敗保險：對應規格的 Consecutive failing rounds stop the loop ----
 
 def missing_file():
@@ -377,6 +449,99 @@ def test_blocked_calls_count_as_failures(tmp_path):
 
     assert r.stop_reason == "stuck" and r.steps == 3
     assert r.counters["blocked_calls"] == 3
+
+
+# 寫入唯讀檔案的嘗試也要在計數器裡看得到（事件檔的 task_end 帶計數器）
+def test_protected_writes_are_counted_next_to_blocked_calls(tmp_path):
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_report.py").write_text("def test_a():\n    assert True\n")
+    w = Workspace(tmp_path, read_only=looks_like_test_file)
+    register_tools(w)
+    client = FakeClient([(None, [native("write_file", path="tests/test_report.py", content="x")]), ("Done.", None)])
+
+    r = run_agent(client, "m", w, TASK)
+
+    assert r.counters["blocked_calls"] == 1 and r.counters["protected_write_calls"] == 1
+
+
+# ---- Denied calls count as failures ----
+
+def refusing_workspace(tmp_path):
+    """edit_file 一律被使用者拒絕，其他工具照常。"""
+    (tmp_path / "rules.py").write_text("def grace_days():\n    return 2\n")
+    w = Workspace(tmp_path, confirm=lambda name, args: name != "edit_file")
+    register_tools(w)
+    return w
+
+
+def an_edit():
+    return native("edit_file", path="rules.py", old_string="return 2", new_string="return 3")
+
+
+# Scenario: Three refused edits
+def test_three_refused_edits_in_a_row_stop_the_loop(tmp_path):
+    client = FakeClient([(None, [an_edit()])] * 4)
+    r = run_agent(client, "m", refusing_workspace(tmp_path), TASK)
+
+    assert r.stop_reason == "stuck" and r.steps == 3
+    assert r.counters["denied_calls"] == 3 and r.counters["stuck_failures"] == 3
+    assert (tmp_path / "rules.py").read_text() == "def grace_days():\n    return 2\n"
+
+
+# Scenario: A refusal followed by a success
+def test_a_refusal_followed_by_a_success_resets_the_count(tmp_path):
+    client = FakeClient([(None, [an_edit()]), (None, [native("list_files")]), (None, [an_edit()]),
+                         (None, [an_edit()]), ("Done.", None)])
+    r = run_agent(client, "m", refusing_workspace(tmp_path), TASK)
+
+    assert r.stop_reason == "done" and "stuck_failures" not in r.counters
+    assert r.counters["denied_calls"] == 3
+
+
+# ---- An interrupted tool round is sealed ----
+
+def interrupting_workspace(tmp_path):
+    """edit_file 被確認時使用者按了 Ctrl-C；其他工具照常。"""
+    (tmp_path / "rules.py").write_text("def grace_days():\n    return 2\n")
+
+    def confirm(name, args):
+        if name == "edit_file":
+            raise KeyboardInterrupt
+        return True
+
+    w = Workspace(tmp_path, confirm=confirm)
+    register_tools(w)
+    return w
+
+
+# Scenario: Interrupt in the middle of three calls
+def test_an_interrupt_in_the_middle_of_a_round_gives_every_call_a_result(tmp_path):
+    w = interrupting_workspace(tmp_path)
+    conversation = []
+    client = FakeClient([(None, [native("read_file", path="rules.py"), an_edit(), native("list_files")])])
+
+    with pytest.raises(KeyboardInterrupt):
+        run_agent(client, "m", w, TASK, messages=conversation)
+
+    assert [m["role"] for m in conversation] == ["system", "user", "assistant", "tool", "tool", "tool"]
+    done, interrupted, not_run = conversation[3:]
+    assert "grace_days" in done["content"]  # 已經跑完的呼叫保留自己的結果
+    assert interrupted["content"].startswith("error: interrupted by the user") and "unknown" in interrupted["content"]
+    assert "not run" in not_run["content"]
+    # 每個結果都用自己呼叫的 id，順序一致
+    assert [m["tool_call_id"] for m in conversation[3:]] == [c["id"] for c in conversation[2]["tool_calls"]]
+    assert (tmp_path / "rules.py").read_text() == "def grace_days():\n    return 2\n"
+
+
+# Scenario: Interrupt while waiting for the model
+def test_an_interrupt_while_waiting_for_the_model_adds_nothing(tmp_path):
+    w = interrupting_workspace(tmp_path)
+    conversation = []
+
+    with pytest.raises(KeyboardInterrupt):
+        run_agent(FakeClient([KeyboardInterrupt()]), "m", w, TASK, messages=conversation)
+
+    assert conversation == [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": TASK}]
 
 
 # Scenario: Failing tests are not tool failures

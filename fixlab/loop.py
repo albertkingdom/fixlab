@@ -26,6 +26,9 @@ DEFAULT_MAX_STEPS = 20
 # 連續幾輪「這一輪的工具呼叫全部失敗」就判定模型卡住了。3 是初始值，沒有實測依據，階段 3 用 telemetry 校準。
 MAX_FAILING_ROUNDS = 3
 
+# 工具回傳的旗標變成計數器時用的名稱；沒列在這裡的旗標（例如 tests_passed）就用旗標自己的名字。
+FLAG_COUNTER_NAMES = {"blocked": "blocked_calls", "protected_write": "protected_write_calls", "denied": "denied_calls"}
+
 # 遇到限流（429）或伺服器暫時錯誤時，依序等這些秒數再重試。放在模組層，測試可以把它改成 0。
 RETRY_DELAYS_S = (5, 15, 30, 60, 120, 180, 300, 300)
 
@@ -51,12 +54,21 @@ class Interpretation:
 
 def run_agent(
     client, model: str, ws: Workspace, task: str, *,
+    messages: list | None = None,
     max_steps: int = DEFAULT_MAX_STEPS, request_extra: dict | None = None,
     trace: Callable[[dict], None] = lambda rec: None,
 ) -> AgentResult:
-    """跑一個任務。task 就是第一則 user 訊息，迴圈不加任何自己的內容。"""
+    """跑一個任務。task 是 user 訊息，迴圈不加任何自己的內容。
+
+    messages 是呼叫端想保留的對話（互動模式用）：沒傳，這次執行用自己的對話，跑完就丟；
+    傳一個空 list，會先放入系統提示；傳一個有內容的 list，任務就接在後面。
+    傳進來的 list 會被直接修改，所以呼叫端拿著它就有完整的對話。"""
     tools, schemas = ws.tool_specs(), ws.schemas()
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": task}]
+    if messages is None:
+        messages = []  # 只給這次執行用，不留給呼叫端
+    if not messages:
+        messages.append({"role": "system", "content": SYSTEM_PROMPT})
+    messages.append({"role": "user", "content": task})
     res = AgentResult(stop_reason="max_steps", steps=0)
     c = res.counters
     failing_rounds = 0  # 連續幾輪「有執行工具、而且全部失敗」
@@ -94,6 +106,8 @@ def run_agent(
                 messages.append({"role": "user", "content": _feedback(it)})
                 trace({**rec, "event": "invalid_tool_call"})
                 continue
+            # 最後的回覆也留在對話裡，下一個任務接在它後面才說得通
+            messages.append({"role": "assistant", "content": msg.content or ""})
             trace({**rec, "event": "done"})
             res.stop_reason = "done"
             break
@@ -190,7 +204,9 @@ def _step_record(step: int, latency: float, resp, it: Interpretation) -> dict:
             "prompt_tokens": resp.usage.prompt_tokens if resp.usage else None,
             "completion_tokens": resp.usage.completion_tokens if resp.usage else None,
             "content": msg.content, "reasoning_chars": len((msg.model_extra or {}).get("reasoning") or ""),
-            "parse_errors": it.errors, "tool_calls": []}
+            "parse_errors": it.errors, "tool_calls": [],
+            # 事件檔要分得出是哪一步被截斷，也要知道回覆原本帶幾個呼叫（包含不合法、被丟掉的）
+            "truncated": it.truncated, "reply_tool_calls": len(msg.tool_calls or [])}
 
 
 def _run_tool_calls(ws: Workspace, it: Interpretation, msg, messages: list, counters: dict, rec: dict) -> bool:
@@ -203,18 +219,36 @@ def _run_tool_calls(ws: Workspace, it: Interpretation, msg, messages: list, coun
         {"id": i, "type": "function", "function": {"name": x.name, "arguments": json.dumps(x.arguments)}}
         for i, x in zip(ids, it.calls)]})
     any_succeeded = False
-    for i, x in zip(ids, it.calls):
-        result = ws.call(x.name, x.arguments)
+    for position, (i, x) in enumerate(zip(ids, it.calls)):
+        try:
+            result = ws.call(x.name, x.arguments)
+        except KeyboardInterrupt:  # 使用者按了 Ctrl-C（可能停在權限詢問、也可能停在執行中的工具）
+            _seal_interrupted_round(messages, ids, position)
+            raise
         any_succeeded = any_succeeded or result.ok
         messages.append({"role": "tool", "tool_call_id": i, "content": result.output})
         for flag, val in result.flags.items():
             if val:  # 例如 tests_passed、blocked（被擋下）
-                _count(counters, "blocked_calls" if flag == "blocked" else flag)
+                _count(counters, FLAG_COUNTER_NAMES.get(flag, flag))
         rec["tool_calls"].append({"name": x.name,
                                   "args": {k: (v if len(str(v)) <= 2000 else str(v)[:2000] + "...")
                                            for k, v in x.arguments.items()},
                                   "ok": result.ok, "flags": result.flags, "output": result.output[:2000]})
     return not any_succeeded
+
+
+def _seal_interrupted_round(messages: list, ids: list, interrupted_at: int) -> None:
+    """這一輪被打斷時，把還沒有結果的呼叫補上結果。
+
+    API 要求每個 assistant 的 tool_calls 都有對應的結果，留著缺口，之後每個請求都會被拒絕。
+    被打斷的那一個可能已經跑到一半，所以寫「狀態不明」；後面還沒開始的，寫「沒有執行」。前面已經跑完的保留自己的結果。"""
+    for position in range(interrupted_at, len(ids)):
+        if position == interrupted_at:
+            text = ("error: interrupted by the user while this call was waiting or running; its state is unknown, "
+                    "so check the current state before trying it again")
+        else:
+            text = "error: not run, because the user interrupted the task"
+        messages.append({"role": "tool", "tool_call_id": ids[position], "content": text})
 
 
 def _count(counters: dict, key: str, n: int = 1) -> None:
