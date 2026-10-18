@@ -67,4 +67,4 @@
 
 ## 10. 收尾
 
-- [ ] 10.1 全部驗收後打 tag：在 .venv 內 pytest 全數通過、`spectra validate stage3-benchmark` 無錯誤，commit 並建立 git tag stage-3（只建在本機）。驗證：git tag --list stage-3 有輸出，且 tag 指向的 commit 上 pytest 通過。
+- [x] 10.1 全部驗收後打 tag：在 .venv 內 pytest 全數通過、`spectra validate stage3-benchmark` 無錯誤，commit 並建立 git tag stage-3（只建在本機）。驗證：git tag --list stage-3 有輸出，且 tag 指向的 commit 上 pytest 通過。
