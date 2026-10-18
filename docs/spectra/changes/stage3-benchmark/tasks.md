@@ -12,10 +12,10 @@
 
 ## 3. 評分器
 
-- [ ] 3.1 「評分器在乾淨暫存目錄重跑，用原版測試與固定的 pytest 參數」：fixlab/bench/grader.py 對一個工作目錄做三次獨立評分（原版可見測試、fix 組、keep 組），每次新建暫存目錄、複製 agent 的檔案（排除測試檔與設定檔），可見測試那次放回原版所有測試檔與 conftest.py，fix 或 keep 那次放原版 conftest.py 與該組隱藏測試（放進 tests_hidden，目標只有這個資料夾），用 Workspace 呼叫 run_tests（沿用固定參數與沙箱）；不修改 agent 的工作目錄；agent 新增的非測試檔列在 added_files。對應 Grading runs in clean temporary directories。驗證：tests/test_bench_grader.py：agent 寫的 pytest.ini 不在暫存目錄裡（斷言檔案不存在，不是斷言測試失敗）、可見與 fix 的目標不同、評分前後工作目錄內容不變、added_files 列出新增的 .py。
-- [ ] 3.2 一組算通過的條件是 run_tests 回報通過、輸出最後一行摘要的通過數等於 problem.json 記的數量、沒有失敗與錯誤；只讀最後一行，找不到摘要算沒通過。對應 A group passes only when the pass count matches。驗證：tests/test_bench_grader.py：fix 組預期 5 個、實際只印 3 passed 時不算通過；程式先印一行假的 5 passed、真的最後一行是 2 failed 時不算通過。
-- [ ] 3.3 invalid 偵測：工作目錄裡任何測試檔或設定檔與原版 project 不同或是新增，設 invalid 並列出 tampered_files，評分仍用原版檔案。對應 Tampering is flagged as invalid 的三個情境。驗證：tests/test_bench_grader.py：改測試檔、新增 pytest.ini、只改原始碼各一個測試。
-- [ ] 3.4 「評分結果是獨立旗標，加上固定的判定順序」：輸出 visible_passed、fix_passed、keep_passed、invalid 與衍生的 fixed、broke_existing、overfit，並依 invalid、broke_existing、fixed、overfit、unfixed 的順序給 outcome；`grade` 子命令印出含 sandbox 與 added_files 欄位的 JSON。對應 Flags and outcome follow a fixed precedence、The grade command prints the result as JSON。驗證：tests/test_bench_grader.py：規格表的六列用參數化測試，另測 broke_existing 優先於 overfit，以及 grade 子命令對標準解印出 fixed。
+- [x] 3.1 「評分器在乾淨暫存目錄重跑，用原版測試與固定的 pytest 參數」：fixlab/bench/grader.py 對一個工作目錄做三次獨立評分（原版可見測試、fix 組、keep 組），每次新建暫存目錄、複製 agent 的檔案（排除測試檔與設定檔），可見測試那次放回原版所有測試檔與 conftest.py，fix 或 keep 那次放原版 conftest.py 與該組隱藏測試（放進 tests_hidden，目標只有這個資料夾），用 Workspace 呼叫 run_tests（沿用固定參數與沙箱）；不修改 agent 的工作目錄；agent 新增的非測試檔列在 added_files。對應 Grading runs in clean temporary directories。驗證：tests/test_bench_grader.py：agent 寫的 pytest.ini 不在暫存目錄裡（斷言檔案不存在，不是斷言測試失敗）、可見與 fix 的目標不同、評分前後工作目錄內容不變、added_files 列出新增的 .py。
+- [x] 3.2 一組算通過的條件是 run_tests 回報通過、輸出最後一行摘要的通過數等於 problem.json 記的數量、沒有失敗與錯誤；只讀最後一行，找不到摘要算沒通過。對應 A group passes only when the pass count matches。驗證：tests/test_bench_grader.py：fix 組預期 5 個、實際只印 3 passed 時不算通過；程式先印一行假的 5 passed、真的最後一行是 2 failed 時不算通過。
+- [x] 3.3 invalid 偵測：工作目錄裡任何測試檔或設定檔與原版 project 不同或是新增，設 invalid 並列出 tampered_files，評分仍用原版檔案。對應 Tampering is flagged as invalid 的三個情境。驗證：tests/test_bench_grader.py：改測試檔、新增 pytest.ini、只改原始碼各一個測試。
+- [x] 3.4 「評分結果是獨立旗標，加上固定的判定順序」：輸出 visible_passed、fix_passed、keep_passed、invalid 與衍生的 fixed、broke_existing、overfit，並依 invalid、broke_existing、fixed、overfit、unfixed 的順序給 outcome；`grade` 子命令印出含 sandbox 與 added_files 欄位的 JSON。對應 Flags and outcome follow a fixed precedence、The grade command prints the result as JSON。驗證：tests/test_bench_grader.py：規格表的六列用參數化測試，另測 broke_existing 優先於 overfit，以及 grade 子命令對標準解印出 fixed。
 
 ## 4. 題目自我檢查
 
