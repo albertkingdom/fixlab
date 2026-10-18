@@ -221,6 +221,8 @@ def latest_by_key(lines: list) -> dict:
 
 def pending_runs(plan: list, results_path) -> list:
     """還要跑的：沒有結果行、或最後一行有錯誤的組合。"""
+    # KNOWN-ISSUE: 組合只用（題目、模型標籤、條件、次數）比對，不看 temperature、extra_body、max_steps 等設定。
+    # 改了設定卻沿用同一個標籤與輸出資料夾續跑，新舊結果會混在一起；改設定時要換標籤或換輸出資料夾。
     latest = latest_by_key(read_results(results_path))
     return [spec for spec in plan if spec.key not in latest or latest[spec.key]["error"] is not None]
 
