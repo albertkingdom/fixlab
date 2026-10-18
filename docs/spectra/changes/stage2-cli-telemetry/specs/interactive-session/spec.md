@@ -85,12 +85,17 @@ Interactive mode SHALL NOT run the project's tests after a task on its own. The 
 
 ### Requirement: The model's final reply is shown
 
-When a task ends with stop reason `done`, interactive mode SHALL print the model's final message on standard output, with a blank line before and after it and the footer line below, because that message is the answer the user asked for. For other stop reasons there is no final message to print.
+When a task ends with stop reason `done`, interactive mode SHALL print the model's final message on standard output, with a blank line before and after it and the footer line below, because that message is the answer the user asked for. Blank lines at the start and the end of the message itself SHALL NOT be printed, so exactly one blank line separates it from what is above. For other stop reasons there is no final message to print.
 
 #### Scenario: A task finishes
 
 - **WHEN** the model ends a task with the reply "Fixed parse_duration."
 - **THEN** standard output contains `Fixed parse_duration.` followed by the footer line
+
+#### Scenario: A reply that starts with blank lines
+
+- **WHEN** the model ends a task with the reply "\n\nFixed parse_duration."
+- **THEN** the answer is printed as `Fixed parse_duration.` with a single blank line before it
 
 ### Requirement: A task that fails with a request error is discarded
 

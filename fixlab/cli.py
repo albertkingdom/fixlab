@@ -170,7 +170,8 @@ def run_task(client, model: str, ws: Workspace, args, log: EventLog, session: li
 
     print()
     if result.stop_reason == "done":
-        reply = session[-1]["content"]  # 迴圈把模型最後的回覆放在對話最後面：那就是使用者要的答案
+        # 迴圈把模型最後的回覆放在對話最後面：那就是使用者要的答案。有些模型的回覆開頭帶空行，去掉，才不會空好幾行
+        reply = session[-1]["content"].strip("\n")
         if reply:
             print(reply)
             print()

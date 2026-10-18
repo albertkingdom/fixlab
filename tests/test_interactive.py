@@ -414,6 +414,14 @@ def test_a_blocked_call_ends_with_the_reason(session, capsys):
     assert "    ✗ blocked: 'tests/test_report.py' is read-only" in capsys.readouterr().out
 
 
+# Scenario: A reply that starts with blank lines
+def test_blank_lines_at_the_start_of_the_reply_are_not_printed(session, capsys):
+    session(FakeClient([(None, [native("list_files")]), ("\n\nFixed it.\n", None)]), ["fix it"])
+
+    out = capsys.readouterr().out
+    assert "    ✓\n\nFixed it.\n\n(2 steps" in out  # 結果行、一個空行、答案、一個空行、結尾那一行
+
+
 def test_the_per_call_lines_do_not_go_to_standard_error(session, capsys):
     session(FakeClient([(None, [native("list_files")]), ("Done.", None)]), ["look"])
 
