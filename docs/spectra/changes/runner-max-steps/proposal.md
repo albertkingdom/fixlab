@@ -36,7 +36,9 @@
 - Affected specs: `experiment-runner`（modified）
 - Affected code:
   - Modified: `fixlab/bench/runner.py`（`ModelConfig`、`load_models`、`fixlab_arguments`）
+  - Modified: `fixlab/bench/report.py`（報告的實驗設定一節顯示每個模型的 `max_steps`；沒設定顯示「預設」）
   - Modified: `tests/test_bench_runner.py`
+  - Modified: `tests/test_bench_report.py`
   - Modified: `README.md`（模型設定欄位的說明）
   - Modified: `docs/articles/18-experiment-runner.md`（模型設定一節補一句 `max_steps`）
   - New: none

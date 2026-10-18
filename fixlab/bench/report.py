@@ -130,8 +130,9 @@ def render_report(all_lines: list, models: list, problems: dict, examples: int =
         if model is None:
             out.append(f"- 模型 {label}：設定檔裡沒有這個模型")
             continue
+        step_limit = model.max_steps if model.max_steps is not None else "預設"  # 沒設定就是 fixlab 自己的預設
         out.append(f"- 模型 {label}：{model.name}，temperature {model.temperature}，extra_body {json.dumps(model.extra_body)}，"
-                   f"紀錄的條件 {json.dumps(model.meta, ensure_ascii=False)}")
+                   f"max_steps {step_limit}，紀錄的條件 {json.dumps(model.meta, ensure_ascii=False)}")
     out.append("")
 
     # ── 總表 ──

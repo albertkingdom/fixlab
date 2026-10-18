@@ -357,7 +357,7 @@ def test_a_model_meta_that_is_not_an_object_is_a_configuration_error(tmp_path, m
 
 
 # Scenario: An invalid value is rejected before any run
-@pytest.mark.parametrize("value", [0, -5, 2.5, "40", True])
+@pytest.mark.parametrize("value", [0, -5, 2.5, "40", True, False])
 def test_a_step_limit_that_is_not_an_integer_of_at_least_one_is_rejected(tmp_path, value):
     path = models_file(tmp_path, labels=("x",), max_steps=value)
 

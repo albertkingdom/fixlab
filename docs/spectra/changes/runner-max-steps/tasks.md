@@ -10,6 +10,8 @@
 - [x] 2.2 `fixlab_arguments` 在 `max_steps` 不是 `None` 時加上 `--max-steps N`，兩個條件都加；是 `None` 時完全不加。驗證：任務 1.1 與 1.3 的測試通過。
 - [x] 2.3 跑完整測試，確認沒弄壞既有行為（特別是沒有 `max_steps` 的既有設定檔，參數與以前完全相同）。驗證：`.venv/bin/python -m pytest -q` 全部通過，且 `.venv/bin/python -m fixlab.bench run --models bench/models.json --out /tmp/plan-check` 印出的計畫仍是 160 次、不呼叫模型。
 
+- [x] 2.4 報告的「實驗設定」一節顯示每個模型的 `max_steps`，沒設定時顯示「預設」，讓不同模型或同一模型用不同上限的實驗看得出來（code review 第二輪發現）。驗證：`.venv/bin/python -m pytest tests/test_bench_report.py -k step_limit` 通過。
+
 ## 3. 文件
 
 - [x] 3.1 `README.md` 的模型設定說明補上選填的 `max_steps`（意思、合法值、沒寫時用 fixlab 預設的 20）。驗證：內容審閱，欄位名稱與規格一致。
