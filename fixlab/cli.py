@@ -285,13 +285,18 @@ def run_conditions(args, model: str, root: Path, meta: dict, mode: str) -> dict:
 
 
 def fixlab_commit() -> str | None:
-    """fixlab 自己程式的 git commit；不在 git 底下（例如用 pip 裝的）或沒有 git 就是 None。"""
+    """fixlab 自己程式的 git commit。fixlab 的資料夾必須自己就是 git 工作樹的最上層：不在 git 底下（例如用 pip 裝的）、
+    或在別人的 repo 底下（例如裝進專案的 .venv），都是 None，不能把別人專案的 commit 記成 fixlab 的版本。"""
     try:
-        done = subprocess.run(["git", "-C", str(FIXLAB_ROOT), "rev-parse", "HEAD"],
+        done = subprocess.run(["git", "-C", str(FIXLAB_ROOT), "rev-parse", "--show-toplevel", "HEAD"],
                               capture_output=True, text=True, timeout=5)
     except (OSError, subprocess.TimeoutExpired):
         return None
-    return done.stdout.strip() if done.returncode == 0 else None
+    lines = done.stdout.splitlines()
+    if done.returncode != 0 or len(lines) < 2:
+        return None
+    top_level, commit = lines[0], lines[1]
+    return commit.strip() if Path(top_level).resolve() == Path(FIXLAB_ROOT).resolve() else None
 
 
 def trace_to(log: EventLog, task: int, printer):

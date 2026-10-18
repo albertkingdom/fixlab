@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from fixlab.cli import DEFAULT_TASK, changed_files, diff_report, main, take_snapshot
+from fixlab.cli import DEFAULT_TASK, changed_files, diff_report, fixlab_commit, main, take_snapshot
 from fixlab.sandbox import sandbox_available
 from test_fixture import BUGGY, FIXED, copy_fixture  # 把 timelog 複製到暫存目錄；bug 與修法
 from test_loop import FakeClient, native  # 依序回傳劇本回覆的假 client
@@ -429,3 +429,28 @@ def test_one_shot_never_asks_and_nothing_is_denied(project, home, monkeypatch):
              for call in line["record"].get("tool_calls", [])]
     assert all("denied" not in f for f in flags)
 
+
+# ── 實驗條件：fixlab_commit 只認 fixlab 自己的 git repo ────────────────────
+
+def git_repo_with_a_commit(folder):
+    import subprocess
+    folder.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(folder)], check=True)
+    subprocess.run(["git", "-C", str(folder), "-c", "user.name=t", "-c", "user.email=t@t",
+                    "commit", "-q", "--allow-empty", "-m", "first"], check=True)
+    done = subprocess.run(["git", "-C", str(folder), "rev-parse", "HEAD"], capture_output=True, text=True, check=True)
+    return done.stdout.strip()
+
+
+def test_fixlab_commit_is_the_commit_of_the_fixlab_repo_itself(tmp_path, monkeypatch):
+    commit = git_repo_with_a_commit(tmp_path / "fixlab")
+    monkeypatch.setattr("fixlab.cli.FIXLAB_ROOT", tmp_path / "fixlab")
+    assert fixlab_commit() == commit
+
+
+def test_fixlab_commit_is_none_when_fixlab_sits_inside_someone_elses_repo(tmp_path, monkeypatch):
+    git_repo_with_a_commit(tmp_path / "project")
+    nested = tmp_path / "project" / ".venv" / "site-packages"
+    nested.mkdir(parents=True)
+    monkeypatch.setattr("fixlab.cli.FIXLAB_ROOT", nested)
+    assert fixlab_commit() is None  # 不能把別人專案的 commit 記成 fixlab 的版本
