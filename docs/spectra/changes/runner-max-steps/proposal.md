@@ -30,10 +30,11 @@
 ### Modified Capabilities
 
 - `experiment-runner`: 模型設定的欄位多了選填的 `max_steps`，以及執行器如何把它傳給 `fixlab`、不合法時如何拒絕。
+- `experiment-report`: 報告的實驗設定一節要列出每個模型的 `max_steps`（沒設定顯示「預設」），設定取自模型設定檔。
 
 ## Impact
 
-- Affected specs: `experiment-runner`（modified）
+- Affected specs: `experiment-runner`、`experiment-report`（都是 modified）
 - Affected code:
   - Modified: `fixlab/bench/runner.py`（`ModelConfig`、`load_models`、`fixlab_arguments`）
   - Modified: `fixlab/bench/report.py`（報告的實驗設定一節顯示每個模型的 `max_steps`；沒設定顯示「預設」）
