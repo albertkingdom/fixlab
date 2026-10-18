@@ -65,6 +65,8 @@ def load_models(path) -> list[ModelConfig]:
         for key in ("name", "label", "api_key_env"):
             if key not in entry:
                 raise ConfigError(f"model entry lacks the key {key!r}: {entry}")
+        if not isinstance(entry.get("meta", {}), dict):
+            raise ConfigError(f"model {entry['label']!r}: meta must be a JSON object")
         reserved = [key for key in entry.get("meta", {}) if key in RESERVED_META]
         if reserved:
             raise ConfigError(f"model {entry['label']!r}: meta must not use the reserved keys {', '.join(reserved)}")
@@ -78,6 +80,8 @@ def load_models(path) -> list[ModelConfig]:
 def plan_runs(problem_ids, models, conditions, repeats) -> list[RunSpec]:
     """展開成清單。次數放在最外層：同一輪先把每個題目、模型、條件都跑一遍，
     供應商一天內的變化才會平均分到各個條件，不會集中在其中一個。"""
+    if repeats < 1:
+        raise ConfigError(f"repeats must be at least 1, got {repeats}")
     return [RunSpec(problem, model.label, condition, repeat)
             for repeat in range(1, repeats + 1)
             for problem in problem_ids

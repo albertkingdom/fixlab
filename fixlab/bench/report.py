@@ -52,7 +52,7 @@ def group_by(lines: list, key) -> dict:
 
 
 def cost_of(lines: list, price: dict | None):
-    """這些執行的總成本；沒有單價（或沒有 token 數）就是 None。"""
+    """這些執行的總成本；沒有單價就是 None。缺的 token 數當 0（算進結果的執行一定有 token 數，沒有的是錯誤，已被排除）。"""
     if not price:
         return None
     total = 0.0
@@ -157,13 +157,13 @@ def render_report(all_lines: list, models: list, problems: dict, examples: int =
     for label in labels:
         ok = counted([l for l in lines if l["model"] == label])
         price = (by_label.get(label).price if label in by_label else None)
-        total = cost_of(ok, price)
+        if not price:
+            out.append(f"| {label} | - | - | - | 沒有單價，只列 token（見上表） |")
+            continue
         if not ok:
             out.append(f"| {label} | - | - | - | 沒有算進結果的執行（全部是錯誤），算不出成本 |")
             continue
-        if total is None:
-            out.append(f"| {label} | - | - | - | 沒有單價，只列 token（見上表） |")
-            continue
+        total = cost_of(ok, price)
         fixed = sum(1 for l in ok if l["grade"]["fixed"])
         out.append(f"| {label} | {total:.4f} | {total / len(ok):.4f} | {number(total / fixed if fixed else None, 4)} | "
                    f"{price['input_per_million']} / {price['output_per_million']}，{price['source']}，{price['date']} |")

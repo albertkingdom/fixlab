@@ -233,3 +233,9 @@ def test_runs_without_a_step_count_do_not_crash_the_median():
     text = render([line(steps=None)])
 
     assert table_row(text, "m", "with_tests")[11] == "-"
+
+
+def test_an_unpriced_model_whose_every_run_failed_is_reported_as_having_no_price():
+    text = render([line(error="404")], [model(price=None)])
+
+    assert "沒有單價" in table_row(text, "m", "-")[4]

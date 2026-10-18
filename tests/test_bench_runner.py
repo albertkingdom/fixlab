@@ -289,3 +289,30 @@ def test_a_model_without_a_base_url_does_not_inherit_the_callers_endpoint(proble
     run_start = json.loads(Path(line["log_path"]).read_text().splitlines()[0])
     assert run_start["base_url"] is None  # 沒寫 base_url 的模型不能走呼叫者環境裡的端點
     assert os.environ["OPENAI_BASE_URL"] == "http://callers-endpoint/v1"  # 執行完還原
+
+
+# ── code review 第二輪：更多防呆 ───────────────────────────────────────────
+
+@pytest.mark.parametrize("command", [["run", "--repeats", "abc"], ["run", "--repeats", "1.5"], ["check", "--repeat", "abc"]])
+def test_a_repeat_count_that_is_not_an_integer_is_rejected(tmp_path, command):
+    arguments = [*command, "--problems-dir", str(TOY_ROOT)]
+    if command[0] == "run":
+        arguments += ["--models", str(models_file(tmp_path)), "--out", str(tmp_path / "out")]
+
+    with pytest.raises(SystemExit) as stopped:
+        bench_main(arguments)
+
+    assert stopped.value.code == 2
+
+
+def test_the_plan_itself_refuses_a_repeat_count_below_one():
+    with pytest.raises(runner.ConfigError, match="repeats"):
+        plan_runs(["p1"], [model()], ["with_tests"], 0)
+
+
+@pytest.mark.parametrize("meta", [None, ["quantization"], "Q4_K_M"])
+def test_a_model_meta_that_is_not_an_object_is_a_configuration_error(tmp_path, meta):
+    path = models_file(tmp_path, labels=("x",), meta=meta)
+
+    with pytest.raises(runner.ConfigError, match="meta"):
+        runner.load_models(path)
