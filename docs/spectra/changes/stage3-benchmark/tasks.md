@@ -1,14 +1,14 @@
 ## 1. fixlab 命令列選項
 
-- [ ] 1.1 「條件的差別只在模型看得到哪些工具」：Workspace 能隱藏工具，隱藏的工具不在給模型的工具清單與驗證回覆用的 schema 裡，但程式自己仍能呼叫；fixlab 新增 `--hide-tool NAME`（可重複），名稱不存在時以退出碼 2 結束且不建事件檔。對應 Tools can be hidden from the model 的四個情境（不被提供、模型亂叫被當成不認識的工具、結束時自己跑的最終測試照常、未知名稱）。驗證：tests/test_tools.py 與 tests/test_cli.py 各情境一個測試。
-- [ ] 1.2 「請求選項：temperature 與額外的請求參數」：fixlab 新增 `--temperature` 與 `--extra-body`（JSON 物件，原樣交給請求的 extra_body；不是物件或不是 JSON 以退出碼 2 結束且不建檔），並讓 run_start 多 hidden_tools、temperature、extra_body 三個欄位（沒傳是空陣列、null、null，schema 仍是 1）。對應 run_start records the request options and hidden tools 的四個情境。驗證：tests/test_cli.py 各情境一個測試，其中「temperature 進了每一次請求」用假 client 檢查收到的參數。
+- [x] 1.1 「條件的差別只在模型看得到哪些工具」：Workspace 能隱藏工具，隱藏的工具不在給模型的工具清單與驗證回覆用的 schema 裡，但程式自己仍能呼叫；fixlab 新增 `--hide-tool NAME`（可重複），名稱不存在時以退出碼 2 結束且不建事件檔。對應 Tools can be hidden from the model 的四個情境（不被提供、模型亂叫被當成不認識的工具、結束時自己跑的最終測試照常、未知名稱）。驗證：tests/test_tools.py 與 tests/test_cli.py 各情境一個測試。
+- [x] 1.2 「請求選項：temperature 與額外的請求參數」：fixlab 新增 `--temperature` 與 `--extra-body`（JSON 物件，原樣交給請求的 extra_body；不是物件或不是 JSON 以退出碼 2 結束且不建檔），並讓 run_start 多 hidden_tools、temperature、extra_body 三個欄位（沒傳是空陣列、null、null，schema 仍是 1）。對應 run_start records the request options and hidden tools 的四個情境。驗證：tests/test_cli.py 各情境一個測試，其中「temperature 進了每一次請求」用假 client 檢查收到的參數。
 
-- [ ] 1.3 「評分器在乾淨暫存目錄重跑，用原版測試與固定的 pytest 參數」要用的環境：run_tests 的測試子行程環境固定 TZ 為 UTC、PYTHONHASHSEED 為 0、PYTEST_DISABLE_PLUGIN_AUTOLOAD 為 1（加在 child_environment，agent 自己的測試執行也一樣）。對應 The test run environment is deterministic 的兩個情境。驗證：tests/test_tools.py：測試讀得到這三個值（不論父行程設什麼）、斷言 anyio 模組沒被匯入的測試會通過（anyio 的 pytest 外掛靠 entry point 註冊，自動載入時才會被匯入）。
+- [x] 1.3 「評分器在乾淨暫存目錄重跑，用原版測試與固定的 pytest 參數」要用的環境：run_tests 的測試子行程環境固定 TZ 為 UTC、PYTHONHASHSEED 為 0、PYTEST_DISABLE_PLUGIN_AUTOLOAD 為 1（加在 child_environment，agent 自己的測試執行也一樣）。對應 The test run environment is deterministic 的兩個情境。驗證：tests/test_tools.py：測試讀得到這三個值（不論父行程設什麼）、斷言 anyio 模組沒被匯入的測試會通過（anyio 的 pytest 外掛靠 entry point 註冊，自動載入時才會被匯入）。
 
 ## 2. 題目格式與載入
 
-- [ ] 2.1 「題目放在 bench 資料夾，每題一個資料夾，隱藏測試不進工作目錄」：fixlab/bench/problems.py 能載入並驗證題目資料夾與 problem.json（缺資料夾或缺鍵時丟出指名題目與缺項的錯誤）、為 agent 建立只含 project 內容的暫存工作目錄、計算題目的內容摘要（SHA-256，任何檔案改變摘要就改變）。對應 Each problem is a self-contained folder、Hidden tests and the solution never reach the agent、A problem has a content digest。驗證：tests/test_bench_problems.py 各情境一個測試（載入、缺項被拒、工作目錄不含 hidden 與 solution 與 problem.json、改一個字摘要就變）。
-- [ ] 2.2 玩具題目：tests/fixtures/bench_toy 放一個最小的題目（兩個模組、一個 bug、可見測試失敗一個、fix 與 keep 各有測試、標準解），後面評分器、自我檢查、執行器、報告的測試都用它，不呼叫任何模型。驗證：對它載入成功，且標準解套上後三組測試都通過（tests/test_bench_problems.py）。
+- [x] 2.1 「題目放在 bench 資料夾，每題一個資料夾，隱藏測試不進工作目錄」：fixlab/bench/problems.py 能載入並驗證題目資料夾與 problem.json（缺資料夾或缺鍵時丟出指名題目與缺項的錯誤）、為 agent 建立只含 project 內容的暫存工作目錄、計算題目的內容摘要（SHA-256，任何檔案改變摘要就改變）。對應 Each problem is a self-contained folder、Hidden tests and the solution never reach the agent、A problem has a content digest。驗證：tests/test_bench_problems.py 各情境一個測試（載入、缺項被拒、工作目錄不含 hidden 與 solution 與 problem.json、改一個字摘要就變）。
+- [x] 2.2 玩具題目：tests/fixtures/bench_toy 放一個最小的題目（兩個模組、一個 bug、可見測試失敗一個、fix 與 keep 各有測試、標準解），後面評分器、自我檢查、執行器、報告的測試都用它，不呼叫任何模型。驗證：對它載入成功，且標準解套上後三組測試都通過（tests/test_bench_problems.py）。
 
 ## 3. 評分器
 

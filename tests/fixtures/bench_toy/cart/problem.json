@@ -1,0 +1,9 @@
+{
+  "id": "cart",
+  "domain": "購物車（測試用的玩具題目）",
+  "bug_type": "邊界條件",
+  "bug_files": ["shop/cart.py"],
+  "distractors": ["shop/legacy.py"],
+  "visible": {"total": 2, "failing": 1},
+  "hidden": {"fix": 3, "keep": 3}
+}
