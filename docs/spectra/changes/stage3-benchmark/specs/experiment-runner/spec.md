@@ -29,7 +29,7 @@ The condition `with_tests` SHALL run fixlab without hiding any tool. The conditi
 #### Scenario: Arguments of the two conditions
 
 - **WHEN** the runner builds the fixlab arguments for the same problem, model and repeat under both conditions
-- **THEN** the two argument lists are identical except that the `no_tests` list contains `--hide-tool run_tests`
+- **THEN** the two argument lists are identical except for the value of the `condition` meta entry and the added `--hide-tool run_tests` in the `no_tests` list
 
 ### Requirement: Each run uses a fresh copy of the problem
 
