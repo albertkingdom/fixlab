@@ -8,7 +8,7 @@ from pathlib import Path
 
 from fixlab.bench.grader import grade
 from fixlab.bench.problems import PROBLEMS_DIR, load_all, load_problem
-from fixlab.bench import runner
+from fixlab.bench import report, runner
 from fixlab.bench.selfcheck import DEFAULT_REPEAT, check_problem, check_problem_set
 from fixlab.sandbox import sandbox_available
 
@@ -85,6 +85,22 @@ def command_run(args) -> int:
     return 0
 
 
+def command_report(args) -> int:
+    try:
+        lines = runner.read_results(args.results)
+        models = runner.load_models(args.models) if args.models else []
+        problems = {problem.id: problem for problem in load_all(Path(args.problems_dir))}
+    except (runner.ConfigError, ValueError, OSError) as error:
+        print(f"fixlab.bench: error: {error}", file=sys.stderr)
+        return 2
+    text = report.render_report(lines, models, problems, examples=args.examples)
+    if args.out:
+        Path(args.out).write_text(text, encoding="utf-8")
+    else:
+        print(text)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m fixlab.bench", description="fixlab benchmark")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -111,6 +127,14 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--confirm", action="store_true", help="really call the models; every run costs money")
     add_problems_dir(run_parser)
     run_parser.set_defaults(func=command_run)
+
+    report_parser = commands.add_parser("report", help="turn results.jsonl into a markdown report")
+    report_parser.add_argument("results", help="the results.jsonl written by the run command")
+    report_parser.add_argument("--models", help="the models JSON file (for settings and prices)")
+    report_parser.add_argument("--examples", type=int, default=3, help="failed runs to list per outcome (default: 3)")
+    report_parser.add_argument("--out", help="write the report to this file instead of printing it")
+    add_problems_dir(report_parser)
+    report_parser.set_defaults(func=command_report)
     return parser
 
 

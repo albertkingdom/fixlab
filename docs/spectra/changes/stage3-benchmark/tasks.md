@@ -44,9 +44,9 @@
 
 ## 7. 彙整報告
 
-- [ ] 7.1 fixlab/bench/report.py 與 `report` 子命令：每個（模型、條件）一列的 markdown 表（次數、五種結果的次數與百分比、宣稱完成但沒修好、hidden_tool_calls 總數、步數中位數、token 平均、錯誤欄；同一組合有多行時只用最後一行）；有單價時印每次與每修好一題的成本並在模型旁印單價來源與日期，沒有單價只印 token；有 error 的執行不算入任何結果。對應 The summary table covers every model and condition、Cost uses a stated price。驗證：tests/test_bench_report.py：40 次含 2 次錯誤的計數、成本範例（總成本 0.20、每次 0.02、每修好一次 0.04）、無單價時不印成本。
-- [ ] 7.2 「報告：同題成對比較，信賴區間用對題目重抽樣」：同一模型兩個條件逐題算修好率的差，平均差，以及對題目重抽樣 2000 次、固定亂數種子的 95% 區間；同一個檔案報告跑兩次數字完全相同。對應 The two conditions are compared per problem with an interval。驗證：tests/test_bench_report.py：兩題的範例平均差是 +0.2、跑兩次區間相同。
-- [ ] 7.3 失敗實例、限制與警告：每種非 fixed 結果列最多指定數量（預設 3）的執行與其工具呼叫序列和事件檔路徑；報告結尾固定印限制說明（題數與次數、被測程式可偽造結果、題數由 15 到 20 降到 8）；題目摘要與目前不同、同題兩個摘要、各組次數不一致、題目不存在時印警告仍輸出。對應 Failed runs are shown with their event logs、The limits are always printed、Mismatched inputs produce warnings。驗證：tests/test_bench_report.py 各情境一個測試。
+- [x] 7.1 fixlab/bench/report.py 與 `report` 子命令：每個（模型、條件）一列的 markdown 表（次數、五種結果的次數與百分比、宣稱完成但沒修好、hidden_tool_calls 總數、步數中位數、token 平均、錯誤欄；同一組合有多行時只用最後一行）；有單價時印每次與每修好一題的成本並在模型旁印單價來源與日期，沒有單價只印 token；有 error 的執行不算入任何結果。對應 The summary table covers every model and condition、Cost uses a stated price。驗證：tests/test_bench_report.py：40 次含 2 次錯誤的計數、成本範例（總成本 0.20、每次 0.02、每修好一次 0.04）、無單價時不印成本。
+- [x] 7.2 「報告：同題成對比較，信賴區間用對題目重抽樣」：同一模型兩個條件逐題算修好率的差，平均差，以及對題目重抽樣 2000 次、固定亂數種子的 95% 區間；同一個檔案報告跑兩次數字完全相同。對應 The two conditions are compared per problem with an interval。驗證：tests/test_bench_report.py：兩題的範例平均差是 +0.2、跑兩次區間相同。
+- [x] 7.3 失敗實例、限制與警告：每種非 fixed 結果列最多指定數量（預設 3）的執行與其工具呼叫序列和事件檔路徑；報告結尾固定印限制說明（題數與次數、被測程式可偽造結果、題數由 15 到 20 降到 8）；題目摘要與目前不同、同題兩個摘要、各組次數不一致、題目不存在時印警告仍輸出。對應 Failed runs are shown with their event logs、The limits are always printed、Mismatched inputs produce warnings。驗證：tests/test_bench_report.py 各情境一個測試。
 
 ## 8. 真實實驗
 
