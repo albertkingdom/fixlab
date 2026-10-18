@@ -113,7 +113,7 @@ When a task ends with stop reason `error`, the session SHALL restore the convers
 
 ### Requirement: Tool calls are shown as readable blocks
 
-In interactive mode every tool call SHALL be shown on standard output as a block, in the order the calls run. The block starts with a header line `  ▸ <tool> <what it touches>`: for `read_file` the path (and the line range when one is given), for `list_files` the path (`.` when none), for `grep` the pattern and the path, for `edit_file` the path, for `write_file` the path and the number of characters, for `run_tests` the target (`.` when none). For `edit_file` the header is followed by the removed text as lines starting with `    - ` and the added text as lines starting with `    + `, at most 10 lines of each, each line cut to 200 characters, and a line `    … N more lines` when lines were left out. When the user is asked, the question follows. The block ends with a result line starting with `    ✓` or `    ✗`: `✓` when the call succeeded (for `run_tests` with the test summary, for example `✓ 5 passed in 0.01s`), `✗ 1 failed, 4 passed in 0.01s` when tests ran and failed, `✗ declined` when the user refused, `✗ blocked: <reason>` when a rule blocked it, and `✗ <reason>` for any other error. A blank line SHALL separate the typed task from the first block. The per-call lines SHALL NOT go to standard error in interactive mode.
+In interactive mode every tool call SHALL be shown on standard output as a block, in the order the calls run. The block starts with a header line `  ▸ <tool> <what it touches>`: for `read_file` the path (and the line range when one is given), for `list_files` the path (`.` when none), for `grep` the pattern and the path, for `edit_file` the path, for `write_file` the path and the number of characters, for `run_tests` the target (`.` when none). For `edit_file` the header is followed by the difference between the whole file before and after the edit, shown as changed regions: each region starts with a line `    @@ line N` (N is the first line shown, counted in the file before the edit) and shows 3 unchanged lines before and after each change. Unchanged lines and removed lines start with their line number in the file before the edit; removed lines have `-` after the number, added lines have `+` and no number, and unchanged lines have neither. Within one region, each run of removed lines and each run of added lines shows at most 10 lines, each cut to 200 characters, followed by a line `… N more lines` when lines were left out. At most 8 regions are shown, followed by `    … N more changes` when there are more. Changes that are close enough to share their context are one region. When the edit cannot be applied (the pre-check refuses it), no difference is shown and the block ends with the `✗` line. When the user is asked, the question follows. The block ends with a result line starting with `    ✓` or `    ✗`: `✓` when the call succeeded (for `run_tests` with the test summary, for example `✓ 5 passed in 0.01s`), `✗ 1 failed, 4 passed in 0.01s` when tests ran and failed, `✗ declined` when the user refused, `✗ blocked: <reason>` when a rule blocked it, and `✗ <reason>` for any other error. A blank line SHALL separate the typed task from the first block. The per-call lines SHALL NOT go to standard error in interactive mode.
 
 #### Scenario: A read followed by a confirmed edit
 
@@ -134,6 +134,21 @@ In interactive mode every tool call SHALL be shown on standard output as a block
 
 - **WHEN** the model replaces a 25-line text with a 12-line text
 - **THEN** the block shows 10 `-` lines followed by `… 15 more lines`, and 10 `+` lines followed by `… 2 more lines`
+
+#### Scenario: Context around a change
+
+- **WHEN** the model changes line 8 of a 20-line file
+- **THEN** the block shows `@@ line 5`, lines 5 to 7 as unchanged lines, line 8 as a `-` line, the new text as a `+` line, and lines 9 to 11 as unchanged lines
+
+#### Scenario: A change that a long edit would hide
+
+- **WHEN** one `edit_file` replaces a one-line docstring with a 15-line docstring and also changes a line four lines further down
+- **THEN** the block shows the first 10 added lines of the docstring, `… 5 more lines`, and then the second change as its own `-` and `+` lines
+
+#### Scenario: An edit that cannot be applied
+
+- **WHEN** the model calls `edit_file` with an `old_string` that does not occur in the file
+- **THEN** no `-` or `+` line is shown, no question is asked, and the block ends with a `✗` line
 
 ### Requirement: Each task ends with a footer line
 

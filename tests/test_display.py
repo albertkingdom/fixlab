@@ -29,36 +29,92 @@ def test_header_line_per_tool(name, args, expected):
 
 
 # ── 改檔的差異 ────────────────────────────────────────────────────────────
+# edit_diff_lines(改前整個檔案, 改後整個檔案)：只列有變的地方，前後各帶 3 行上下文，行號是改前的檔案
 
-def test_a_one_line_edit_shows_one_removed_and_one_added_line():
-    assert edit_diff_lines("x = 1", "x = 2") == ["    - x = 1", "    + x = 2"]
+def numbered(count, changes=None):
+    """count 行的檔案，每行是 "line N"；changes 是 {行號: 新文字}，回傳（改前, 改後）。"""
+    before = [f"line {n}" for n in range(1, count + 1)]
+    after = [(changes or {}).get(n, text) for n, text in enumerate(before, start=1)]
+    return "\n".join(before) + "\n", "\n".join(after) + "\n"
+
+
+def test_a_one_line_edit_shows_the_region_with_one_removed_and_one_added_line():
+    assert edit_diff_lines("x = 1\n", "x = 2\n") == ["    @@ line 1", "    1 - x = 1", "      + x = 2"]
 
 
 def test_multi_line_text_is_shown_line_by_line_with_its_indentation():
     assert edit_diff_lines("if a:\n    b()\n", "if a:\n    c()\n") == [
-        "    - if a:", "    -     b()", "    + if a:", "    +     c()"]
+        "    @@ line 1", "    1   if a:", "    2 -     b()", "      +     c()"]
+
+
+# Scenario: Context around a change
+def test_a_change_comes_with_three_unchanged_lines_before_and_after():
+    before, after = numbered(20, {8: "changed"})
+    assert edit_diff_lines(before, after) == [
+        "    @@ line 5",
+        "     5   line 5", "     6   line 6", "     7   line 7",
+        "     8 - line 8",
+        "       + changed",
+        "     9   line 9", "    10   line 10", "    11   line 11",
+    ]
+
+
+def test_two_changes_far_apart_are_two_regions():
+    before, after = numbered(30, {5: "a", 25: "b"})
+    lines = edit_diff_lines(before, after)
+    assert [line for line in lines if "@@" in line] == ["    @@ line 2", "    @@ line 22"]
+
+
+def test_two_changes_close_together_share_one_region():
+    before, after = numbered(30, {10: "a", 14: "b"})
+    assert len([line for line in edit_diff_lines(before, after) if "@@" in line]) == 1
 
 
 # Scenario: A long edit
 def test_a_long_edit_is_cut_to_ten_lines_each_with_the_count_left_out():
-    old = "\n".join(f"old {n}" for n in range(25))
-    new = "\n".join(f"new {n}" for n in range(12))
+    old = "\n".join(f"old {n}" for n in range(25)) + "\n"
+    new = "\n".join(f"new {n}" for n in range(12)) + "\n"
     lines = edit_diff_lines(old, new)
 
-    removed = [line for line in lines if line.startswith("    - ")]
-    added = [line for line in lines if line.startswith("    + ")]
+    removed = [line for line in lines if " - old" in line]
+    added = [line for line in lines if " + new" in line]
     assert len(removed) == 10 and len(added) == 10
-    assert lines[10] == "    … 15 more lines"  # 25 行只顯示 10 行，少了 15 行
-    assert lines[-1] == "    … 2 more lines"
+    assert lines[11].strip() == "… 15 more lines"  # 標題一行，再 10 行刪掉的，然後是少了幾行
+    assert lines[-1].strip() == "… 2 more lines"
+
+
+# Scenario: A change that a long edit would hide
+def test_a_second_change_is_still_shown_after_a_long_one():
+    before = 'def f(x):\n    """doc"""\n    a = 1\n    b = 2\n    c = 3\n    return [x.groups()]\n'
+    docstring = '    """doc\n' + "".join(f"    note {n}\n" for n in range(13)) + '    """\n'   # 15 行
+    after = before.replace('    """doc"""\n', docstring).replace("[x.groups()]", "x.findall()")
+    shown = "\n".join(edit_diff_lines(before, after))
+
+    assert "… 5 more lines" in shown                    # 長的那段被截了
+    assert "- " + "    return [x.groups()]" in shown   # 但後面那處變動看得到
+    assert "+ " + "    return x.findall()" in shown
+
+
+def test_at_most_eight_regions_are_shown_then_how_many_more():
+    changes = {n: "changed" for n in range(5, 101, 10)}  # 10 處，彼此相距 10 行，不共用上下文
+    before, after = numbered(100, changes)
+    lines = edit_diff_lines(before, after)
+
+    assert len([line for line in lines if "@@" in line]) == 8
+    assert lines[-1].strip() == "… 2 more changes"
 
 
 def test_a_very_long_line_is_cut_to_200_characters():
-    (removed, added) = edit_diff_lines("x" * 500, "y")
-    assert removed == "    - " + "x" * 200 + "…" and "x" * 201 not in removed
+    removed = edit_diff_lines("x" * 500 + "\n", "y\n")[1]
+    assert removed == "    1 - " + "x" * 200 + "…" and "x" * 201 not in removed
 
 
 def test_deleting_text_shows_no_added_lines():
-    assert edit_diff_lines("gone", "") == ["    - gone"]
+    assert edit_diff_lines("keep\ngone\n", "keep\n") == ["    @@ line 1", "    1   keep", "    2 - gone"]
+
+
+def test_identical_files_show_nothing():
+    assert edit_diff_lines("same\n", "same\n") == []
 
 
 # ── 結果行 ────────────────────────────────────────────────────────────────
@@ -139,5 +195,5 @@ def test_paint_adds_escape_codes_only_when_color_is_on(monkeypatch):
 def test_colored_lines_keep_their_text(monkeypatch):
     monkeypatch.setattr("fixlab.display.color_enabled", lambda stream=None: True)
     assert "5 passed in 0.01s" in result_line(ToolResult("5 passed in 0.01s", True, {"tests_passed": True}))
-    assert "\x1b[" in edit_diff_lines("a", "b")[0]
+    assert "\x1b[" in edit_diff_lines("a\n", "b\n")[0]
     assert "(3 steps" in footer_line(agent_result())

@@ -4,11 +4,14 @@
 顏色只在輸出是終端機、而且沒有設環境變數 NO_COLOR 時才開（NO_COLOR 是常見的慣例，見 no-color.org）。
 """
 
+import difflib
 import os
 import re
 import sys
 
-MAX_DIFF_LINES = 10   # 改檔的差異，每一段（刪掉的、加上的）最多顯示幾行
+CONTEXT_LINES = 3     # 改檔的差異，每處變動前後各帶幾行沒變的上下文
+MAX_DIFF_LINES = 10   # 一處變動裡，連續刪掉的（或連續加上的）最多顯示幾行
+MAX_DIFF_REGIONS = 8  # 一次改檔最多顯示幾處變動，其餘只說還有幾處
 MAX_LINE_CHARS = 200  # 每一行最多顯示幾個字元
 STYLES = {"green": "32", "red": "31", "dim": "2", "bold": "1"}  # ANSI 顏色碼
 
@@ -52,18 +55,46 @@ def call_detail(name: str, args: dict) -> str:
     return ""
 
 
-def edit_diff_lines(old: str, new: str) -> list[str]:
-    """改檔要顯示的行：刪掉的以 - 開頭，加上的以 + 開頭。"""
-    return changed_lines(old, "-", "red") + changed_lines(new, "+", "green")
+def edit_diff_lines(before: str, after: str) -> list[str]:
+    """改檔要顯示的行：整個檔案改前與改後的差異。每一處變動以「@@ line N」開頭（N 是這一處第一個顯示的行，
+    行號都是改前的檔案），前後各帶 3 行沒變的上下文。沒變的行與刪掉的行帶行號，刪掉的有 -；加上的有 +，不帶行號。
+    相近的變動共用上下文，算同一處。"""
+    old_lines = before.splitlines()
+    new_lines = after.splitlines()
+    matcher = difflib.SequenceMatcher(None, old_lines, new_lines, autojunk=False)
+    regions = list(matcher.get_grouped_opcodes(CONTEXT_LINES))
+    width = len(str(len(old_lines)))  # 行號欄的寬度，讓每一行對齊
 
-
-def changed_lines(text: str, sign: str, color: str) -> list[str]:
-    lines = text.splitlines()
-    shown = [cut(line) for line in lines[:MAX_DIFF_LINES]]
-    result = [paint(f"    {sign} {line}", color) for line in shown]
-    if len(lines) > MAX_DIFF_LINES:
-        result.append(f"    … {len(lines) - MAX_DIFF_LINES} more lines")
+    result = []
+    for region in regions[:MAX_DIFF_REGIONS]:
+        first_shown = region[0][1] + 1
+        result.append(paint(f"    @@ line {first_shown}", "dim"))
+        for kind, old_start, old_end, new_start, new_end in region:
+            if kind == "equal":
+                for index in range(old_start, old_end):
+                    result.append(paint(diff_line(index + 1, " ", old_lines[index], width), "dim"))
+            else:
+                result += run_of_lines(old_lines[old_start:old_end], old_start + 1, "-", "red", width)
+                result += run_of_lines(new_lines[new_start:new_end], None, "+", "green", width)
+    if len(regions) > MAX_DIFF_REGIONS:
+        result.append(f"    … {len(regions) - MAX_DIFF_REGIONS} more changes")
     return result
+
+
+def run_of_lines(lines: list[str], first_number: int | None, sign: str, color: str, width: int) -> list[str]:
+    """連續刪掉（或加上）的行，最多顯示 MAX_DIFF_LINES 行，多的只說還有幾行。first_number 是第一行的行號，加上的行沒有。"""
+    result = []
+    for offset, line in enumerate(lines[:MAX_DIFF_LINES]):
+        number = None if first_number is None else first_number + offset
+        result.append(paint(diff_line(number, sign, line, width), color))
+    if len(lines) > MAX_DIFF_LINES:
+        result.append(f"    {' ' * width}   … {len(lines) - MAX_DIFF_LINES} more lines")
+    return result
+
+
+def diff_line(number: int | None, sign: str, text: str, width: int) -> str:
+    label = str(number).rjust(width) if number is not None else " " * width
+    return f"    {label} {sign} {cut(text)}".rstrip()
 
 
 def cut(line: str) -> str:

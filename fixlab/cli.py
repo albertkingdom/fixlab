@@ -23,8 +23,8 @@ from fixlab.display import call_header, edit_diff_lines, footer_line, result_lin
 from fixlab.loop import DEFAULT_MAX_STEPS, run_agent
 from fixlab.sandbox import sandbox_status
 from fixlab.telemetry import EventLog, default_log_dir
-from fixlab.tools import register_tools
-from fixlab.workspace import FIXLAB_ROOT, Workspace, iter_files, looks_like_test_file
+from fixlab.tools import plan_edit, register_tools
+from fixlab.workspace import FIXLAB_ROOT, ToolError, Workspace, iter_files, looks_like_test_file
 
 # 送給模型的任務文字維持英文。
 DEFAULT_TASK = "The tests fail under pytest. Find the cause and fix it."
@@ -191,13 +191,26 @@ class ShownWorkspace(Workspace):
 
     def call(self, name: str, args: dict):
         print(call_header(name, args))
-        old, new = args.get("old_string"), args.get("new_string")
-        if name == "edit_file" and isinstance(old, str) and isinstance(new, str):
-            for line in edit_diff_lines(old, new):
+        if name == "edit_file":
+            for line in self.edit_preview(args):
                 print(line)
         result = super().call(name, args)
         print(result_line(result))
         return result
+
+    def edit_preview(self, args: dict) -> list[str]:
+        """改檔會造成的差異：整個檔案改前與改後的比對。用執行時同一份驗證（plan_edit）；套不上的修改
+        （參數不對、找不到字串、唯讀檔…）不顯示差異，結果行會說明原因。"""
+        if set(args) != {"path", "old_string", "new_string"}:
+            return []
+        path, old, new = args["path"], args["old_string"], args["new_string"]
+        if not all(isinstance(value, str) for value in (path, old, new)):
+            return []
+        try:
+            _, before = plan_edit(self, path, old, new)
+        except (ToolError, OSError):
+            return []
+        return edit_diff_lines(before, before.replace(old, new, 1))
 
 
 # 會改檔或執行程式的工具才問；讀取類工具直接放行

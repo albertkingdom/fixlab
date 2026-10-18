@@ -381,8 +381,13 @@ def test_a_whole_session_looks_like_this(session, capsys):
         "  ▸ read_file timelog/parser.py\n"
         "    ✓\n"
         "  ▸ edit_file timelog/parser.py\n"
-        '    - [re.match(r"(\\d+)([hm])", text).groups()]\n'
-        '    + re.findall(r"(\\d+)([hm])", text)\n'
+        "    @@ line 9\n"
+        "     9       text = text.strip()\n"
+        '    10       if not re.fullmatch(r"(\\d+[hm])+", text):\n'
+        '    11           raise ValueError(f"invalid duration: {text!r}")\n'
+        '    12 -     units = [re.match(r"(\\d+)([hm])", text).groups()]\n'
+        '       +     units = re.findall(r"(\\d+)([hm])", text)\n'
+        '    13       return sum(int(number) * (60 if unit == "h" else 1) for number, unit in units)\n'
         "    Allow? [y]es / [a]lways for this tool / [N]o: y\n"
         "    ✓\n"
         "\n"
@@ -425,6 +430,31 @@ def test_a_call_with_an_empty_target_fails_without_a_question(session, capsys):
     out = capsys.readouterr().out
     assert "Allow?" not in out
     assert "    ✗ path must be a non-empty string\n" in out
+
+
+# Scenario: An edit that cannot be applied
+def test_an_edit_that_cannot_be_applied_shows_no_difference_and_no_question(session, capsys):
+    missing = native("edit_file", path=PARSER, old_string="this text is not in the file", new_string="x")
+    session(FakeClient([(None, [missing]), ("OK.", None)]), ["fix it"])
+
+    out = capsys.readouterr().out
+    assert "Allow?" not in out and "@@ line" not in out  # 沒有提問，也沒有差異
+    assert "    ✗ old_string occurs 0 times" in out
+
+
+# Scenario: A change that a long edit would hide
+def test_a_change_after_a_long_one_is_still_shown(session, capsys):
+    docstring = '    """doc\n' + "".join(f"    note {n}\n" for n in range(13)) + '    """\n'  # 把一行的說明換成 15 行
+    middle = ('    text = text.strip()\n    if not re.fullmatch(r"(\\d+[hm])+", text):\n'
+              '        raise ValueError(f"invalid duration: {text!r}")\n    units = ')
+    old = '    """回傳 text 代表的分鐘數，格式不對時拋 ValueError。"""\n' + middle + BUGGY
+    new = docstring + middle + FIXED
+    edit = native("edit_file", path=PARSER, old_string=old, new_string=new)
+    session(FakeClient([(None, [edit]), ("OK.", None)]), ["fix it", "n"])
+
+    out = capsys.readouterr().out
+    assert "… 5 more lines" in out                                   # 長的那段被截了
+    assert '+     units = re.findall(r"(\\d+)([hm])", text)' in out   # 但後面那處變動看得到
 
 
 # Scenario: A reply that starts with blank lines
