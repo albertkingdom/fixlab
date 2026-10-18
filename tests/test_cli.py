@@ -454,3 +454,58 @@ def test_fixlab_commit_is_none_when_fixlab_sits_inside_someone_elses_repo(tmp_pa
     nested.mkdir(parents=True)
     monkeypatch.setattr("fixlab.cli.FIXLAB_ROOT", nested)
     assert fixlab_commit() is None  # 不能把別人專案的 commit 記成 fixlab 的版本
+
+
+# ── 隱藏工具與請求選項：對應 agent-tools 的 Tools can be hidden from the model 與 run-telemetry 的 run_start records the request options ──
+
+def test_a_hidden_tool_is_not_offered_and_a_call_to_it_is_rejected(project, home, capsys):
+    client = FakeClient([(None, [native("run_tests")]), ("Done.", None)])
+    run_fix(project, client, "--hide-tool", "run_tests")
+
+    out = capsys.readouterr().out
+    assert "run_tests" not in [spec["function"]["name"] for spec in client.tools[0]]
+    traces = [line["record"] for line in event_lines(home) if line["event"] == "trace"]
+    assert traces[0]["event"] == "invalid_tool_call" and "run_tests" in str(traces[0]["parse_errors"])
+    assert "final test run:" in out and "RESULT:" in out  # fixlab 自己結束時跑的最終測試不受隱藏影響
+
+
+def test_hiding_an_unknown_tool_exits_2_and_creates_no_event_file(project, home, capsys):
+    assert run_fix(project, FakeClient([]), "--hide-tool", "bash") == 2
+
+    assert "bash" in capsys.readouterr().err
+    assert not list(home.glob("**/events.jsonl"))
+
+
+def test_run_start_records_the_request_options_and_hidden_tools(project, home):
+    extra = '{"provider": {"order": ["Venice"], "allow_fallbacks": false}}'
+    run_fix(project, FakeClient([("Done.", None)]),
+            "--hide-tool", "run_tests", "--temperature", "0.2", "--extra-body", extra)
+
+    run_start = event_lines(home)[0]
+    assert run_start["hidden_tools"] == ["run_tests"]
+    assert run_start["temperature"] == 0.2
+    assert run_start["extra_body"] == {"provider": {"order": ["Venice"], "allow_fallbacks": False}}
+    assert run_start["schema"] == 1
+
+
+def test_run_start_options_default_to_empty(project, home):
+    run_fix(project, FakeClient([("Done.", None)]))
+
+    run_start = event_lines(home)[0]
+    assert run_start["hidden_tools"] == [] and run_start["temperature"] is None and run_start["extra_body"] is None
+
+
+@pytest.mark.parametrize("text", ["[1, 2]", "not json", '"a string"'])
+def test_an_extra_body_that_is_not_a_json_object_exits_2_and_creates_no_file(project, home, capsys, text):
+    assert run_fix(project, FakeClient([]), "--extra-body", text) == 2
+
+    assert "--extra-body" in capsys.readouterr().err
+    assert not list(home.glob("**/events.jsonl"))
+
+
+def test_temperature_and_extra_body_reach_every_request(project):
+    client = FakeClient([(None, [native("list_files")]), ("Done.", None)])
+    run_fix(project, client, "--temperature", "0.2", "--extra-body", '{"seed": 7}')
+
+    assert len(client.kwargs) == 2
+    assert all(kw["temperature"] == 0.2 and kw["extra_body"] == {"seed": 7} for kw in client.kwargs)

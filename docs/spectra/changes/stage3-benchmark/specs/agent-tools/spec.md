@@ -9,10 +9,10 @@ The environment of every test subprocess started by `run_tests` SHALL set `TZ` t
 - **WHEN** a test run executes a test that reads `TZ`, `PYTHONHASHSEED` and `PYTEST_DISABLE_PLUGIN_AUTOLOAD` from its environment
 - **THEN** the values are `UTC`, `0` and `1`, whatever the parent process had
 
-#### Scenario: A plugin look-alike file is not loaded
+#### Scenario: Installed pytest plugins are not loaded
 
-- **WHEN** the project root contains a file `trio.py` that prints a passing summary, and `run_tests` runs
-- **THEN** the file is not executed as a plugin and the real result is reported
+- **WHEN** `run_tests` runs a test that asserts the module `anyio` has not been imported, in an environment where the anyio pytest plugin is installed and registered by entry point
+- **THEN** the test passes, because plugins registered by entry point are not loaded automatically
 
 ### Requirement: Tools can be hidden from the model
 

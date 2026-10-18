@@ -3,7 +3,7 @@
 - [ ] 1.1 「條件的差別只在模型看得到哪些工具」：Workspace 能隱藏工具，隱藏的工具不在給模型的工具清單與驗證回覆用的 schema 裡，但程式自己仍能呼叫；fixlab 新增 `--hide-tool NAME`（可重複），名稱不存在時以退出碼 2 結束且不建事件檔。對應 Tools can be hidden from the model 的四個情境（不被提供、模型亂叫被當成不認識的工具、結束時自己跑的最終測試照常、未知名稱）。驗證：tests/test_tools.py 與 tests/test_cli.py 各情境一個測試。
 - [ ] 1.2 「請求選項：temperature 與額外的請求參數」：fixlab 新增 `--temperature` 與 `--extra-body`（JSON 物件，原樣交給請求的 extra_body；不是物件或不是 JSON 以退出碼 2 結束且不建檔），並讓 run_start 多 hidden_tools、temperature、extra_body 三個欄位（沒傳是空陣列、null、null，schema 仍是 1）。對應 run_start records the request options and hidden tools 的四個情境。驗證：tests/test_cli.py 各情境一個測試，其中「temperature 進了每一次請求」用假 client 檢查收到的參數。
 
-- [ ] 1.3 「評分器在乾淨暫存目錄重跑，用原版測試與固定的 pytest 參數」要用的環境：run_tests 的測試子行程環境固定 TZ 為 UTC、PYTHONHASHSEED 為 0、PYTEST_DISABLE_PLUGIN_AUTOLOAD 為 1（加在 child_environment，agent 自己的測試執行也一樣）。對應 The test run environment is deterministic 的兩個情境。驗證：tests/test_tools.py：測試讀得到這三個值（不論父行程設什麼）、根目錄放 trio.py 時不會被當外掛載入。
+- [ ] 1.3 「評分器在乾淨暫存目錄重跑，用原版測試與固定的 pytest 參數」要用的環境：run_tests 的測試子行程環境固定 TZ 為 UTC、PYTHONHASHSEED 為 0、PYTEST_DISABLE_PLUGIN_AUTOLOAD 為 1（加在 child_environment，agent 自己的測試執行也一樣）。對應 The test run environment is deterministic 的兩個情境。驗證：tests/test_tools.py：測試讀得到這三個值（不論父行程設什麼）、斷言 anyio 模組沒被匯入的測試會通過（anyio 的 pytest 外掛靠 entry point 註冊，自動載入時才會被匯入）。
 
 ## 2. 題目格式與載入
 

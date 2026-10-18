@@ -126,6 +126,7 @@ class Workspace:
         self.confirm = confirm
         self.python = python  # run_tests 用哪個直譯器；不 resolve，venv 的 python 是符號連結，解析後會找不到套件
         self._tools: dict[str, Tool] = {}
+        self._hidden: list[str] = []  # 不給模型看的工具（見 hide）
         # 模型「整檔、未截斷」讀過的檔案：解析後的真實路徑 → 讀的當下的內容指紋。write_file 覆寫既有檔案前要查它：
         # 沒有記錄，代表模型沒看過；指紋和現在的內容不一樣，代表讀過之後被別人改了（例如使用者在編輯器裡改）。
         # 兩種情況都不能整檔覆寫，不然會憑空改寫、或蓋掉別人的修改。edit_file 成功後會把該檔移除。
@@ -135,8 +136,20 @@ class Workspace:
                  precheck: Callable[..., object] | None = None) -> None:
         self._tools[name] = Tool(func, schema, description, precheck)
 
+    def hide(self, name: str) -> None:
+        """不讓模型看到這個工具：它不在工具清單、也不在驗證回覆用的 schema 裡，所以模型亂叫只會被當成不認識的工具。
+        程式自己仍可用 call() 呼叫它（一次性模式結束時自己再跑一次測試就是）。名稱不存在就丟 ValueError。"""
+        if name not in self._tools:
+            raise ValueError(f"unknown tool {name!r} (tools: {', '.join(self._tools)})")
+        if name not in self._hidden:
+            self._hidden.append(name)
+
+    @property
+    def hidden_tools(self) -> list[str]:
+        return list(self._hidden)
+
     def tool_specs(self) -> list[dict]:
-        """送給模型的工具清單（OpenAI 格式）。"""
+        """送給模型的工具清單（OpenAI 格式）。隱藏的工具不在裡面。"""
         # schema 裡不存 "type": "object"，在這裡統一補上，之後每個工具和測試的假工具就不會漏寫。
         return [
             {
@@ -148,11 +161,12 @@ class Workspace:
                 },
             }
             for name, tool in self._tools.items()
+            if name not in self._hidden
         ]
 
     def schemas(self) -> dict[str, dict]:
         """給 toolparse.parse_message 驗證用的 {工具名稱: schema}。"""
-        return {name: tool.schema for name, tool in self._tools.items()}
+        return {name: tool.schema for name, tool in self._tools.items() if name not in self._hidden}
 
     def resolve_inside(self, rel: str) -> Path:
         """把相對路徑解析成工作目錄內的真實路徑；不合規就 raise。"""

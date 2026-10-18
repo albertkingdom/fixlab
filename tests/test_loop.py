@@ -34,11 +34,13 @@ class FakeClient:
         self.replies = list(replies)
         self.sent = []   # 每次請求當下的對話（複製一份，之後迴圈還會繼續加訊息）
         self.tools = []  # 每次請求的 tools 參數
+        self.kwargs = []  # 每次請求多帶的參數（max_tokens、temperature、extra_body…）
         self.chat = NS(completions=NS(create=self._create))
 
     def _create(self, model, messages, tools, **kw):
         self.sent.append(list(messages))
         self.tools.append(tools)
+        self.kwargs.append(kw)
         reply = self.replies.pop(0)
         if isinstance(reply, BaseException):  # 例外，或 KeyboardInterrupt（模擬 Ctrl-C）
             raise reply
