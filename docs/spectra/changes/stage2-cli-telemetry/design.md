@@ -193,6 +193,14 @@
   - 差異顯示會藏掉改動：要求只加 docstring，模型的 `edit_file` 順便把 `re.match` 改成 `re.findall`（等於修了 bug）。差異每段最多 10 行，按 y 時畫面上是 `… 10 more lines`，看不到尾端的邏輯改動。→ 已在任務 3.9 處理：改成整檔比對，只列有變的地方，每處變動各自截斷。
   - 模型空回覆很常見：第一次 session 的 16 步裡有 6 步是 `empty response`（`invalid_tool_call`），每次吃掉一步。第一個任務在拒絕一次加上這些失敗後，4 步就以 `stuck` 結束（`denied_calls` 1、`stuck_failures` 3）。
   - 小問題：模型回覆開頭帶 `\n\n`，答案前面多出 2 到 3 個空行。→ 已在任務 3.10 處理。沒有任何工具呼叫的任務，答案前仍有兩個空行（打字那行後面一個、答案前一個），先不處理。
+- [code review 的建議等級意見，延後處理（2026-10-18，範圍 main..HEAD）。重要等級的兩筆已修，見任務 3.11、3.12]
+  - 一次性模式按 Ctrl-C：印 traceback，事件檔只有 `run_start` 與 `task_start`，沒有 `task_end`。規格允許被殺掉的執行沒有 `task_end`，traceback 從階段 1 就有。→ 之後可在 `run_once` 攔截 `KeyboardInterrupt` 並寫 `stop_reason: interrupted` 的 `task_end`。
+  - 被中斷任務的 `task_end` 的步數與 token 是 `null`（任務 3.4 的設計）：已花的 token 沒有記到，統計時要略過這種列。→ 之後可讓迴圈把部分結果隨中斷帶出來。
+  - 互動模式的 `edit_file` 在顯示差異、`precheck`、工具本身各驗證一次，各讀一次檔；檔案很大時是多餘的 I/O。→ 之後可讓預覽與 `precheck` 共用第一次的結果。
+  - 以 `/` 開頭但不是 `/exit`、`/reset` 的輸入（例如 `/help`）會被當成任務送給模型，花一次呼叫；`--task` 搭配 `-i` 被默默忽略。前者 README 已寫明，後者 `--help` 寫了「one-shot only」。→ 之後可警告。
+  - `EventLog.close()` 之後再 `write` 會拋 `ValueError`（沒被 `except OSError` 攔住）；目前沒有程式路徑會這樣。→ `close` 時一併設 `_broken`。
+  - `EventLog` 在建立 `Workspace` 之前就開檔，若建立失敗檔案不會被關閉。review 提出，沒有重現：`Workspace` 與 `register_tools` 實際上不會拋例外。
+  - 已記錄、不處理：拒絕三輪算 `stuck`（見 Open Questions；互動模式的紀錄不評分，不影響 benchmark）、對話長度沒有上限（見上面的 Risks 與 README 的已知限制）。
 
 ## Migration Plan
 
