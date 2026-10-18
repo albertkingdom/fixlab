@@ -177,10 +177,17 @@ def run_task(client, model: str, ws: Workspace, args, log: EventLog, session: li
             print()
     print(footer_line(result))
     if result.stop_reason == "error":
-        # 請求失敗：對話停在一則沒有回覆的 user 訊息，下一個任務接上去會變成兩則連續的 user 訊息，
-        # 有些模型的模板會直接拒絕。跑滿步數與卡住則不同，對話仍然完整，使用者可以叫模型接著做。
-        del session[before:]
-        print("this task was discarded because the request failed")
+        did_something = any(message["role"] in ("assistant", "tool") for message in session[before:])
+        if not did_something:
+            # 第一個請求就失敗：這個任務只多了（第一個任務還有 system prompt 與）一則沒有回覆的 user 訊息，
+            # 下一個任務接上去會變成兩則連續的 user 訊息，有些模型的模板會直接拒絕。沒有做過任何事，丟掉就好。
+            del session[before:]
+            print("this task was discarded because the request failed")
+        else:
+            # 前面已經做了一些事（改過的檔案還在磁碟上）：和 Ctrl-C 一樣保留，接一則說明給下一個任務的模型看，
+            # 不然它不知道檔案被改過。跑滿步數與卡住也是保留，對話仍然完整，使用者可以叫模型接著做。
+            session.append({"role": "assistant", "content": REQUEST_FAILED_NOTE})
+            print("the request failed; what was done so far is kept (files may already have been changed; use /reset to start over)")
     # 互動模式使用者在場，想驗證可以直接叫模型跑測試，所以沒有最後的測試結果與檔案變動
     log.write("task_end", task=number, **task_result_fields(result), final_tests=None, changed_files=None)
 
@@ -216,6 +223,7 @@ class ShownWorkspace(Workspace):
 # 會改檔或執行程式的工具才問；讀取類工具直接放行
 ASKED_TOOLS = ("edit_file", "write_file", "run_tests")
 INTERRUPT_NOTE = "[The user interrupted this task.]"  # 接在被打斷的任務後面，給下一個任務的模型看
+REQUEST_FAILED_NOTE = "[The task stopped because the request failed.]"  # 同上，用在請求失敗、但前面已經做了一些事的任務
 
 
 def make_asker():

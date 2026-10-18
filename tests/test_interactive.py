@@ -180,6 +180,7 @@ def test_a_task_can_use_the_tools_and_edit_the_project(session, project):
 
 INTERRUPT_MESSAGE = "interrupted; what was done so far is kept (files may already have been changed; use /reset to start over)"
 INTERRUPT_NOTE = {"role": "assistant", "content": "[The user interrupted this task.]"}
+REQUEST_FAILED_NOTE = {"role": "assistant", "content": "[The task stopped because the request failed.]"}
 
 
 # Scenario: Interrupted at a permission question
@@ -242,6 +243,19 @@ def test_a_failed_request_discards_its_task_and_the_next_one_is_well_formed(sess
         {"role": "assistant", "content": "Done."},
         {"role": "user", "content": "add a docstring"},
     ]
+
+
+# Scenario: A request fails after the task already changed something
+def test_a_failed_request_after_progress_keeps_what_was_done(session, capsys):
+    client = FakeClient([(None, [an_edit()]), RuntimeError("boom"), ("Documented.", None)])
+    session(client, ["fix it", "y", "add a docstring"])
+
+    out = capsys.readouterr().out
+    assert "the request failed; what was done so far is kept" in out and "discarded" not in out
+    roles = [m["role"] for m in client.sent[2]]
+    assert roles == ["system", "user", "assistant", "tool", "assistant", "user"]  # 編輯與結果都還在，後面接一則說明
+    assert client.sent[2][4] == REQUEST_FAILED_NOTE
+    assert client.sent[2][-1]["content"] == "add a docstring"
 
 
 def test_a_failure_in_the_first_task_leaves_the_session_empty(session):

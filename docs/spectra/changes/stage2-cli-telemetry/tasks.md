@@ -29,6 +29,8 @@
 - [x] 3.8 會被工具拒絕的呼叫不再先問（3.6 實測：`run_tests` 的 `target` 是空字串，使用者按 y 之後才失敗）：`Tool` 加選用的 `precheck`，`Workspace.call` 在結構檢查之後、`confirm` 之前呼叫；`edit_file`、`write_file`、`run_tests` 各把工具開頭的驗證拆成 precheck，工具本身也呼叫它（驗證只有一份）。對應 tool-permissions 的 Calls the tool would refuse are not asked about 與 A read-only file is not asked about。驗證：tests/test_isolation.py 與 tests/test_interactive.py 各情境一個測試。
 - [x] 3.9 改檔差異改成整檔比對加上下文（3.6 實測：差異每段截 10 行，藏掉了順手改的 `re.match` 改成 `re.findall`）：`ShownWorkspace` 在 precheck 通過時讀檔、套用修改，`edit_diff_lines(before, after)` 以 difflib 分組，每處變動前後 3 行上下文、改前行號、每段最多 10 行、最多 8 處；套不上時不顯示差異。對應 interactive-session 的 Tool calls are shown as readable blocks（Context around a change、A change that a long edit would hide、An edit that cannot be applied）。驗證：tests/test_display.py 與 tests/test_interactive.py 各情境一個測試。
 - [x] 3.10 最終回覆去掉開頭與結尾的空行（3.6 實測：模型回覆以 `\n\n` 開頭，答案前多出 2 到 3 個空行）：`run_task` 印答案前用 `strip("\n")`。對應 interactive-session 的 The model's final reply is shown（A reply that starts with blank lines）。驗證：tests/test_interactive.py 一個測試。
+- [x] 3.11 code review 發現：請求在任務做了一些事之後失敗時，不再丟掉整個任務（改過的檔案還在磁碟上，模型卻不記得）：對話裡已有 assistant 或 tool 訊息就保留並接上 `[The task stopped because the request failed.]`、印出提醒；第一個請求就失敗才丟掉。對應 interactive-session 的 A task that fails with a request error keeps what it already did。驗證：tests/test_interactive.py 一個測試。
+- [x] 3.12 code review 發現：`fixlab_commit` 只在 fixlab 的資料夾自己就是 git 工作樹最上層時才記 commit，在別人的 repo 底下（例如裝進專案的 `.venv`）記 None。驗證：tests/test_cli.py 兩個測試。
 
 ## 4. 文件與收尾
 

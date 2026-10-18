@@ -117,7 +117,12 @@ tool: error: not run, because the user interrupted the task
 
 ### 請求失敗不一樣
 
-請求失敗（網路、伺服器錯誤）時，對話停在一則**沒有回覆**的使用者訊息，沒有可保留的完成內容，下一個任務接上去會變成兩則連續的使用者訊息，有些模型的模板會拒絕。所以這種情況仍然把整個任務丟掉，並印 `this task was discarded because the request failed`。跑滿步數（`max_steps`）和卡住（`stuck`）則保留：對話仍然完整，使用者可以接著說「繼續」。
+請求失敗（網路、伺服器錯誤）要看任務做到哪裡：
+
+- **第一個請求就失敗**：對話只多了一則**沒有回覆**的使用者訊息，下一個任務接上去會變成兩則連續的使用者訊息，有些模型的模板會拒絕。所以整個丟掉，並印 `this task was discarded because the request failed`。
+- **已經做了一些事**：改過的檔案還在磁碟上，所以和 Ctrl-C 一樣保留，接一則 `[The task stopped because the request failed.]` 給下一個任務的模型看，並提醒你檔案可能已被改過。
+
+跑滿步數（`max_steps`）和卡住（`stuck`）也保留：對話仍然完整，使用者可以接著說「繼續」。
 
 ## 畫面
 

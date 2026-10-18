@@ -97,14 +97,19 @@ When a task ends with stop reason `done`, interactive mode SHALL print the model
 - **WHEN** the model ends a task with the reply "\n\nFixed parse_duration."
 - **THEN** the answer is printed as `Fixed parse_duration.` with a single blank line before it
 
-### Requirement: A task that fails with a request error is discarded
+### Requirement: A task that fails with a request error keeps what it already did
 
-When a task ends with stop reason `error`, the session SHALL restore the conversation to its length before the task started and print `this task was discarded because the request failed`, so that the next task does not follow a user message that never got a reply. Tasks that end with `max_steps` or `stuck` SHALL keep their messages, because the conversation is still well formed and the user can ask the model to continue.
+When a task ends with stop reason `error` before the model gave any reply, the session SHALL restore the conversation to its length before the task started and print `this task was discarded because the request failed`, so that the next task does not follow a user message that never got a reply. When the task had already completed at least one step, the session SHALL keep its messages, append the assistant message `[The task stopped because the request failed.]`, and print `the request failed; what was done so far is kept (files may already have been changed; use /reset to start over)`, because the files the task changed stay on disk and the next task's model has to know about them. Tasks that end with `max_steps` or `stuck` SHALL keep their messages, because the conversation is still well formed and the user can ask the model to continue.
 
 #### Scenario: A request fails after an earlier task succeeded
 
 - **WHEN** the user types `fix it` and gets the reply "Done.", then types `add a comment` and the request fails, then types `add a docstring`
 - **THEN** the third task's first request contains the messages of the first task and the line `add a docstring`, and nothing from the failed task
+
+#### Scenario: A request fails after the task already changed something
+
+- **WHEN** the model edits a file, the next request fails, and the user then types `add a docstring`
+- **THEN** the next task's first request contains the user message, the edit and its result, the message `[The task stopped because the request failed.]`, and `add a docstring`; the screen shows `the request failed; what was done so far is kept`
 
 #### Scenario: A task runs out of steps
 
