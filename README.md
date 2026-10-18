@@ -10,7 +10,7 @@
 |---|---|---|---|
 | 1 骨架與規格 | agent 迴圈、六個工具、原生 tool call 解析、macOS 沙箱、`fixlab PATH` 最小入口 | 完成 | `stage-1` |
 | 2 CLI 與 telemetry | 事件檔（JSONL）、互動模式、權限提示 | 完成 | `stage-2` |
-| 3 Benchmark 與實驗 | 15–20 題多檔 bug、隱藏測試、有／無 `run_tests` 對照、多模型比較 | 未做 | |
+| 3 Benchmark 與實驗 | 8 題左右的多檔 bug、隱藏測試、有／無 `run_tests` 對照、多模型比較 | 未做 | |
 | 4 選做 | 多 agent 對照、MCP 或 GitHub issue connector | 未做 | |
 
 可以用 `git checkout stage-1` 或 `git checkout stage-2` 看到各階段完成時的程式。
