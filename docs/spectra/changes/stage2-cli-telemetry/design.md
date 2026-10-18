@@ -201,6 +201,10 @@
   - `EventLog.close()` 之後再 `write` 會拋 `ValueError`（沒被 `except OSError` 攔住）；目前沒有程式路徑會這樣。→ `close` 時一併設 `_broken`。
   - `EventLog` 在建立 `Workspace` 之前就開檔，若建立失敗檔案不會被關閉。review 提出，沒有重現：`Workspace` 與 `register_tools` 實際上不會拋例外。
   - 已記錄、不處理：拒絕三輪算 `stuck`（見 Open Questions；互動模式的紀錄不評分，不影響 benchmark）、對話長度沒有上限（見上面的 Risks 與 README 的已知限制）。
+- [code review 第二輪（2026-10-18，範圍 8bb6300..HEAD）：沒有阻擋與重要問題。#1（只收到空回覆也被保留）與 #6（測試涵蓋不足）已修，見最後一個 `fix(review)` commit]
+  - 請求失敗時，`task_end` 只記 `stop_reason: error`，看不出任務是被保留還是被丟掉，也就看不出下一個任務的上下文有沒有包含它的修改。互動紀錄不評分，影響小。→ 之後可加一個欄位。
+  - 不成立：「說明可能接在另一則 assistant 訊息後面」。請求失敗發生在一步的開頭，此時最後一則訊息只可能是 `tool` 或 `user`（回饋或略過通知），讀 `fixlab/loop.py` 確認過。
+  - 不處理：`fixlab_commit` 在 git 無法回報最上層時是 `None`（`safe.directory` 失敗時修正前也一樣；submodule 與 worktree 的最上層就是自己的資料夾）；以行位置解析 `rev-parse` 的輸出（git 的警告走 stderr，路徑含換行是極端情況）。fixlab 若放在自己 repo 的子資料夾，也會記 `None`，目前不是這個結構。
 
 ## Migration Plan
 
