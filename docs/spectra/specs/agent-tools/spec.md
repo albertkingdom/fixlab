@@ -534,3 +534,348 @@ tests:
   - tests/test_loop.py
   - tests/test_toolparse.py
 -->
+
+---
+### Requirement: The test run environment is deterministic
+
+The environment of every test subprocess started by `run_tests` SHALL set `TZ` to `UTC`, `PYTHONHASHSEED` to `0` and `PYTEST_DISABLE_PLUGIN_AUTOLOAD` to `1`, in addition to the variables it already sets. Pytest plugins are therefore not loaded automatically, and the result of a test does not depend on the machine's time zone or hash order.
+
+#### Scenario: The variables are set
+
+- **WHEN** a test run executes a test that reads `TZ`, `PYTHONHASHSEED` and `PYTEST_DISABLE_PLUGIN_AUTOLOAD` from its environment
+- **THEN** the values are `UTC`, `0` and `1`, whatever the parent process had
+
+#### Scenario: Installed pytest plugins are not loaded
+
+- **WHEN** `run_tests` runs a test that asserts the module `anyio` has not been imported, in an environment where the anyio pytest plugin is installed and registered by entry point
+- **THEN** the test passes, because plugins registered by entry point are not loaded automatically
+
+
+<!-- @trace
+source: stage3-benchmark
+updated: 2026-10-18
+code:
+  - bench/problems/calendar/project/cal/legacy.py
+  - docs/articles/19-first-results.md
+  - bench/problems/subscription/project/subs/tz.py
+  - fixlab/bench/report.py
+  - bench/problems/subscription/problem.json
+  - fixlab/bench/__main__.py
+  - docs/articles/images/18-two-conditions.drawio.png
+  - bench/problems/scheduler/project/taskplan/names.py
+  - bench/problems/calendar/project/cal/__init__.py
+  - bench/problems/scheduler/project/taskplan/legacy_order.py
+  - bench/problems/permissions/project/perm/guard.py
+  - docs/articles/images/16-grader-flow.drawio.png
+  - bench/problems/calendar/project/cal/holidays.py
+  - fixlab/workspace.py
+  - bench/problems/subscription/project/subs/__init__.py
+  - bench/problems/subscription/project/subs/check.py
+  - bench/problems/permissions/solution/perm/errors.py
+  - AGENTS.md
+  - README.md
+  - bench/problems/inventory/project/README.md
+  - docs/articles/16-grader.md
+  - fixlab/bench/selfcheck.py
+  - bench/problems/permissions/project/perm/__init__.py
+  - bench/problems/billing/problem.json
+  - tests/fixtures/bench_toy/cart/project/shop/cart.py
+  - bench/problems/settings/problem.json
+  - bench/problems/paging/solution/pager/display.py
+  - bench/problems/paging/project/pager/clamp.py
+  - bench/problems/inventory/project/stock/ledger.py
+  - bench/problems/subscription/solution/subs/check.py
+  - docs/articles/10-protect-tests.md
+  - pyproject.toml
+  - bench/problems/calendar/problem.json
+  - docs/articles/images/18-one-run.drawio.png
+  - bench/problems/permissions/project/perm/handler.py
+  - docs/benchmark-results.md
+  - docs/articles/images/19-qwen-outcomes.drawio.png
+  - tests/fixtures/bench_toy/cart/project/shop/legacy.py
+  - fixlab/bench/grader.py
+  - docs/articles/images/15-symptom-and-cause.drawio.png
+  - tests/fixtures/bench_toy/cart/project/README.md
+  - tests/fixtures/bench_toy/cart/project/shop/__init__.py
+  - docs/articles/images/16-outcome-order.drawio.png
+  - fixlab/tools.py
+  - bench/problems/inventory/project/stock/report.py
+  - bench/problems/scheduler/project/taskplan/queue.py
+  - docs/articles/17-self-check.md
+  - bench/problems/paging/project/pager/__init__.py
+  - tests/fixtures/bench_toy/cart/solution/shop/cart.py
+  - bench/problems/permissions/problem.json
+  - bench/problems/calendar/project/cal/conflicts.py
+  - bench/problems/calendar/project/cal/events.py
+  - bench/problems/billing/project/bill/discounts.py
+  - fixlab/cli.py
+  - docs/articles/images/19-qwen-per-problem.drawio.png
+  - bench/problems/settings/project/conf/overrides.py
+  - bench/problems/billing/project/bill/rounding.py
+  - bench/problems/scheduler/project/README.md
+  - tests/fixtures/bench_toy/cart/problem.json
+  - docs/articles/15-problems.md
+  - bench/problems/scheduler/project/taskplan/ordering.py
+  - bench/problems/inventory/project/stock/__init__.py
+  - bench/problems/billing/project/README.md
+  - bench/problems/inventory/project/stock/importer.py
+  - bench/problems/scheduler/solution/taskplan/ordering.py
+  - bench/problems/billing/project/bill/__init__.py
+  - bench/problems/paging/project/pager/display.py
+  - bench/problems/permissions/project/perm/roles.py
+  - bench/problems/billing/project/bill/prices.py
+  - bench/problems/settings/project/README.md
+  - bench/problems/calendar/project/README.md
+  - bench/problems/calendar/project/cal/duration.py
+  - bench/problems/scheduler/problem.json
+  - bench/problems/inventory/project/stock/legacy_import.py
+  - bench/problems/settings/project/conf/plugins.py
+  - docs/articles/images/15-problem-folder.drawio.png
+  - bench/problems/subscription/project/subs/parse.py
+  - bench/problems/billing/project/bill/receipt.py
+  - bench/problems/billing/solution/bill/discounts.py
+  - bench/problems/permissions/project/perm/errors.py
+  - bench/problems/settings/project/conf/loader.py
+  - fixlab/bench/problems.py
+  - docs/articles/images/17-check-matrix.drawio.png
+  - bench/problems/scheduler/project/taskplan/report.py
+  - bench/models.json
+  - bench/problems/inventory/solution/stock/importer.py
+  - bench/problems/settings/project/conf/defaults.py
+  - fixlab/bench/__init__.py
+  - bench/problems/inventory/problem.json
+  - bench/problems/paging/project/pager/legacy_pages.py
+  - bench/problems/subscription/project/subs/report.py
+  - bench/problems/settings/project/conf/__init__.py
+  - tests/fixtures/bench_toy/cart/project/shop/report.py
+  - bench/problems/calendar/solution/cal/conflicts.py
+  - bench/problems/paging/problem.json
+  - tests/fixtures/bench_toy/cart/project/shop/prices.py
+  - docs/articles/18-experiment-runner.md
+  - bench/problems/paging/project/pager/pages.py
+  - bench/problems/scheduler/project/taskplan/__init__.py
+  - bench/problems/permissions/project/perm/legacy_roles.py
+  - bench/problems/subscription/project/subs/clock.py
+  - bench/problems/permissions/project/README.md
+  - bench/problems/inventory/project/stock/catalog.py
+  - bench/problems/scheduler/project/taskplan/tasks.py
+  - bench/problems/settings/solution/conf/loader.py
+  - bench/problems/subscription/project/README.md
+  - fixlab/bench/runner.py
+  - bench/problems/calendar/project/cal/report.py
+  - bench/problems/paging/project/README.md
+  - bench/problems/settings/project/conf/render.py
+tests:
+  - tests/test_cli.py
+  - bench/problems/inventory/hidden/fix/test_cases.py
+  - tests/test_bench_selfcheck.py
+  - bench/problems/settings/hidden/keep/test_basics.py
+  - bench/problems/calendar/hidden/keep/test_basics.py
+  - tests/fixtures/bench_toy/cart/project/tests/test_report.py
+  - bench/problems/paging/hidden/keep/test_basics.py
+  - bench/problems/billing/project/tests/test_checkout.py
+  - bench/problems/permissions/hidden/fix/test_banned.py
+  - tests/fixtures/bench_toy/cart/hidden/fix/test_discount.py
+  - bench/problems/subscription/hidden/fix/test_boundaries.py
+  - tests/test_bench_grader.py
+  - tests/test_loop.py
+  - bench/problems/calendar/hidden/fix/test_sharing.py
+  - tests/fixtures/bench_toy/cart/hidden/keep/test_basics.py
+  - tests/test_tools.py
+  - bench/problems/settings/hidden/fix/test_independent.py
+  - bench/problems/subscription/hidden/keep/test_basics.py
+  - bench/problems/paging/project/tests/test_render.py
+  - bench/problems/billing/hidden/fix/test_unknown_codes.py
+  - tests/test_bench_report.py
+  - bench/problems/scheduler/hidden/fix/test_order.py
+  - tests/test_bench_problems.py
+  - bench/problems/settings/project/tests/test_describe.py
+  - bench/problems/calendar/project/tests/test_calendar_report.py
+  - bench/problems/scheduler/project/tests/test_summary.py
+  - bench/problems/permissions/hidden/keep/test_basics.py
+  - bench/problems/paging/hidden/fix/test_partial_pages.py
+  - bench/problems/billing/hidden/keep/test_checkout.py
+  - tests/test_bench_runner.py
+  - bench/problems/permissions/project/tests/test_access.py
+  - bench/problems/inventory/project/tests/test_stock_report.py
+  - bench/problems/subscription/project/tests/test_status.py
+  - bench/problems/scheduler/hidden/keep/test_summary.py
+  - bench/problems/inventory/hidden/keep/test_basics.py
+-->
+
+---
+### Requirement: Tools can be hidden from the model
+
+A Workspace SHALL be able to hide a registered tool by name. A hidden tool SHALL NOT appear in the tool list sent to the model and SHALL NOT appear in the schemas used to validate the model's reply, so a model call to it is treated as a call to an unknown tool. The program itself SHALL still be able to call a hidden tool through the Workspace. The fixlab command SHALL offer `--hide-tool NAME`, repeatable, and SHALL exit with code 2 and create no event file when a name is not a registered tool.
+
+#### Scenario: A hidden tool is not offered
+
+- **WHEN** `run_tests` is hidden and the tool list is built
+- **THEN** the list contains `read_file`, `list_files`, `grep`, `edit_file` and `write_file`, and does not contain `run_tests`
+
+#### Scenario: The model calls a hidden tool anyway
+
+- **WHEN** `run_tests` is hidden and the model's reply calls `run_tests`
+- **THEN** the call is rejected as an unknown tool and no tests run
+
+#### Scenario: The program still runs the tests
+
+- **WHEN** `run_tests` is hidden and a one-shot run finishes
+- **THEN** the final test run that fixlab performs itself still executes and its result is printed
+
+#### Scenario: An unknown tool name
+
+- **WHEN** fixlab is started with `--hide-tool bash`
+- **THEN** it exits with code 2 with a message that names `bash`, and no event file is created
+
+<!-- @trace
+source: stage3-benchmark
+updated: 2026-10-18
+code:
+  - bench/problems/calendar/project/cal/legacy.py
+  - docs/articles/19-first-results.md
+  - bench/problems/subscription/project/subs/tz.py
+  - fixlab/bench/report.py
+  - bench/problems/subscription/problem.json
+  - fixlab/bench/__main__.py
+  - docs/articles/images/18-two-conditions.drawio.png
+  - bench/problems/scheduler/project/taskplan/names.py
+  - bench/problems/calendar/project/cal/__init__.py
+  - bench/problems/scheduler/project/taskplan/legacy_order.py
+  - bench/problems/permissions/project/perm/guard.py
+  - docs/articles/images/16-grader-flow.drawio.png
+  - bench/problems/calendar/project/cal/holidays.py
+  - fixlab/workspace.py
+  - bench/problems/subscription/project/subs/__init__.py
+  - bench/problems/subscription/project/subs/check.py
+  - bench/problems/permissions/solution/perm/errors.py
+  - AGENTS.md
+  - README.md
+  - bench/problems/inventory/project/README.md
+  - docs/articles/16-grader.md
+  - fixlab/bench/selfcheck.py
+  - bench/problems/permissions/project/perm/__init__.py
+  - bench/problems/billing/problem.json
+  - tests/fixtures/bench_toy/cart/project/shop/cart.py
+  - bench/problems/settings/problem.json
+  - bench/problems/paging/solution/pager/display.py
+  - bench/problems/paging/project/pager/clamp.py
+  - bench/problems/inventory/project/stock/ledger.py
+  - bench/problems/subscription/solution/subs/check.py
+  - docs/articles/10-protect-tests.md
+  - pyproject.toml
+  - bench/problems/calendar/problem.json
+  - docs/articles/images/18-one-run.drawio.png
+  - bench/problems/permissions/project/perm/handler.py
+  - docs/benchmark-results.md
+  - docs/articles/images/19-qwen-outcomes.drawio.png
+  - tests/fixtures/bench_toy/cart/project/shop/legacy.py
+  - fixlab/bench/grader.py
+  - docs/articles/images/15-symptom-and-cause.drawio.png
+  - tests/fixtures/bench_toy/cart/project/README.md
+  - tests/fixtures/bench_toy/cart/project/shop/__init__.py
+  - docs/articles/images/16-outcome-order.drawio.png
+  - fixlab/tools.py
+  - bench/problems/inventory/project/stock/report.py
+  - bench/problems/scheduler/project/taskplan/queue.py
+  - docs/articles/17-self-check.md
+  - bench/problems/paging/project/pager/__init__.py
+  - tests/fixtures/bench_toy/cart/solution/shop/cart.py
+  - bench/problems/permissions/problem.json
+  - bench/problems/calendar/project/cal/conflicts.py
+  - bench/problems/calendar/project/cal/events.py
+  - bench/problems/billing/project/bill/discounts.py
+  - fixlab/cli.py
+  - docs/articles/images/19-qwen-per-problem.drawio.png
+  - bench/problems/settings/project/conf/overrides.py
+  - bench/problems/billing/project/bill/rounding.py
+  - bench/problems/scheduler/project/README.md
+  - tests/fixtures/bench_toy/cart/problem.json
+  - docs/articles/15-problems.md
+  - bench/problems/scheduler/project/taskplan/ordering.py
+  - bench/problems/inventory/project/stock/__init__.py
+  - bench/problems/billing/project/README.md
+  - bench/problems/inventory/project/stock/importer.py
+  - bench/problems/scheduler/solution/taskplan/ordering.py
+  - bench/problems/billing/project/bill/__init__.py
+  - bench/problems/paging/project/pager/display.py
+  - bench/problems/permissions/project/perm/roles.py
+  - bench/problems/billing/project/bill/prices.py
+  - bench/problems/settings/project/README.md
+  - bench/problems/calendar/project/README.md
+  - bench/problems/calendar/project/cal/duration.py
+  - bench/problems/scheduler/problem.json
+  - bench/problems/inventory/project/stock/legacy_import.py
+  - bench/problems/settings/project/conf/plugins.py
+  - docs/articles/images/15-problem-folder.drawio.png
+  - bench/problems/subscription/project/subs/parse.py
+  - bench/problems/billing/project/bill/receipt.py
+  - bench/problems/billing/solution/bill/discounts.py
+  - bench/problems/permissions/project/perm/errors.py
+  - bench/problems/settings/project/conf/loader.py
+  - fixlab/bench/problems.py
+  - docs/articles/images/17-check-matrix.drawio.png
+  - bench/problems/scheduler/project/taskplan/report.py
+  - bench/models.json
+  - bench/problems/inventory/solution/stock/importer.py
+  - bench/problems/settings/project/conf/defaults.py
+  - fixlab/bench/__init__.py
+  - bench/problems/inventory/problem.json
+  - bench/problems/paging/project/pager/legacy_pages.py
+  - bench/problems/subscription/project/subs/report.py
+  - bench/problems/settings/project/conf/__init__.py
+  - tests/fixtures/bench_toy/cart/project/shop/report.py
+  - bench/problems/calendar/solution/cal/conflicts.py
+  - bench/problems/paging/problem.json
+  - tests/fixtures/bench_toy/cart/project/shop/prices.py
+  - docs/articles/18-experiment-runner.md
+  - bench/problems/paging/project/pager/pages.py
+  - bench/problems/scheduler/project/taskplan/__init__.py
+  - bench/problems/permissions/project/perm/legacy_roles.py
+  - bench/problems/subscription/project/subs/clock.py
+  - bench/problems/permissions/project/README.md
+  - bench/problems/inventory/project/stock/catalog.py
+  - bench/problems/scheduler/project/taskplan/tasks.py
+  - bench/problems/settings/solution/conf/loader.py
+  - bench/problems/subscription/project/README.md
+  - fixlab/bench/runner.py
+  - bench/problems/calendar/project/cal/report.py
+  - bench/problems/paging/project/README.md
+  - bench/problems/settings/project/conf/render.py
+tests:
+  - tests/test_cli.py
+  - bench/problems/inventory/hidden/fix/test_cases.py
+  - tests/test_bench_selfcheck.py
+  - bench/problems/settings/hidden/keep/test_basics.py
+  - bench/problems/calendar/hidden/keep/test_basics.py
+  - tests/fixtures/bench_toy/cart/project/tests/test_report.py
+  - bench/problems/paging/hidden/keep/test_basics.py
+  - bench/problems/billing/project/tests/test_checkout.py
+  - bench/problems/permissions/hidden/fix/test_banned.py
+  - tests/fixtures/bench_toy/cart/hidden/fix/test_discount.py
+  - bench/problems/subscription/hidden/fix/test_boundaries.py
+  - tests/test_bench_grader.py
+  - tests/test_loop.py
+  - bench/problems/calendar/hidden/fix/test_sharing.py
+  - tests/fixtures/bench_toy/cart/hidden/keep/test_basics.py
+  - tests/test_tools.py
+  - bench/problems/settings/hidden/fix/test_independent.py
+  - bench/problems/subscription/hidden/keep/test_basics.py
+  - bench/problems/paging/project/tests/test_render.py
+  - bench/problems/billing/hidden/fix/test_unknown_codes.py
+  - tests/test_bench_report.py
+  - bench/problems/scheduler/hidden/fix/test_order.py
+  - tests/test_bench_problems.py
+  - bench/problems/settings/project/tests/test_describe.py
+  - bench/problems/calendar/project/tests/test_calendar_report.py
+  - bench/problems/scheduler/project/tests/test_summary.py
+  - bench/problems/permissions/hidden/keep/test_basics.py
+  - bench/problems/paging/hidden/fix/test_partial_pages.py
+  - bench/problems/billing/hidden/keep/test_checkout.py
+  - tests/test_bench_runner.py
+  - bench/problems/permissions/project/tests/test_access.py
+  - bench/problems/inventory/project/tests/test_stock_report.py
+  - bench/problems/subscription/project/tests/test_status.py
+  - bench/problems/scheduler/hidden/keep/test_summary.py
+  - bench/problems/inventory/hidden/keep/test_basics.py
+-->
