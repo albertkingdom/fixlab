@@ -45,6 +45,11 @@ When a model has a price in the models file, the report SHALL print the cost per
 - **WHEN** the report is printed
 - **THEN** the total cost shown is 0.20, the cost per run is 0.02 and the cost per fixed run is 0.04
 
+#### Scenario: Every run of a priced model ended in an error
+
+- **WHEN** a model has a price and every one of its runs has a non-null `error`
+- **THEN** the report is still printed, its cost row shows that there are no counted runs, and no cost is computed from zero runs
+
 #### Scenario: No price
 
 - **WHEN** a model has no price entry

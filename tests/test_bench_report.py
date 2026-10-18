@@ -212,3 +212,24 @@ def test_the_examples_section_says_so_when_every_run_was_fixed():
     text = render([line(outcome="fixed")])
 
     assert "沒有：所有算進結果的執行都是 fixed" in text.split("## 失敗實例")[1].split("##")[0]
+
+
+# ── code review：沒有任何算進結果的執行時，報告不能崩潰 ──────────────────────
+
+PRICE = {"input_per_million": 0.10, "output_per_million": 0.40, "source": "page", "date": "2026-10-18"}
+
+
+def test_a_priced_model_whose_every_run_failed_does_not_crash_the_report():
+    lines = [line(repeat=1, error="404"), line(repeat=2, error="404")]
+
+    text = render(lines, [model(price=PRICE)])
+
+    cost_row = table_row(text, "m", "-")
+    assert "沒有算進結果的執行" in cost_row[4]
+    assert table_row(text, "m", "with_tests")[2] == "0" and table_row(text, "m", "with_tests")[-1] == "2"
+
+
+def test_runs_without_a_step_count_do_not_crash_the_median():
+    text = render([line(steps=None)])
+
+    assert table_row(text, "m", "with_tests")[11] == "-"

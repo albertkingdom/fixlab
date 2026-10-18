@@ -36,6 +36,10 @@ def mean(values: list):
     return sum(values) / len(values) if values else None
 
 
+def median_of(values: list):
+    return statistics.median(values) if values else None
+
+
 def number(value, digits=0) -> str:
     return "-" if value is None else f"{value:,.{digits}f}"
 
@@ -142,7 +146,7 @@ def render_report(all_lines: list, models: list, problems: dict, examples: int =
             label, condition, str(len(ok)), *[percent(by_outcome[name], len(ok)) for name in OUTCOMES],
             str(sum(1 for l in ok if l["claimed_done_but_failed"])), str(sum(1 for l in ok if l["stop_reason"] == "max_steps")),
             str(sum(l["hidden_tool_calls"] for l in ok)),
-            number(statistics.median([l["steps"] for l in ok if l["steps"] is not None]) if ok else None, 1),
+            number(median_of([l["steps"] for l in ok if l["steps"] is not None]), 1),
             number(mean([l["prompt_tokens"] for l in ok if l["prompt_tokens"] is not None])),
             number(mean([l["completion_tokens"] for l in ok if l["completion_tokens"] is not None])),
             str(len(group) - len(ok))]) + " |")
@@ -154,6 +158,9 @@ def render_report(all_lines: list, models: list, problems: dict, examples: int =
         ok = counted([l for l in lines if l["model"] == label])
         price = (by_label.get(label).price if label in by_label else None)
         total = cost_of(ok, price)
+        if not ok:
+            out.append(f"| {label} | - | - | - | 沒有算進結果的執行（全部是錯誤），算不出成本 |")
+            continue
         if total is None:
             out.append(f"| {label} | - | - | - | 沒有單價，只列 token（見上表） |")
             continue
