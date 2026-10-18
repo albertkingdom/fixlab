@@ -70,8 +70,8 @@ error: the user declined this call. Do not retry it unchanged; try a different a
 
 | 輸入 | 結果 |
 |---|---|
-| `y`（不分大小寫、去掉前後空白） | 這次放行 |
-| `a` | 這次放行，而且**這個 session 內**同一個工具之後都不再問 |
+| `y`、`yes`（不分大小寫、去掉前後空白） | 這次放行 |
+| `a`、`always` | 這次放行，而且**這個 session 內**同一個工具之後都不再問 |
 | `n`、空行、`yes please`、其他任何東西 | 拒絕 |
 | 輸入結束（Ctrl-D） | 拒絕 |
 | Ctrl-C | 中斷整個任務（第 13 篇） |

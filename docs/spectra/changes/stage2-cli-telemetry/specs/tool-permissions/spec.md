@@ -36,9 +36,9 @@ In interactive mode the confirm function SHALL ask only for `edit_file`, `write_
 
 | Answer typed | Result |
 |--------------|--------|
-| `y` | this call runs |
-| `a` | this call runs, and later calls to the same tool in this session run without a question |
-| `n` | the call is denied |
+| `y`, `yes` | this call runs |
+| `a`, `always` | this call runs, and later calls to the same tool in this session run without a question |
+| `n`, `no` | the call is denied |
 | (empty line) | the call is denied |
 | `yes please` | the call is denied |
 | end of input | the call is denied |

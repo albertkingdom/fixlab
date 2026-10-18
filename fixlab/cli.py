@@ -218,10 +218,10 @@ def make_asker():
             print()  # 問題後面沒有換行，補一個，下一行的結果才不會接在後面
             return False
         answer = answer.strip().lower()
-        if answer == "a":
+        if answer in ("a", "always"):
             always.add(name)
             return True
-        return answer == "y"  # 其他一律拒絕，包括空白
+        return answer in ("y", "yes")  # 其他一律拒絕，包括空白
 
     return ask
 

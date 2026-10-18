@@ -288,6 +288,7 @@ def test_reading_tools_run_without_a_question(session, capsys):
 # Example: answers
 @pytest.mark.parametrize("answer, runs", [
     ("y", True), ("a", True), ("n", False), ("", False), ("yes please", False), ("Y", True), (" y ", True),
+    ("yes", True), ("YES", True), ("always", True), ("no", False),
 ])
 def test_answers_to_the_question(session, project, capsys, answer, runs):
     session(FakeClient([(None, [an_edit()]), ("Done.", None)]), ["fix it", answer])
