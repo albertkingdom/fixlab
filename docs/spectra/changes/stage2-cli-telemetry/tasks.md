@@ -33,4 +33,4 @@
 ## 4. 文件與收尾
 
 - [x] 4.1 更新 README.md 與 AGENTS.md：README 的狀態表加 tag 欄並把階段 2 改為完成，新增 `-i`、`--log-dir`、`--meta` 的用法與權限提示說明、事件檔位置與四種事件的欄位說明（並註明不要隨意分享事件檔）、已知限制（單一 session 歷史無上限、被擋下的呼叫仍會先問、中斷後檔案可能已被修改），參考來源補上「設計依據與參考來源」那一節列的 KeSi 與 Claude Code 項目；AGENTS.md 的目錄結構補上 fixlab/telemetry.py。驗證：內容審閱，README 的指令在全新的 venv 裡照做能跑起 `pytest` 與 `fixlab --help`。完成：README 新增互動模式、事件檔（含 trace 是什麼）、狀態表的 tag 欄、新的已知限制與參考來源；快速開始在全新的 venv 裡照做，379 個測試通過、`fixlab --help` 列出 `-i`、`--log-dir`、`--meta`；範例畫面用假模型實際跑出來的輸出，並註明數字不代表真實用量。
-- [ ] 4.2 全部驗收後打 tag：在 .venv 內 `pytest` 全數通過、`spectra validate stage2-cli-telemetry` 無錯誤後，commit 並建立 git tag `stage-2`（只建在本機）。驗證：`git tag --list stage-2` 有輸出，且 tag 指向的 commit 上 pytest 通過。
+- [x] 4.2 全部驗收後打 tag：在 .venv 內 `pytest` 全數通過、`spectra validate stage2-cli-telemetry` 無錯誤後，commit 並建立 git tag `stage-2`（只建在本機）。驗證：`git tag --list stage-2` 有輸出，且 tag 指向的 commit 上 pytest 通過。
