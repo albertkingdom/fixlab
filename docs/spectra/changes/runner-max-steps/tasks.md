@@ -20,4 +20,4 @@
 ## 4. 收尾檢查
 
 - [x] 4.1 `spectra validate runner-max-steps` 通過；`spectra analyze runner-max-steps` 沒有 Critical 與 Warning。驗證：兩個指令的輸出。
-- [ ] 4.2 依 AGENTS.md 完成 code review，blocking 與 important 問題都解決後才歸檔。驗證：review 結果（依 `review-findings` skill 處理）。
+- [x] 4.2 依 AGENTS.md 完成 code review，blocking 與 important 問題都解決後才歸檔。驗證：review 結果（依 `review-findings` skill 處理）。
