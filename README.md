@@ -172,6 +172,7 @@ Fixed parse_duration: it only took the first unit.
 - **被測專案的第三方依賴**：`run_tests` 用 fixlab 自己的 Python 直譯器跑，被測專案需要的套件要裝在同一個環境。範例專案只用標準函式庫。
 - **沙箱擋不到的偽造**：被測的程式在 pytest 行程內部竄改 pytest 本身，或自己印一行假的 `N passed` 摘要再以結束碼 0 離開（測試與原始碼在同一個行程；後者我用兩行 `atexit` 重現過，bug 還在，`tests_passed` 卻是 `True`）。階段 3 的評分器降低了這個風險（乾淨環境重跑、只讀最後一行摘要、通過數要等於題目記的數量），但**沒有根治**：被測的程式與 pytest 仍在同一個行程。見第 10、16 篇。
 - **基底 Python 在家目錄底下時，沙箱會讓 `run_tests` 失敗**：用 uv、pyenv 管理的 Python 建的環境，標準函式庫在家目錄底下，被沙箱擋住，`run_tests` 一啟動就失敗（我用 uv 的 Python 重現，錯誤是 `dyld: Library not loaded`）。關掉沙箱則正常。Homebrew 的 Python 不受影響。目前沒有設定可以放行。
+- **`run_tests` 不自動載入 pytest 外掛，時區固定 UTC、雜湊順序固定**：這是階段 3 為了讓評分不依賴機器加的，一般使用也一樣。測試要靠自動載入的外掛（例如 pytest-asyncio、pytest-mock、pytest-django）的專案，外掛不會載入，測試可能失敗；`fixlab` 針對的是小型、只用標準函式庫的專案。要改成可選需要新增旗標，目前沒做。
 - **沒有重複呼叫偵測**：模型一直重讀同一個檔案（成功的呼叫）不會觸發 `stuck`。
 - **還不能在任何目錄直接打 `fixlab`**：要用完整路徑 `.venv/bin/fixlab`，或自己把它放進 PATH（例如在 `~/.local/bin` 放一個指向它的符號連結）；API 金鑰要自己載入（`source .env`）。之後想做：放進 PATH、金鑰存系統鑰匙圈、沒給 PATH 時用目前的目錄。
 - **互動模式的對話沒有長度上限**：用久了每一步的 prompt 會很大，小模型（Ollama 設 32768）可能撞到 context 上限；用 `/reset` 重來，上限怎麼處理等有事件檔的資料再決定。

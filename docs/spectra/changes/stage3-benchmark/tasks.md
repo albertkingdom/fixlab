@@ -68,3 +68,9 @@
 ## 10. 收尾
 
 - [x] 10.1 全部驗收後打 tag：在 .venv 內 pytest 全數通過、`spectra validate stage3-benchmark` 無錯誤，commit 並建立 git tag stage-3（只建在本機）。驗證：git tag --list stage-3 有輸出，且 tag 指向的 commit 上 pytest 通過。
+
+## 11. Code review 修正
+
+- [x] 11.1 沒有任何算進結果的執行時（有單價的模型所有執行都是錯誤、或執行沒有步數），報告不崩潰：成本列顯示沒有算進結果的執行，中位數顯示破折號。對應 The summary table covers every model and condition 與 Cost uses a stated price（Every run of a priced model ended in an error）。驗證：tests/test_bench_report.py 兩個測試，並用我自己做的全是錯誤的結果檔跑 report。
+- [x] 11.2 設定與參數的防呆：`--repeats` 與 `--repeat` 必須是 1 以上的整數；模型設定的 meta 不能用 problem、condition、repeat、problem_digest；模型沒寫 base_url 時不沿用呼叫者環境裡的 OPENAI_BASE_URL。對應 Repeat counts must be at least 1 與 Model settings come from a file and secrets from the environment、The conditions of each run are recorded。驗證：tests/test_bench_runner.py 的對應測試。
+- [x] 11.3 測試環境的固定設定對一般使用者的影響記成已知限制（README），其餘建議等級的 review 意見記進設計文件的 Risks。驗證：內容審閱。
