@@ -142,7 +142,11 @@ fixlab.bench 的 report 子命令讀 results.jsonl 與模型設定檔，輸出 m
 - [code review（2026-10-18，範圍 main..HEAD）：沒有阻擋問題。重要的兩筆：報告在沒有算進結果的執行時除以 0（已修，`fix(review)`）；測試環境的固定設定影響一般使用者（選擇記為已知限制，見下）。建議等級中防呆的三筆已修]
   - 選擇 A：`child_environment` 的固定設定（不自動載入 pytest 外掛、`TZ=UTC`、`PYTHONHASHSEED=0`）維持套用在所有 `run_tests`，因為 agent 的測試執行與評分用同一份才一致；代價是依賴自動載入外掛的專案測試會失敗。README 已寫成已知限制。若之後要支援這類專案，要在 Workspace 加旗標，只有 benchmark 的執行與評分打開。
   - 延後（建議等級）：`claimed_done_but_failed` 只看 `fixed`，被判 `invalid` 但 `fixed` 為真的執行不算（這次 0 次 invalid，規格也這樣寫）；重跑時 `read_events` 取最新的事件檔，重跑若在建事件檔前就失敗會讀到舊的（實際只有帶錯誤的行會重跑，舊事件檔也是錯誤，結果仍是錯誤；之後可在每次執行前清掉該次的紀錄資料夾）；`find_tampered` 不標被刪掉的測試檔（agent 的工具不能刪檔，評分用原版測試，不影響分數，只是少了證據）；數隱藏工具呼叫用「訊息含工具名稱」判斷太寬（這次計數是 0）；警告的題目摘要把被蓋掉的舊行也算進去，可能誤報（這次沒發生）。
+- [code review 第二輪（2026-10-18，範圍 f4fe2ed..HEAD）：沒有阻擋與重要問題。建議等級的五筆已修：meta 型別、計畫的次數檢查、成本列的判斷順序與註解、非整數次數的測試]
+  - 不成立：「`model_environment` 只移除 `OPENAI_BASE_URL`，其他變數仍會傳進去」。目前的 OpenAI SDK 只讀 `OPENAI_BASE_URL`（`OPENAI_API_BASE` 是舊版寫法），代理變數是網路設定不是端點；金鑰沒設的情形在 `--confirm` 時已先檢查。
+  - 已決定：測試環境的固定設定沒有關掉它的旗標，見上一輪的選擇 A 與 README 的已知限制。
 
+## Migration Plan
 
 不需要遷移：新增的選項都有預設值，沒傳時行為與現在相同；事件檔只多欄位。回復方式是不使用新選項與 fixlab.bench。
 
