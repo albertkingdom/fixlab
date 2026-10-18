@@ -376,3 +376,13 @@ def test_a_model_without_a_step_limit_loads_with_none(tmp_path):
     (loaded,) = runner.load_models(models_file(tmp_path, labels=("x",)))
 
     assert loaded.max_steps is None
+
+
+# Scenario: An explicit null means no step limit
+def test_a_null_step_limit_means_no_step_limit(tmp_path):
+    path = models_file(tmp_path, labels=("x",), max_steps=None)
+
+    (loaded,) = runner.load_models(path)
+    arguments = fixlab_arguments(tmp_path, loaded, RunSpec("cart", "x", "no_tests", 1), "abc", tmp_path / "log")
+
+    assert loaded.max_steps is None and "--max-steps" not in arguments

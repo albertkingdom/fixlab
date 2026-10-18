@@ -96,7 +96,7 @@ Fixed parse_duration: it only took the first unit.
 | `run --models bench/models.json --out 資料夾` | 展開（題目、模型、條件、次數）；沒有 `--confirm` 只印計畫；有 `--confirm` 才真的呼叫模型，可續跑 | **會花錢**（完整實驗約 $0.4、約 1 小時） |
 | `report results.jsonl --models bench/models.json` | 把結果變成 markdown 報告 | 不花錢 |
 
-`bench/models.json` 的每個模型可以寫選填的 `max_steps`（1 以上的整數）：這個模型每次執行的步數上限，兩個條件用同一個值。沒寫就用 fixlab 自己的預設 20；寫成 0、負數、小數、字串或 `true` 會在載入時被拒絕，一次都不跑。
+`bench/models.json` 的每個模型可以寫選填的 `max_steps`（1 以上的整數）：這個模型每次執行的步數上限，兩個條件用同一個值。沒寫（或寫 `null`）就用 fixlab 自己的預設 20；寫成 0、負數、小數、字串或 `true` 會在載入時被拒絕，一次都不跑。
 
 教學文章第 15 到 19 篇依序說明題目、評分器、自我檢查、實驗執行器與結果。
 

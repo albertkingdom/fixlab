@@ -81,10 +81,10 @@ def load_models(path) -> list[ModelConfig]:
 
 
 def check_max_steps(entry: dict) -> None:
-    """max_steps 沒寫是合法的；寫了就必須是 1 以上的整數。"""
-    if "max_steps" not in entry:
+    """max_steps 沒寫或寫 null 都是「不設定」（和 temperature、extra_body 一樣）；有值就必須是 1 以上的整數。"""
+    value = entry.get("max_steps")
+    if value is None:
         return
-    value = entry["max_steps"]
     # bool 要先排除：Python 的 True 也算整數（等於 1），但在設定檔裡一定是寫錯了
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise ConfigError(f"model {entry['label']!r}: max_steps must be an integer of at least 1, got {value!r}")

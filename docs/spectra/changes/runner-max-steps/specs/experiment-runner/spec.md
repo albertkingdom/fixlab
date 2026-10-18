@@ -2,7 +2,7 @@
 
 ### Requirement: A model entry can set the step limit of its runs
 
-An entry in the models file SHALL accept an optional key `max_steps`. When the key is present, its value SHALL be an integer of at least 1, and the runner SHALL pass it to fixlab as `--max-steps` with that value for every run of that model, in both conditions. When the key is absent, the runner SHALL NOT pass `--max-steps`, so fixlab uses its own default step limit and the arguments are the same as before this key existed. Loading a models file in which `max_steps` is present but is not an integer of at least 1 (zero, a negative number, a decimal, a string or a boolean) SHALL fail with a configuration error that names the model's label and the value, and no run SHALL start.
+An entry in the models file SHALL accept an optional key `max_steps`. When the key is present, its value SHALL be an integer of at least 1, and the runner SHALL pass it to fixlab as `--max-steps` with that value for every run of that model, in both conditions. When the key is absent or its value is `null`, the runner SHALL NOT pass `--max-steps`, so fixlab uses its own default step limit and the arguments are the same as before this key existed; this matches how `temperature` and `extra_body` treat `null`. Loading a models file in which `max_steps` is present with a value other than `null` but is not an integer of at least 1 (zero, a negative number, a decimal, a string or a boolean) SHALL fail with a configuration error that names the model's label and the value, and no run SHALL start.
 
 #### Scenario: A model sets a larger step limit
 
@@ -18,6 +18,11 @@ An entry in the models file SHALL accept an optional key `max_steps`. When the k
 
 - **WHEN** an entry has no `max_steps` key
 - **THEN** the arguments contain no `--max-steps`, and the `run_start` event records the fixlab default of 20
+
+#### Scenario: An explicit null means no step limit
+
+- **WHEN** an entry has `"max_steps": null`
+- **THEN** the entry loads without error, the arguments contain no `--max-steps`, and the run uses the fixlab default
 
 #### Scenario: An invalid value is rejected before any run
 
