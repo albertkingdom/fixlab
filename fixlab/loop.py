@@ -56,18 +56,24 @@ def run_agent(
     client, model: str, ws: Workspace, task: str, *,
     messages: list | None = None,
     max_steps: int = DEFAULT_MAX_STEPS, request_extra: dict | None = None,
+    system_prompt_extra: str | None = None,
     trace: Callable[[dict], None] = lambda rec: None,
 ) -> AgentResult:
     """跑一個任務。task 是 user 訊息，迴圈不加任何自己的內容。
 
     messages 是呼叫端想保留的對話（互動模式用）：沒傳，這次執行用自己的對話，跑完就丟；
     傳一個空 list，會先放入系統提示；傳一個有內容的 list，任務就接在後面。
-    傳進來的 list 會被直接修改，所以呼叫端拿著它就有完整的對話。"""
+    傳進來的 list 會被直接修改，所以呼叫端拿著它就有完整的對話。
+    system_prompt_extra 是實驗用的額外文字，接在預設系統提示後面；只有「這次要放入系統提示」時才用，
+    對話已經有內容時系統提示早就在裡面了，不動它。"""
     tools, schemas = ws.tool_specs(), ws.schemas()
     if messages is None:
         messages = []  # 只給這次執行用，不留給呼叫端
     if not messages:
-        messages.append({"role": "system", "content": SYSTEM_PROMPT})
+        prompt = SYSTEM_PROMPT
+        if system_prompt_extra is not None:
+            prompt = SYSTEM_PROMPT + "\n\n" + system_prompt_extra
+        messages.append({"role": "system", "content": prompt})
     messages.append({"role": "user", "content": task})
     res = AgentResult(stop_reason="max_steps", steps=0)
     c = res.counters

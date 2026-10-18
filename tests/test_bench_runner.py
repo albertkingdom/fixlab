@@ -386,3 +386,52 @@ def test_a_null_step_limit_means_no_step_limit(tmp_path):
     arguments = fixlab_arguments(tmp_path, loaded, RunSpec("cart", "x", "no_tests", 1), "abc", tmp_path / "log")
 
     assert loaded.max_steps is None and "--max-steps" not in arguments
+
+
+# ── A model entry can add text to the system prompt ───────────────────────
+
+RULE = "Finish once the fix is made."
+
+
+# Scenario: The text is passed in both conditions
+def test_a_model_system_prompt_extra_is_passed_to_fixlab_in_both_conditions(tmp_path):
+    with_tests = fixlab_arguments(tmp_path, model(system_prompt_extra=RULE), RunSpec("cart", "fake", "with_tests", 1), "abc", tmp_path / "log")
+    no_tests = fixlab_arguments(tmp_path, model(system_prompt_extra=RULE), RunSpec("cart", "fake", "no_tests", 1), "abc", tmp_path / "log")
+
+    assert with_tests[with_tests.index("--system-prompt-extra") + 1] == RULE
+    assert no_tests[no_tests.index("--system-prompt-extra") + 1] == RULE
+    assert [a.replace("no_tests", "with_tests") for a in no_tests[:-2]] == with_tests  # 其餘只差條件 meta 與隱藏工具
+
+
+# Scenario: A model without the key adds nothing
+@pytest.mark.parametrize("changes", [{}, {"system_prompt_extra": None}])
+def test_a_model_without_system_prompt_extra_passes_no_option(tmp_path, changes):
+    arguments = fixlab_arguments(tmp_path, model(**changes), RunSpec("cart", "fake", "no_tests", 1), "abc", tmp_path / "log")
+
+    assert "--system-prompt-extra" not in arguments
+
+
+def test_the_system_prompt_extra_reaches_the_run_and_is_recorded_in_run_start(problem, tmp_path):
+    client = FakeClient(list(DO_NOTHING))
+
+    line = run_one(RunSpec("cart", "fake", "no_tests", 1), problem, model(system_prompt_extra=RULE), tmp_path, client=client)
+
+    run_start = json.loads(Path(line["log_path"]).read_text().splitlines()[0])
+    assert run_start["system_prompt_extra"] == RULE
+    assert client.sent[0][0]["content"].endswith("\n\n" + RULE)
+
+
+# Scenario: An invalid value is rejected before any run
+@pytest.mark.parametrize("value", [5, True, ["a"], "", "   "])
+def test_a_system_prompt_extra_that_is_not_a_visible_string_is_rejected(tmp_path, value):
+    path = models_file(tmp_path, labels=("x",), system_prompt_extra=value)
+
+    with pytest.raises(runner.ConfigError, match=rf"'x'.*{re.escape(repr(value))}"):
+        runner.load_models(path)
+
+
+@pytest.mark.parametrize("value", [None, RULE])
+def test_a_null_or_a_visible_system_prompt_extra_is_loaded(tmp_path, value):
+    (loaded,) = runner.load_models(models_file(tmp_path, labels=("x",), system_prompt_extra=value))
+
+    assert loaded.system_prompt_extra == value

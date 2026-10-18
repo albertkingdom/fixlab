@@ -514,3 +514,14 @@ def test_a_request_error_is_shown_to_the_user(session, capsys):
     out = capsys.readouterr().out
     assert "  ! request failed" in out and "boom" in out
 
+
+
+# ── 額外的 system prompt：對應 run-telemetry 的 The system prompt can be extended from the command line ──
+
+def test_the_extra_system_prompt_is_in_every_request_of_an_interactive_session(session):
+    client = FakeClient([("Done.", None), ("Done.", None)])
+    session(client, ["first", "second"], "--system-prompt-extra", "Finish once the fix is made.")
+
+    expected = {"role": "system", "content": SYSTEM_PROMPT + "\n\nFinish once the fix is made."}
+    assert client.sent[0][0] == expected and client.sent[1][0] == expected
+    assert [m["role"] for m in client.sent[1]].count("system") == 1

@@ -41,6 +41,7 @@ class ModelConfig:
     temperature: float | None = None
     extra_body: dict | None = None
     max_steps: int | None = None  # 這個模型每次執行的步數上限；None 是不傳，用 fixlab 自己的預設
+    system_prompt_extra: str | None = None  # 接在預設系統提示後面的文字；None 是不加，兩個條件傳同一段
     price: dict | None = None   # input_per_million、output_per_million、source、date
     meta: dict = field(default_factory=dict)  # 量化方式、runtime、context 長度…，原樣記進 run_start 的 meta
 
@@ -72,12 +73,23 @@ def load_models(path) -> list[ModelConfig]:
         if reserved:
             raise ConfigError(f"model {entry['label']!r}: meta must not use the reserved keys {', '.join(reserved)}")
         check_max_steps(entry)
+        check_system_prompt_extra(entry)
         models.append(ModelConfig(
             name=entry["name"], label=entry["label"], base_url=entry.get("base_url"),
             api_key_env=entry["api_key_env"], temperature=entry.get("temperature"),
             extra_body=entry.get("extra_body"), max_steps=entry.get("max_steps"),
+            system_prompt_extra=entry.get("system_prompt_extra"),
             price=entry.get("price"), meta=entry.get("meta", {})))
     return models
+
+
+def check_system_prompt_extra(entry: dict) -> None:
+    """system_prompt_extra 沒寫或寫 null 都是「不加」；有值就必須是有看得見的字的字串。"""
+    value = entry.get("system_prompt_extra")
+    if value is None:
+        return
+    if not isinstance(value, str) or not value.strip():
+        raise ConfigError(f"model {entry['label']!r}: system_prompt_extra must be a string with a visible character, got {value!r}")
 
 
 def check_max_steps(entry: dict) -> None:
@@ -115,6 +127,8 @@ def fixlab_arguments(workdir, model: ModelConfig, spec: RunSpec, digest: str, lo
         arguments += ["--extra-body", json.dumps(model.extra_body)]
     if model.max_steps is not None:  # 沒寫就不傳，fixlab 用自己的預設；兩個條件都傳同一個值
         arguments += ["--max-steps", str(model.max_steps)]
+    if model.system_prompt_extra is not None:  # 兩個條件傳同一段，prompt 不能成為兩個條件的差別
+        arguments += ["--system-prompt-extra", model.system_prompt_extra]
     if spec.condition == "no_tests":
         arguments += ["--hide-tool", HIDDEN_TOOL]
     return arguments
