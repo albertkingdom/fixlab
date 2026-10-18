@@ -136,6 +136,7 @@ fixlab.bench 的 report 子命令讀 results.jsonl 與模型設定檔，輸出 m
   - 4 次都是 fixed；花費約 0.011 美元。claude-haiku-5.5 每次 8 到 10 秒、6 步。
   - qwen3.5-9b 固定在 DeepInfra 時，OpenRouter 回 429（限流）：一次執行被限流 15 次，執行迴圈照規則等 5、15、30…秒再重試，一次要 505 到 620 秒，完整實驗的 80 次 Qwen 會跑十幾個小時。改固定在 Venice（fp8，先前的真實執行也是它）後，同樣兩次只要 27 與 39 秒、沒有重試。→ bench/models.json 的 Qwen 改成 Venice，量化記 fp8；Venice 不支援 seed，但本來就不固定 seed。
   - 一個值得留意的現象（只有 2 次，不是結論）：qwen3.5-9b 在沒有 run_tests 的條件下，兩次都跑滿 20 步沒有宣告完成，卻都是 fixed；有 run_tests 時約 10 步就宣告完成。報告的總表因此加了「步數用完」一欄。
+  - 想改用 bf16 的非中國供應商時，試了 Parasail：OpenRouter 回 404，原因是它的 Qwen3.5-9B 端點不支援工具呼叫（清單的支援參數裡沒有 tools），而 fixlab 需要工具呼叫；兩次執行都在 0.3 秒內失敗，被記成 error、不算入結果，沒有花費。挑供應商時要先確認它支援 tools。bf16 又支援工具的只有 DeepInfra，但它被限流，所以 Qwen 維持 Venice（fp8），報告的限制要寫明量化是 fp8。
   - 報告的模型設定（供應商、量化、單價）來自設定檔，不是從事件檔讀的，所以實驗開始之後、報告產生之前不要改 bench/models.json；這次的小規模結果是用舊設定（DeepInfra）跑的，報告顯示的是新設定（Venice），只是觀察，不拿來當結果。
 
 ## Migration Plan
