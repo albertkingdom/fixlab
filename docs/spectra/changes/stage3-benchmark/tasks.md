@@ -63,7 +63,7 @@
 - [x] 9.3 第 17 篇 docs/articles/17-self-check.md：怎麼證明題目量到想量的東西（原始 bug 一定失敗、標準解一定全過、重跑不 flaky、失敗輸出不洩漏位置），附 8 題的真實 check 輸出。驗證：內容審閱，輸出來自真實執行。
 - [x] 9.4 第 18 篇 docs/articles/18-experiment-runner.md：兩個條件怎麼只差一個工具、為什麼要固定 temperature 與供應商、先顯示計畫再確認、續跑，附小規模實跑的真實輸出。驗證：內容審閱。
 - [x] 9.5 第 19 篇 docs/articles/19-first-results.md：第一次完整實驗的結果與怎麼讀（用圖說明成對比較與區間）、哪些結論不能下。驗證：內容審閱，所有數字來自 docs/benchmark-results.md。
-- [ ] 9.6 更新 README.md（階段 3 狀態與 tag、bench 的用法、已知限制）與 AGENTS.md（目錄結構加 bench、題數說明），並確認 docs/articles/10-protect-tests.md 的題數說法已與 8 題一致（這三處的題數修改已在工作區，隨第一個 commit 進去）。驗證：內容審閱，README 的指令照做能跑。
+- [x] 9.6 更新 README.md（階段 3 狀態與 tag、bench 的用法、已知限制）與 AGENTS.md（目錄結構加 bench、題數說明），並確認 docs/articles/10-protect-tests.md 的題數說法已與 8 題一致（這三處的題數修改已在工作區，隨第一個 commit 進去）。驗證：內容審閱，README 的指令照做能跑。
 
 ## 10. 收尾
 

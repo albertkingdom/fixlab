@@ -10,12 +10,12 @@
 |---|---|---|---|
 | 1 骨架與規格 | agent 迴圈、六個工具、原生 tool call 解析、macOS 沙箱、`fixlab PATH` 最小入口 | 完成 | `stage-1` |
 | 2 CLI 與 telemetry | 事件檔（JSONL）、互動模式、權限提示 | 完成 | `stage-2` |
-| 3 Benchmark 與實驗 | 8 題左右的多檔 bug、隱藏測試、有／無 `run_tests` 對照、多模型比較 | 未做 | |
+| 3 Benchmark 與實驗 | 8 題多檔 bug、隱藏測試、評分器、題目自我檢查、有／無 `run_tests` 對照、兩個模型 | 完成 | `stage-3` |
 | 4 選做 | 多 agent 對照、MCP 或 GitHub issue connector | 未做 | |
 
-可以用 `git checkout stage-1` 或 `git checkout stage-2` 看到各階段完成時的程式。
+可以用 `git checkout stage-1`、`stage-2` 或 `stage-3` 看到各階段完成時的程式。
 
-階段 2 讓每次執行都留下事件檔，但**還沒有任何統計**，也**還沒有 benchmark 的數字**。下面「實跑紀錄」是 1 題、1 個模型、少數幾次執行的觀察，不能當作這個 agent 的成績。
+階段 3 有了 8 題 benchmark 與第一次完整實驗（160 次，花約 $0.41）：在這組題目上觀察到，Qwen3.5-9B 能自己跑測試時修好 82%，不能時 25%（而且沒有一次宣告完成）；Claude Haiku 5.5 兩個條件都 100%，題目對它太容易。**這些只是這 8 題、2 個模型的觀察，不是這個 agent 的一般成績**；結果、設定與所有限制見 [docs/benchmark-results.md](docs/benchmark-results.md)。下面「實跑紀錄」是階段 1 時 1 題、1 個模型的早期觀察。
 
 ## 快速開始
 
@@ -42,7 +42,7 @@ cp -R tests/fixtures/timelog /某個暫存目錄/timelog-try
 .venv/bin/fixlab /某個暫存目錄/timelog-try
 ```
 
-選項：`-i`（互動模式，見下）、`--max-steps`（預設 20）、`--max-tokens`（預設 8192）、`--task`（換掉預設的任務文字，只用於一次性模式）、`--log-dir`、`--meta`（見〈事件檔〉）。
+選項：`-i`（互動模式，見下）、`--max-steps`（預設 20）、`--max-tokens`（預設 8192）、`--task`（換掉預設的任務文字，只用於一次性模式）、`--log-dir`、`--meta`（見〈事件檔〉）、`--hide-tool NAME`（不讓模型看到某個工具，例如 `run_tests`；可重複）、`--temperature`、`--extra-body JSON`（原樣放進請求，例如固定 OpenRouter 的供應商）。後三個用在實驗，並記進事件檔的 `run_start`。
 
 ### 一次性模式會印什麼
 
@@ -84,6 +84,19 @@ Fixed parse_duration: it only took the first unit.
 - **Ctrl-C 打斷任務**：已完成的部分留在對話裡，沒有結果的工具呼叫補上「被中斷」的結果，下一個任務看得到前面做到哪裡；但被打斷的那個呼叫可能已經執行了一半，檔案可能已被改過。請求失敗也一樣：任務已經執行過工具就保留，接上說明並提醒檔案可能已被改過；還沒執行過任何工具（第一個請求就失敗、或只收到空回覆）才整個丟掉。
 - **不自動再跑一次測試**（一次性模式才會）：你在場，想驗證可以直接叫模型跑。**一次性模式從不問任何問題。**
 - **不跨 session 保存對話**，離開就沒了；對話也沒有長度上限，每一步會越來越貴，用 `/reset` 重來。
+
+### Benchmark 與實驗（階段 3）
+
+8 道題在 `bench/problems/`，每題一個資料夾（給 agent 的 `project`、藏起來的 `hidden/fix` 與 `hidden/keep`、標準解 `solution`、`problem.json`）。指令都是 `python -m fixlab.bench ...`：
+
+| 指令 | 做什麼 | 花錢嗎 |
+|---|---|---|
+| `check [題目...] [--repeat N]` | 題目自我檢查：原始專案與套上標準解後各組測試的結果、重跑看會不會 flaky、失敗輸出不能點名 bug 檔 | 不花錢，只跑 pytest；全部 8 題約 2 分鐘 |
+| `grade 題目 工作目錄` | 在乾淨的暫存目錄用原版測試與隱藏測試評分，印 JSON（`fixed`、`broke_existing`、`overfit`、`invalid`） | 不花錢 |
+| `run --models bench/models.json --out 資料夾` | 展開（題目、模型、條件、次數）；沒有 `--confirm` 只印計畫；有 `--confirm` 才真的呼叫模型，可續跑 | **會花錢**（完整實驗約 $0.4、約 1 小時） |
+| `report results.jsonl --models bench/models.json` | 把結果變成 markdown 報告 | 不花錢 |
+
+教學文章第 15 到 19 篇依序說明題目、評分器、自我檢查、實驗執行器與結果。
 
 ### 事件檔
 
@@ -127,6 +140,7 @@ Fixed parse_duration: it only took the first unit.
 | 6 | `fixlab/sandbox.py` | 用 macOS `sandbox-exec` 包住 `run_tests`：禁網路、限制讀寫 |
 | 7 | `fixlab/telemetry.py` | 事件檔：一次執行一個資料夾、一行一個 JSON、每行立刻寫入、寫不進去只警告 |
 | 8 | `fixlab/display.py` | 互動模式的畫面：標題行、差異、結果行、用量行、顏色（只回傳字串，不直接印） |
+| 9 | `fixlab/bench/` | 階段 3：`problems.py`（題目載入與摘要）、`grader.py`（評分器）、`selfcheck.py`（題目自我檢查）、`runner.py`（實驗執行器）、`report.py`（報告）、`__main__.py`（上面四個指令） |
 
 ## 六個工具
 
@@ -146,7 +160,7 @@ Fixed parse_duration: it only took the first unit.
 - 所有路徑必須落在工作目錄內：`../`、絕對路徑、`~`、符號連結逃逸都被擋，並在回傳裡設 `blocked` 旗標。
 - **測試檔不可寫**：`edit_file`、`write_file` 碰到測試檔會被拒絕；`run_tests` 跑的程式在沙箱裡也寫不了測試檔（防止模型在原始碼裡塞「執行時改寫測試」的程式來假通過）。這是修 bug 模式的政策，不是通用限制，由入口決定。
 - **`run_tests` 在沙箱裡跑**（macOS）：不能連網、不能讀家目錄與 fixlab 自己的專案目錄、只能寫工作目錄。
-- **子行程環境變數白名單**：只傳 `PATH`、`LANG`、`LC_ALL`、`TMPDIR` 與 `PYTHONDONTWRITEBYTECODE=1`，API 金鑰不會被被測的程式看到。
+- **子行程環境變數白名單**：只傳 `PATH`、`LANG`、`LC_ALL`、`TMPDIR` 與 `PYTHONDONTWRITEBYTECODE=1`，API 金鑰不會被被測的程式看到。另外固定 `TZ=UTC`、`PYTHONHASHSEED=0`，並設 `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`（不自動載入 pytest 外掛），測試結果才不依賴機器。
 - **判定測試通過不只看結束碼**：用 `python -P` 啟動以免根目錄的 `pytest.py` 取代真的 pytest，並要求輸出最後一行有 `N passed`。
 - **互動模式會先問**：改檔、寫檔、跑測試之前問使用者；一次性模式沒有人可以問，改成事後的差異與重跑測試。
 - **保險**：步數上限 20、連續三輪工具呼叫全失敗就停（`stuck`；被使用者拒絕的呼叫也算失敗）。這兩個數字是初始值，沒有實測依據。
@@ -156,7 +170,7 @@ Fixed parse_duration: it only took the first unit.
 - **沙箱只有 macOS 有效**，而且 `sandbox-exec` 在 Apple 的說明裡標為 **DEPRECATED**（已棄用）。其他平台只剩工具層的限制加結束時的 diff；沒有沙箱時入口會印 `sandbox: OFF (原因)`。
 - **硬連結**：事先在沙箱外建好、指向工作目錄之外的硬連結，沙箱只檢查路徑所以擋不到。
 - **被測專案的第三方依賴**：`run_tests` 用 fixlab 自己的 Python 直譯器跑，被測專案需要的套件要裝在同一個環境。範例專案只用標準函式庫。
-- **沙箱擋不到的偽造**：被測的程式在 pytest 行程內部竄改 pytest 本身，或自己印一行假的 `N passed` 摘要再以結束碼 0 離開（測試與原始碼在同一個行程；後者我用兩行 `atexit` 重現過，bug 還在，`tests_passed` 卻是 `True`）。根治要靠階段 3 的做法：計分用乾淨的環境重跑，並比對測試案例清單。見第 10 篇。
+- **沙箱擋不到的偽造**：被測的程式在 pytest 行程內部竄改 pytest 本身，或自己印一行假的 `N passed` 摘要再以結束碼 0 離開（測試與原始碼在同一個行程；後者我用兩行 `atexit` 重現過，bug 還在，`tests_passed` 卻是 `True`）。階段 3 的評分器降低了這個風險（乾淨環境重跑、只讀最後一行摘要、通過數要等於題目記的數量），但**沒有根治**：被測的程式與 pytest 仍在同一個行程。見第 10、16 篇。
 - **基底 Python 在家目錄底下時，沙箱會讓 `run_tests` 失敗**：用 uv、pyenv 管理的 Python 建的環境，標準函式庫在家目錄底下，被沙箱擋住，`run_tests` 一啟動就失敗（我用 uv 的 Python 重現，錯誤是 `dyld: Library not loaded`）。關掉沙箱則正常。Homebrew 的 Python 不受影響。目前沒有設定可以放行。
 - **沒有重複呼叫偵測**：模型一直重讀同一個檔案（成功的呼叫）不會觸發 `stuck`。
 - **還不能在任何目錄直接打 `fixlab`**：要用完整路徑 `.venv/bin/fixlab`，或自己把它放進 PATH（例如在 `~/.local/bin` 放一個指向它的符號連結）；API 金鑰要自己載入（`source .env`）。之後想做：放進 PATH、金鑰存系統鑰匙圈、沒給 PATH 時用目前的目錄。
@@ -166,7 +180,7 @@ Fixed parse_duration: it only took the first unit.
 - **管線輸入會被當成回答**：`echo ... | fixlab PATH -i` 會把管線裡的下一行拿去回答問題。
 - **畫面的顏色只用假的終端機測過格式**，實際的樣子要用過才確定。
 - **只解析原生 tool call**：不支援把工具呼叫寫在文字裡的模型。
-- **證據很薄**：真模型的紀錄只有 1 題、1 個模型（qwen3.5-9b）、少數幾次執行（見下面的實跑紀錄與第 4、6 篇）。穩定度與多模型比較屬於階段 3。
+- **證據仍然有限**：benchmark 只有 8 題、2 個模型（一個開源、一個商用）、每格 5 次；Claude Haiku 5.5 在這組題目上碰到天花板（160 次全部修好），分不出有沒有測試的差別；步數上限 20 沒有校準，Qwen 沒有 `run_tests` 時的 25% 有一部分是它跑滿步數造成的。見 [docs/benchmark-results.md](docs/benchmark-results.md)。
 
 ## 實跑紀錄：第一次完整的修復（階段 1）
 
@@ -284,10 +298,15 @@ fixlab /某個暫存目錄/timelog-try
 | 12 | 把每次執行存下來（事件檔） |
 | 13 | 連續下指令（互動模式） |
 | 14 | 改檔和跑測試之前先問你（權限提示） |
+| 15 | 題目長什麼樣（8 道有 bug 的小專案） |
+| 16 | 評分器（修好、假通過、弄壞、無效） |
+| 17 | 題目自我檢查（怎麼證明題目量到想量的東西） |
+| 18 | 實驗執行器（有 `run_tests` 對沒有） |
+| 19 | 第一次實驗結果，以及怎麼讀它 |
 
 ## 規格與設計文件
 
-用 Spectra 管理，在 `docs/spectra/`：`specs/` 是行為規格，`changes/archive/` 底下是每個階段的提案、設計（每個決定的替代方案與取捨，以及風險清單）和任務：階段 1 是 `bootstrap-agent-core`，階段 2 是 `stage2-cli-telemetry`（資料夾名稱前面有日期）。
+用 Spectra 管理，在 `docs/spectra/`：`specs/` 是行為規格，`changes/archive/` 底下是每個階段的提案、設計（每個決定的替代方案與取捨，以及風險清單）和任務：階段 1 是 `bootstrap-agent-core`，階段 2 是 `stage2-cli-telemetry`，階段 3 是 `stage3-benchmark`（歸檔後的資料夾名稱前面有日期）。
 
 ## 參考來源
 

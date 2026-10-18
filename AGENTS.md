@@ -37,7 +37,7 @@ fixlab 是能實際使用的工具，沿用它的評測方法（可見／隱藏�
 
 ## 3. 範圍
 - 工具：`read_file`（行號）、`list_files`、`grep`、`edit_file`、`write_file`、`run_tests`（六個）。`glob`（依檔名樣式找檔案）暫緩：`list_files` 是遞迴的，目前沒有需要依檔名過濾的情境，有實測依據再加。**不提供任意 shell**；之後若要加，需先有白名單與確認機制。
-- 安全：路徑限制在工作目錄、測試檔不可改（整組測試檔算指紋偵測竄改，階段 3）、macOS 沙箱（禁網路）、傳給子行程的環境變數要清理。
+- 安全：路徑限制在工作目錄、測試檔不可改（階段 3 的評分器用原版測試重跑，並把被改動的測試檔或設定檔標成 `invalid`；整組測試檔的指紋偵測暫緩）、macOS 沙箱（禁網路）、傳給子行程的環境變數要清理。
 - Telemetry：每步事件寫 JSONL（模型版本、runtime、context 長度、token、延遲、工具、結果、是否撞步數上限／被截斷／改測試）。
 - Benchmark：自寫 8 題左右的多檔 Python bug，之後視需要再增加（跨檔、斷言不透露原因、有干擾檔）；隱藏測試分「要修好」與「不能壞掉」兩組。
 - 實驗：有／無 `run_tests` 兩組，system prompt 一致，只差工具。
@@ -47,12 +47,15 @@ Verilog／EDA、SWE-bench 與真實大型 repo（需 Docker、小模型成功率
 
 ### 目錄結構
 ```
-fixlab/                 套件本體（約 1600 行）：cli、display、loop、toolparse、tools、workspace、sandbox、telemetry
+fixlab/                 套件本體：cli、display、loop、toolparse、tools、workspace、sandbox、telemetry
+fixlab/bench/           階段 3：題目載入、評分器、題目自我檢查、實驗執行器、報告（python -m fixlab.bench）
+bench/problems/         8 個 benchmark 題目；bench/models.json 是實驗用的模型設定（不含金鑰）
 tests/                  fixlab 自己的測試；tests/fixtures/timelog 是給 agent 修的範例專案（pytest 不收集它）
 tests/golden/           黃金 trace（tests/test_trace_golden.py 比對的基準）
 docs/spectra/           Spectra 的規格（specs/）與變更提案（changes/）
 docs/articles/          教學文章，每篇對應一個 article-NN tag
 runs/                   真模型實跑的原始紀錄（不進版控）；每次執行的事件檔預設在 ~/.fixlab/runs/
+docs/benchmark-results.md  階段 3 第一次完整實驗的結果、設定、限制與所有調整
 ```
 
 ## 4. 階段
