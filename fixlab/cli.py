@@ -177,10 +177,10 @@ def run_task(client, model: str, ws: Workspace, args, log: EventLog, session: li
             print()
     print(footer_line(result))
     if result.stop_reason == "error":
-        did_something = any(message["role"] in ("assistant", "tool") for message in session[before:])
-        if not did_something:
-            # 第一個請求就失敗：這個任務只多了（第一個任務還有 system prompt 與）一則沒有回覆的 user 訊息，
-            # 下一個任務接上去會變成兩則連續的 user 訊息，有些模型的模板會直接拒絕。沒有做過任何事，丟掉就好。
+        ran_a_tool = any(message["role"] == "tool" for message in session[before:])  # 只有執行過工具，檔案才可能被改
+        if not ran_a_tool:
+            # 沒執行過任何工具（第一個請求就失敗，或只收到壞掉、空的回覆）：沒有可保留的成果，而且對話可能停在一則
+            # 沒有回覆的 user 訊息，下一個任務接上去會變成兩則連續的 user 訊息，有些模型的模板會直接拒絕。丟掉就好。
             del session[before:]
             print("this task was discarded because the request failed")
         else:

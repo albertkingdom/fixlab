@@ -258,6 +258,28 @@ def test_a_failed_request_after_progress_keeps_what_was_done(session, capsys):
     assert client.sent[2][-1]["content"] == "add a docstring"
 
 
+# 只收到空回覆就失敗：迴圈會加一則 assistant 與一則回饋，但沒有執行過任何工具，不算做過事
+def test_a_failure_after_only_an_empty_reply_discards_the_task(session, capsys):
+    client = FakeClient([(None, None), RuntimeError("boom"), ("Documented.", None)])
+    session(client, ["fix it", "add a docstring"])
+
+    out = capsys.readouterr().out
+    assert "this task was discarded because the request failed" in out and "files may already have been changed" not in out
+    assert client.sent[2] == [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": "add a docstring"},
+    ]
+
+
+def test_a_failure_in_a_later_task_keeps_that_tasks_work_and_the_earlier_ones(session):
+    client = FakeClient([("Done.", None), (None, [an_edit()]), RuntimeError("boom"), ("OK.", None)])
+    session(client, ["first", "fix it", "y", "third"])
+
+    roles = [m["role"] for m in client.sent[3]]
+    assert roles == ["system", "user", "assistant", "user", "assistant", "tool", "assistant", "user"]
+    assert client.sent[3][6] == REQUEST_FAILED_NOTE
+
+
 def test_a_failure_in_the_first_task_leaves_the_session_empty(session):
     client = FakeClient([RuntimeError("boom"), ("OK.", None)])
     session(client, ["first", "second"])
