@@ -131,7 +131,8 @@ def render_report(all_lines: list, models: list, problems: dict, examples: int =
             out.append(f"- 模型 {label}：設定檔裡沒有這個模型")
             continue
         step_limit = model.max_steps if model.max_steps is not None else "預設"  # 沒設定就是 fixlab 自己的預設
-        prompt_extra = model.system_prompt_extra if model.system_prompt_extra is not None else "無"
+        # 文字可能有換行，用 json.dumps 讓它留在同一行，也看得出前後的空白（extra_body 與 meta 也是這樣顯示）
+        prompt_extra = json.dumps(model.system_prompt_extra, ensure_ascii=False) if model.system_prompt_extra is not None else "無"
         out.append(f"- 模型 {label}：{model.name}，temperature {model.temperature}，extra_body {json.dumps(model.extra_body)}，"
                    f"max_steps {step_limit}，system_prompt_extra {prompt_extra}，紀錄的條件 {json.dumps(model.meta, ensure_ascii=False)}")
     out.append("")
