@@ -128,7 +128,8 @@ def fixlab_arguments(workdir, model: ModelConfig, spec: RunSpec, digest: str, lo
     if model.max_steps is not None:  # 沒寫就不傳，fixlab 用自己的預設；兩個條件都傳同一個值
         arguments += ["--max-steps", str(model.max_steps)]
     if model.system_prompt_extra is not None:  # 兩個條件傳同一段，prompt 不能成為兩個條件的差別
-        arguments += ["--system-prompt-extra", model.system_prompt_extra]
+        # 用 = 連成一個參數：文字以 - 開頭時，分開傳會被 argparse 當成另一個選項，整個實驗當場中止
+        arguments += [f"--system-prompt-extra={model.system_prompt_extra}"]
     if spec.condition == "no_tests":
         arguments += ["--hide-tool", HIDDEN_TOOL]
     return arguments

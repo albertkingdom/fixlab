@@ -42,7 +42,7 @@ cp -R tests/fixtures/timelog /某個暫存目錄/timelog-try
 .venv/bin/fixlab /某個暫存目錄/timelog-try
 ```
 
-選項：`-i`（互動模式，見下）、`--max-steps`（預設 20）、`--max-tokens`（預設 8192）、`--task`（換掉預設的任務文字，只用於一次性模式）、`--log-dir`、`--meta`（見〈事件檔〉）、`--hide-tool NAME`（不讓模型看到某個工具，例如 `run_tests`；可重複）、`--temperature`、`--extra-body JSON`（原樣放進請求，例如固定 OpenRouter 的供應商）、`--system-prompt-extra TEXT`（把這段文字接在預設 system prompt 後面，中間空一行；空字串會被拒絕）。後四個用在實驗，並記進事件檔的 `run_start`。
+選項：`-i`（互動模式，見下）、`--max-steps`（預設 20）、`--max-tokens`（預設 8192）、`--task`（換掉預設的任務文字，只用於一次性模式）、`--log-dir`、`--meta`（見〈事件檔〉）、`--hide-tool NAME`（不讓模型看到某個工具，例如 `run_tests`；可重複）、`--temperature`、`--extra-body JSON`（原樣放進請求，例如固定 OpenRouter 的供應商）、`--system-prompt-extra TEXT`（把這段文字接在預設 system prompt 後面，中間空一行；空字串會被拒絕；文字以 `-` 開頭時要寫成 `--system-prompt-extra=TEXT`）。後四個用在實驗，並記進事件檔的 `run_start`。
 
 ### 一次性模式會印什麼
 

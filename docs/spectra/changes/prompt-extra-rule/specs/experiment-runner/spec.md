@@ -2,12 +2,17 @@
 
 ### Requirement: A model entry can add text to the system prompt
 
-An entry in the models file SHALL accept an optional key `system_prompt_extra`. When the key is absent or its value is `null`, the runner SHALL NOT pass `--system-prompt-extra`. When the value is a string with at least one non-whitespace character, the runner SHALL pass it to fixlab as `--system-prompt-extra` with exactly that string for every run of that model, in both conditions, so the two conditions still differ only in the visible tools. Loading a models file in which `system_prompt_extra` is present with any other value (a number, a boolean, a list, an empty string or a string of whitespace only) SHALL fail with a configuration error that names the model's label and the value, and no run SHALL start.
+An entry in the models file SHALL accept an optional key `system_prompt_extra`. When the key is absent or its value is `null`, the runner SHALL NOT pass `--system-prompt-extra`. When the value is a string with at least one non-whitespace character, the runner SHALL pass it to fixlab as the single argument `--system-prompt-extra=TEXT` with exactly that string as TEXT for every run of that model, in both conditions (one argument, so a text that starts with a dash is not read as another option), so the two conditions still differ only in the visible tools. Loading a models file in which `system_prompt_extra` is present with any other value (a number, a boolean, a list, an empty string or a string of whitespace only) SHALL fail with a configuration error that names the model's label and the value, and no run SHALL start.
 
 #### Scenario: The text is passed in both conditions
 
 - **WHEN** the entry labelled `qwen3.5-9b-rule` has `"system_prompt_extra": "Finish once the fix is made."` and the runner builds the fixlab arguments for the problem `cart` under `with_tests` and under `no_tests`
-- **THEN** both argument lists contain `--system-prompt-extra` followed by `Finish once the fix is made.`, and the lists are otherwise identical except for the condition meta and the hidden tool
+- **THEN** both argument lists contain `--system-prompt-extra=Finish once the fix is made.`, and the lists are otherwise identical except for the condition meta and the hidden tool
+
+#### Scenario: A text that starts with a dash is passed as it is
+
+- **WHEN** an entry has `"system_prompt_extra": "-Finish"` and a run of that model is started
+- **THEN** the run is not stopped by an argument error, and its `run_start` event records `system_prompt_extra` as `-Finish`
 
 #### Scenario: A model without the key adds nothing
 

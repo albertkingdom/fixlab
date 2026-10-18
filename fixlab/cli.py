@@ -52,7 +52,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help='JSON object passed to the request as extra body parameters, '
                              'e.g. \'{"provider": {"order": ["Venice"]}}\' to pin an OpenRouter provider')
     parser.add_argument("--system-prompt-extra", metavar="TEXT",
-                        help="text appended to the default system prompt (after a blank line), for prompt experiments")
+                        help="text appended to the default system prompt (after a blank line), for prompt experiments; "
+                             "write --system-prompt-extra=TEXT if TEXT starts with a dash")
     return parser
 
 

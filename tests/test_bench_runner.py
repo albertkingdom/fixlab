@@ -398,8 +398,9 @@ def test_a_model_system_prompt_extra_is_passed_to_fixlab_in_both_conditions(tmp_
     with_tests = fixlab_arguments(tmp_path, model(system_prompt_extra=RULE), RunSpec("cart", "fake", "with_tests", 1), "abc", tmp_path / "log")
     no_tests = fixlab_arguments(tmp_path, model(system_prompt_extra=RULE), RunSpec("cart", "fake", "no_tests", 1), "abc", tmp_path / "log")
 
-    assert with_tests[with_tests.index("--system-prompt-extra") + 1] == RULE
-    assert no_tests[no_tests.index("--system-prompt-extra") + 1] == RULE
+    # 一個參數（用 = 連起來）：文字以 - 開頭時，argparse 才不會把它當成另一個選項
+    assert f"--system-prompt-extra={RULE}" in with_tests
+    assert f"--system-prompt-extra={RULE}" in no_tests
     assert [a.replace("no_tests", "with_tests") for a in no_tests[:-2]] == with_tests  # 其餘只差條件 meta 與隱藏工具
 
 
@@ -419,6 +420,17 @@ def test_the_system_prompt_extra_reaches_the_run_and_is_recorded_in_run_start(pr
     run_start = json.loads(Path(line["log_path"]).read_text().splitlines()[0])
     assert run_start["system_prompt_extra"] == RULE
     assert client.sent[0][0]["content"].endswith("\n\n" + RULE)
+
+
+# Scenario: A text that starts with a dash is passed as it is
+def test_a_system_prompt_extra_that_starts_with_a_dash_does_not_stop_the_experiment(problem, tmp_path):
+    client = FakeClient(list(DO_NOTHING))
+
+    line = run_one(RunSpec("cart", "fake", "no_tests", 1), problem, model(system_prompt_extra="-Finish"), tmp_path, client=client)
+
+    run_start = json.loads(Path(line["log_path"]).read_text().splitlines()[0])
+    assert run_start["system_prompt_extra"] == "-Finish"
+    assert client.sent[0][0]["content"].endswith("\n\n-Finish")
 
 
 # Scenario: An invalid value is rejected before any run
