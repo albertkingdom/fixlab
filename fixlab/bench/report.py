@@ -132,15 +132,16 @@ def render_report(all_lines: list, models: list, problems: dict, examples: int =
 
     # ── 總表 ──
     out += ["## 結果總表", "",
-            "| 模型 | 條件 | 執行數 | " + " | ".join(OUTCOMES) + " | 宣稱完成但沒修好 | 叫了看不到的工具 | 步數中位數 | prompt token 平均 | completion token 平均 | 錯誤 |",
-            "|" + "---|" * (len(OUTCOMES) + 9)]
+            "| 模型 | 條件 | 執行數 | " + " | ".join(OUTCOMES) + " | 宣稱完成但沒修好 | 步數用完 | 叫了看不到的工具 | 步數中位數 | prompt token 平均 | completion token 平均 | 錯誤 |",
+            "|" + "---|" * (len(OUTCOMES) + 10)]
     cells = group_by(lines, lambda l: (l["model"], l["condition"]))
     for (label, condition), group in sorted(cells.items()):
         ok = counted(group)
         by_outcome = {name: sum(1 for l in ok if l["grade"]["outcome"] == name) for name in OUTCOMES}
         out.append("| " + " | ".join([
             label, condition, str(len(ok)), *[percent(by_outcome[name], len(ok)) for name in OUTCOMES],
-            str(sum(1 for l in ok if l["claimed_done_but_failed"])), str(sum(l["hidden_tool_calls"] for l in ok)),
+            str(sum(1 for l in ok if l["claimed_done_but_failed"])), str(sum(1 for l in ok if l["stop_reason"] == "max_steps")),
+            str(sum(l["hidden_tool_calls"] for l in ok)),
             number(statistics.median([l["steps"] for l in ok if l["steps"] is not None]) if ok else None, 1),
             number(mean([l["prompt_tokens"] for l in ok if l["prompt_tokens"] is not None])),
             number(mean([l["completion_tokens"] for l in ok if l["completion_tokens"] is not None])),
@@ -191,6 +192,8 @@ def render_report(all_lines: list, models: list, problems: dict, examples: int =
 
     # ── 失敗實例 ──
     out += ["## 失敗實例", ""]
+    if all(line["grade"]["outcome"] == "fixed" for line in counted(lines)):
+        out += ["沒有：所有算進結果的執行都是 fixed。", ""]
     for outcome in OUTCOMES[1:]:
         picked = [l for l in counted(lines) if l["grade"]["outcome"] == outcome][:examples]
         if not picked:

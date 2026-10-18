@@ -62,9 +62,9 @@ def test_the_summary_shows_claims_hidden_tool_calls_steps_and_tokens():
 
     cells = table_row(render(lines), "m", "with_tests")
 
-    assert cells[8] == "1" and cells[9] == "3"            # 宣稱完成但沒修好、叫了看不到的工具
-    assert cells[10] == "7.0"                              # 步數中位數
-    assert cells[11] == "2,000" and cells[12] == "200"    # token 平均
+    assert cells[8] == "1" and cells[9] == "0" and cells[10] == "3"  # 宣稱完成但沒修好、步數用完、叫了看不到的工具
+    assert cells[11] == "7.0"                              # 步數中位數
+    assert cells[12] == "2,000" and cells[13] == "200"    # token 平均
 
 
 def test_only_the_latest_line_of_a_combination_is_used():
@@ -129,7 +129,7 @@ def test_without_a_price_only_tokens_are_shown():
 
     cost_section = text.split("## 成本")[1].split("##")[0]
     assert "沒有單價" in cost_section and "$" not in cost_section
-    assert "1,000" in table_row(text, "m", "with_tests")[11]
+    assert "1,000" in table_row(text, "m", "with_tests")[12]
 
 
 # ── examples, limits, warnings ────────────────────────────────────────────
@@ -198,3 +198,17 @@ def test_the_report_command_prints_and_writes(tmp_path, capsys):
     assert bench_main(["report", str(results), "--problems-dir", str(TOY_ROOT), "--out", str(out)]) == 0
 
     assert "# 實驗報告" in printed and out.read_text().strip() == printed.strip()
+
+
+def test_runs_that_used_up_their_steps_are_counted():
+    lines = [line(repeat=1, outcome="fixed"), line(repeat=2, outcome="fixed"), line(repeat=3, outcome="unfixed")]
+    lines[0]["stop_reason"] = "max_steps"
+    lines[2]["stop_reason"] = "max_steps"
+
+    assert table_row(render(lines), "m", "with_tests")[9] == "2"
+
+
+def test_the_examples_section_says_so_when_every_run_was_fixed():
+    text = render([line(outcome="fixed")])
+
+    assert "沒有：所有算進結果的執行都是 fixed" in text.split("## 失敗實例")[1].split("##")[0]

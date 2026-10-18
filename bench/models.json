@@ -9,7 +9,7 @@
       "extra_body": {
         "provider": {
           "order": [
-            "DeepInfra"
+            "Venice"
           ],
           "allow_fallbacks": false
         }
@@ -17,12 +17,12 @@
       "price": {
         "input_per_million": 0.1,
         "output_per_million": 0.15,
-        "source": "OpenRouter models API, endpoint deepinfra/bf16",
+        "source": "OpenRouter models API, endpoint venice/fp8",
         "date": "2026-10-18"
       },
       "meta": {
-        "quantization": "bf16",
-        "runtime": "OpenRouter -> DeepInfra",
+        "quantization": "fp8",
+        "runtime": "OpenRouter -> Venice",
         "context_length": "262144",
         "thinking": "provider default (on)",
         "seed": "not fixed (each repeat is an independent sample)"

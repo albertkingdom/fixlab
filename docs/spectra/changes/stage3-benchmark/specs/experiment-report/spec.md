@@ -6,7 +6,7 @@ The experiment report turns the results file into the numbers and examples that 
 
 ### Requirement: The summary table covers every model and condition
 
-The `report` command SHALL print a markdown table with one row for each pair of model and condition, with these columns: the number of runs, the counts and percentages of `fixed`, `broke_existing`, `overfit`, `invalid` and `unfixed` outcomes, the number of runs whose `claimed_done_but_failed` is true, the total `hidden_tool_calls`, the median number of steps, the mean prompt tokens and the mean completion tokens. Runs with a non-null `error` SHALL NOT be counted in any outcome and SHALL be shown in a separate column. When the results file has several lines for one combination of problem, model, condition and repeat, only the latest line SHALL be used.
+The `report` command SHALL print a markdown table with one row for each pair of model and condition, with these columns: the number of runs, the counts and percentages of `fixed`, `broke_existing`, `overfit`, `invalid` and `unfixed` outcomes, the number of runs whose `claimed_done_but_failed` is true, the number of runs whose `stop_reason` is `max_steps`, the total `hidden_tool_calls`, the median number of steps, the mean prompt tokens and the mean completion tokens. Runs with a non-null `error` SHALL NOT be counted in any outcome and SHALL be shown in a separate column. When the results file has several lines for one combination of problem, model, condition and repeat, only the latest line SHALL be used.
 
 #### Scenario: Counting outcomes
 
