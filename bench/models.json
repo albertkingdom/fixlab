@@ -1,0 +1,44 @@
+{
+  "models": [
+    {
+      "name": "qwen/qwen3.5-9b",
+      "label": "qwen3.5-9b",
+      "base_url": "https://openrouter.ai/api/v1",
+      "api_key_env": "OPENAI_API_KEY",
+      "temperature": 0.2,
+      "extra_body": {"provider": {"order": ["DeepInfra"], "allow_fallbacks": false}, "seed": 42},
+      "price": {
+        "input_per_million": 0.10,
+        "output_per_million": 0.15,
+        "source": "OpenRouter models API, endpoint deepinfra/bf16",
+        "date": "2026-10-18"
+      },
+      "meta": {
+        "quantization": "bf16",
+        "runtime": "OpenRouter -> DeepInfra",
+        "context_length": "262144",
+        "thinking": "provider default (on)"
+      }
+    },
+    {
+      "name": "anthropic/claude-haiku-5.5",
+      "label": "claude-haiku-5.5",
+      "base_url": "https://openrouter.ai/api/v1",
+      "api_key_env": "OPENAI_API_KEY",
+      "temperature": null,
+      "extra_body": {"provider": {"order": ["Anthropic"], "allow_fallbacks": false}},
+      "price": {
+        "input_per_million": 0.10,
+        "output_per_million": 0.50,
+        "source": "OpenRouter models API, endpoint anthropic",
+        "date": "2026-10-18"
+      },
+      "meta": {
+        "quantization": "not applicable (commercial API)",
+        "runtime": "OpenRouter -> Anthropic",
+        "context_length": "1000000",
+        "thinking": "provider default"
+      }
+    }
+  ]
+}
