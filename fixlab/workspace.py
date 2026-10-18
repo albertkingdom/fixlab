@@ -104,6 +104,9 @@ class Tool:
     func: Callable[..., ToolResult]
     schema: dict  # {"properties": {名稱: {"type": ...}}, "required": [...]}，與 toolparse 的 tool_schemas 同形
     description: str = ""  # 給模型看的用途說明
+    # 選用：只驗證、不做事。用同樣的參數呼叫，工具一定會拒絕的話就丟 ToolError。在問使用者之前先跑，
+    # 注定失敗的呼叫就不會拿去問。工具本身開頭也呼叫它，所以驗證只有一份。
+    precheck: Callable[..., object] | None = None
 
 
 class Workspace:
@@ -128,8 +131,9 @@ class Workspace:
         # 兩種情況都不能整檔覆寫，不然會憑空改寫、或蓋掉別人的修改。edit_file 成功後會把該檔移除。
         self.files_read: dict[Path, str] = {}
 
-    def register(self, name: str, func: Callable[..., ToolResult], schema: dict, description: str = "") -> None:
-        self._tools[name] = Tool(func, schema, description)
+    def register(self, name: str, func: Callable[..., ToolResult], schema: dict, description: str = "",
+                 precheck: Callable[..., object] | None = None) -> None:
+        self._tools[name] = Tool(func, schema, description, precheck)
 
     def tool_specs(self) -> list[dict]:
         """送給模型的工具清單（OpenAI 格式）。"""
@@ -191,7 +195,9 @@ class Workspace:
             if tool is None:
                 raise ToolError(f"unknown tool: {name!r}")
             self._check_args(name, tool, args)
-            # 放在參數檢查之後：不合法的呼叫本來就不會執行，不用拿去問使用者
+            # 結構檢查之後再做值的檢查（空路徑、唯讀檔、找不到字串…）：工具一定會拒絕的呼叫，不用拿去問使用者
+            if tool.precheck is not None:
+                tool.precheck(**args)
             if not self.confirm(name, args):
                 return ToolResult(
                     "error: the user declined this call. Do not retry it unchanged; "

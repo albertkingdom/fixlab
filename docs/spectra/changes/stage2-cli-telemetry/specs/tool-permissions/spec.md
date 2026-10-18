@@ -6,7 +6,7 @@ Tool permissions let the entry point decide whether a tool call needs the user's
 
 ### Requirement: A Workspace can require confirmation
 
-`Workspace` SHALL accept an optional `confirm` function taking the tool name and the arguments and returning a bool. The default SHALL approve every call. A call SHALL be confirmed after the tool exists and its arguments pass validation, and before the tool runs. When `confirm` returns False, the tool SHALL NOT run, and the result SHALL be `ok=false` with the flag `denied` and an output that tells the model the user declined and that it must not retry the same call.
+`Workspace` SHALL accept an optional `confirm` function taking the tool name and the arguments and returning a bool. The default SHALL approve every call. A call SHALL be confirmed after the tool exists, its arguments pass validation and its pre-check passes, and before the tool runs. `edit_file`, `write_file` and `run_tests` SHALL have a pre-check that refuses the call, without changing anything, for every reason the tool itself would refuse it before acting (an empty path, a path outside the working directory, a read-only file, a missing file, an `old_string` that does not occur exactly once or equals `new_string`, an existing file that was not read first), with the same error the tool would give. When `confirm` returns False, the tool SHALL NOT run, and the result SHALL be `ok=false` with the flag `denied` and an output that tells the model the user declined and that it must not retry the same call.
 
 #### Scenario: Default approves
 
@@ -23,9 +23,19 @@ Tool permissions let the entry point decide whether a tool call needs the user's
 - **WHEN** the model calls `edit_file` without `new_string`, or calls an unknown tool `bash`
 - **THEN** `confirm` is not called and the result is the usual validation error
 
+#### Scenario: Calls the tool would refuse are not asked about
+
+- **WHEN** the model calls `run_tests` with `target` set to an empty string, or `edit_file` with an `old_string` that does not occur in the file, or `edit_file` with identical `old_string` and `new_string`
+- **THEN** `confirm` is not called, the file is unchanged, and the result is the same error the tool gives
+
+#### Scenario: A read-only file is not asked about
+
+- **WHEN** the model calls `edit_file` on a read-only file
+- **THEN** `confirm` is not called and the result is blocked with the flag `protected_write`
+
 ### Requirement: Interactive mode asks before changing files or running tests
 
-In interactive mode the confirm function SHALL ask only for `edit_file`, `write_file` and `run_tests`; `read_file`, `list_files` and `grep` SHALL run without a question. The question SHALL be `Allow? [y]es / [a]lways for this tool / [N]o: `, printed after the block that shows what the call will do (the header line and, for `edit_file`, the removed and added lines; see the requirement about tool call blocks in interactive-session).
+In interactive mode the confirm function SHALL ask only for `edit_file`, `write_file` and `run_tests`; `read_file`, `list_files` and `grep` SHALL run without a question. The question SHALL be `Allow? [y]es / [a]lways for this tool / [N]o: `, printed after the block that shows what the call will do (the header line and, for `edit_file`, the changed regions; see the requirement about tool call blocks in interactive-session).
 
 #### Scenario: Reading is not asked
 

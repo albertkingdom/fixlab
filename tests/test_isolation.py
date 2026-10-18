@@ -206,6 +206,37 @@ def test_invalid_calls_are_not_confirmed(tmp_path):
     assert asked == []  # 一次都沒問
 
 
+# Scenario: Calls the tool would refuse are not asked about
+@pytest.mark.parametrize("name, args, reason", [
+    ("run_tests", {"target": ""}, "path must be a non-empty string"),
+    ("edit_file", {"path": "timelog/parser.py", "old_string": "nope", "new_string": "x"}, "occurs 0 times"),
+    ("edit_file", {"path": "timelog/parser.py", "old_string": "x = 1", "new_string": "x = 1"}, "identical"),
+    ("write_file", {"path": "timelog/parser.py", "content": "y\n"}, "You must read the file first"),
+])
+def test_calls_the_tool_would_refuse_are_not_confirmed(tmp_path, name, args, reason):
+    asked = []
+    w = confirming_workspace(tmp_path, confirm=lambda n, a: asked.append(n) or True)
+
+    result = w.call(name, args)
+
+    assert not result.ok and reason in result.output
+    assert asked == []
+    assert (w.root / "timelog" / "parser.py").read_text() == "x = 1\n"
+
+
+# Scenario: A read-only file is not asked about
+def test_a_read_only_file_is_not_confirmed(tmp_path):
+    asked = []
+    w = Workspace(make_project(tmp_path / "ws"), read_only=looks_like_test_file,
+                  confirm=lambda n, a: asked.append(n) or True)
+    register_tools(w)
+
+    result = edit(w, "tests/test_report.py")
+
+    assert not result.ok and result.flags == {"blocked": True, "protected_write": True}
+    assert asked == []
+
+
 def test_confirm_receives_the_tool_name_and_arguments(tmp_path):
     asked = []
     w = confirming_workspace(tmp_path, confirm=lambda name, args: asked.append((name, args)) or True)

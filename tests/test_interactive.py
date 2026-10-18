@@ -326,8 +326,9 @@ def test_always_applies_to_that_tool_only(session, project, capsys):
 
 
 # Scenario: Long strings are cut
-def test_long_strings_are_cut_in_the_summary(session, capsys):
-    long_edit = native("edit_file", path=PARSER, old_string="x" * 500, new_string="y")
+def test_long_strings_are_cut_in_the_summary(session, project, capsys):
+    (project / "long.txt").write_text("x" * 500 + "\n")
+    long_edit = native("edit_file", path="long.txt", old_string="x" * 500, new_string="y")
     session(FakeClient([(None, [long_edit]), ("Done.", None)]), ["fix it", "n"])
 
     out = capsys.readouterr().out
@@ -407,11 +408,23 @@ def test_failing_tests_end_their_block_with_the_pytest_summary(session, capsys):
     assert re.search(r"    ✗ 1 failed, 4 passed in [\d.]+s\n", capsys.readouterr().out)
 
 
-def test_a_blocked_call_ends_with_the_reason(session, capsys):
+# Scenario: A read-only file is not asked about
+def test_a_blocked_call_ends_with_the_reason_and_is_not_asked(session, capsys):
     edit_test = native("edit_file", path="tests/test_report.py", old_string="assert", new_string="pass")
-    session(FakeClient([(None, [edit_test]), ("OK.", None)]), ["edit the test", "y"])
+    session(FakeClient([(None, [edit_test]), ("OK.", None)]), ["edit the test"])
 
-    assert "    ✗ blocked: 'tests/test_report.py' is read-only" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "    ✗ blocked: 'tests/test_report.py' is read-only" in out
+    assert "Allow?" not in out
+
+
+# Scenario: Calls the tool would refuse are not asked about
+def test_a_call_with_an_empty_target_fails_without_a_question(session, capsys):
+    session(FakeClient([(None, [native("run_tests", target="")]), ("OK.", None)]), ["run them"])
+
+    out = capsys.readouterr().out
+    assert "Allow?" not in out
+    assert "    ✗ path must be a non-empty string\n" in out
 
 
 # Scenario: A reply that starts with blank lines

@@ -159,7 +159,9 @@ def list_files(ws: Workspace, path: str = ".") -> ToolResult:
     return ToolResult("\n".join(names), True)
 
 
-def edit_file(ws: Workspace, path: str, old_string: str, new_string: str) -> ToolResult:
+def plan_edit(ws: Workspace, path: str, old_string: str, new_string: str):
+    """edit_file 的驗證：會讓它拒絕的情況都在這裡檢查，不動任何檔案。回傳（真實路徑, 檔案原本的文字）。
+    edit_file 一開頭呼叫它；工作區也在問使用者之前先呼叫它（precheck），注定失敗的修改就不會拿去問。"""
     p = ws.resolve_writable(path)  # 路徑守門，加上測試檔保護；放在檢查檔案是否存在之前
     if not p.exists():
         raise ToolError(f"file not found: {path!r}")
@@ -193,7 +195,11 @@ def edit_file(ws: Workspace, path: str, old_string: str, new_string: str) -> Too
             f"old_string occurs {count} times in {path!r}, but it must occur exactly once. "
             "Include more surrounding lines to make it unique."
         )
+    return p, text
 
+
+def edit_file(ws: Workspace, path: str, old_string: str, new_string: str) -> ToolResult:
+    p, text = plan_edit(ws, path, old_string, new_string)
     try:
         data = text.replace(old_string, new_string, 1).encode("utf-8")  # 先編碼再寫檔，編碼失敗時檔案不會被動到
     except UnicodeEncodeError:
@@ -278,7 +284,9 @@ def count_occurrences(text: str, piece: str) -> int:
     return count
 
 
-def write_file(ws: Workspace, path: str, content: str) -> ToolResult:
+def plan_write(ws: Workspace, path: str, content: str):
+    """write_file 的驗證：會讓它拒絕的情況都在這裡檢查，不動任何檔案。回傳（真實路徑, 要寫入的 bytes）。
+    write_file 一開頭呼叫它；工作區也在問使用者之前先呼叫它（precheck）。"""
     p = ws.resolve_writable(path)  # 路徑守門，加上唯讀檢查；放在檢查檔案是否存在之前，不存在的測試檔路徑也擋
     try:
         data = content.encode("utf-8")  # 先編碼，失敗時還沒動任何東西
@@ -289,6 +297,12 @@ def write_file(ws: Workspace, path: str, content: str) -> ToolResult:
         if p.is_dir():
             raise ToolError(f"{path!r} is a directory, not a file")
         check_overwrite_allowed(ws, p, path)
+    return p, data
+
+
+def write_file(ws: Workspace, path: str, content: str) -> ToolResult:
+    p, data = plan_write(ws, path, content)
+    if p.exists():
         action = "overwrote"
     else:
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -314,9 +328,14 @@ def check_overwrite_allowed(ws: Workspace, p, path: str) -> None:
         )
 
 
+def plan_tests(ws: Workspace, target: str = ".") -> str:
+    """run_tests 的驗證：目標先過路徑守門（跑出工作目錄 → blocked）。回傳相對於工作目錄的路徑。
+    run_tests 一開頭呼叫它；工作區也在問使用者之前先呼叫它（precheck）。"""
+    return ws.resolve_inside(target).relative_to(ws.root).as_posix()
+
+
 def run_tests(ws: Workspace, target: str = ".") -> ToolResult:
-    # 目標先過路徑守門（跑出工作目錄 → blocked），再用相對於工作目錄的路徑交給 pytest。
-    relative_target = ws.resolve_inside(target).relative_to(ws.root).as_posix()
+    relative_target = plan_tests(ws, target)  # 用相對於工作目錄的路徑交給 pytest
     if relative_target != ".":
         # 加 ./ 前綴，讓 --version 這樣的名字變成路徑。實測 pytest 9.1.1 連 `-- --version` 都會先攔下來當選項，
         # 印出版本後以 0 結束，會被誤判成測試通過。
@@ -382,7 +401,7 @@ def register_tools(ws: Workspace) -> None:
     """把所有工具登記到 ws。之後每個工具的任務各加一行 ws.register(...)。"""
     ws.register("read_file", partial(read_file, ws), READ_FILE_SCHEMA, READ_FILE_DESCRIPTION)
     ws.register("list_files", partial(list_files, ws), LIST_FILES_SCHEMA, LIST_FILES_DESCRIPTION)
-    ws.register("edit_file", partial(edit_file, ws), EDIT_FILE_SCHEMA, EDIT_FILE_DESCRIPTION)
+    ws.register("edit_file", partial(edit_file, ws), EDIT_FILE_SCHEMA, EDIT_FILE_DESCRIPTION, partial(plan_edit, ws))
     ws.register("grep", partial(grep, ws), GREP_SCHEMA, GREP_DESCRIPTION)
-    ws.register("write_file", partial(write_file, ws), WRITE_FILE_SCHEMA, WRITE_FILE_DESCRIPTION)
-    ws.register("run_tests", partial(run_tests, ws), RUN_TESTS_SCHEMA, RUN_TESTS_DESCRIPTION)
+    ws.register("write_file", partial(write_file, ws), WRITE_FILE_SCHEMA, WRITE_FILE_DESCRIPTION, partial(plan_write, ws))
+    ws.register("run_tests", partial(run_tests, ws), RUN_TESTS_SCHEMA, RUN_TESTS_DESCRIPTION, partial(plan_tests, ws))
