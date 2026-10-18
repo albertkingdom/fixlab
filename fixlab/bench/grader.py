@@ -12,6 +12,7 @@
 import re
 import shutil
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path, PurePath
 
 from fixlab.bench.problems import IGNORED_NAMES, Problem
@@ -71,9 +72,21 @@ def summary_counts(output: str) -> dict | None:
     return {word: int(number) for number, word in re.findall(r"(\d+) (\w+)", body)}
 
 
-def group_passes(problem: Problem, workdir: Path, group: str) -> bool:
-    """一組測試算通過：run_tests 回報通過，而且最後一行摘要的通過數等於題目記的數量、沒有失敗與錯誤。
-    數量比對用來擋「用 deselect 少跑幾個再印全過」。"""
+@dataclass
+class GroupRun:
+    """一組測試跑一次的結果。"""
+    passed: bool       # 算通過嗎（見 run_group）
+    counts: dict | None  # 最後一行摘要的各項數量，沒有摘要就是 None
+    output: str        # run_tests 的完整輸出
+
+    def signature(self) -> tuple:
+        """重跑時用來比較「結果有沒有變」。"""
+        return (self.passed, tuple(sorted(self.counts.items())) if self.counts else None)
+
+
+def run_group(problem: Problem, workdir: Path, group: str) -> GroupRun:
+    """在乾淨的暫存目錄跑一組測試。算通過：run_tests 回報通過，而且最後一行摘要的通過數等於題目記的數量、
+    沒有失敗與錯誤。數量比對用來擋「用 deselect 少跑幾個再印全過」。"""
     expected = {"visible": problem.visible_total, "fix": problem.hidden_fix, "keep": problem.hidden_keep}[group]
     grading = build_grading_dir(problem, workdir, group)
     try:
@@ -85,9 +98,13 @@ def group_passes(problem: Problem, workdir: Path, group: str) -> bool:
 
     counts = summary_counts(result.output)
     if not result.flags.get("tests_passed") or counts is None:
-        return False
+        return GroupRun(False, counts, result.output)
     broken = counts.get("failed", 0) + counts.get("error", 0) + counts.get("errors", 0)
-    return counts.get("passed") == expected and broken == 0
+    return GroupRun(counts.get("passed") == expected and broken == 0, counts, result.output)
+
+
+def group_passes(problem: Problem, workdir: Path, group: str) -> bool:
+    return run_group(problem, workdir, group).passed
 
 
 def find_tampered(problem: Problem, workdir: Path) -> list:

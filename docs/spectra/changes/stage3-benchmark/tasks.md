@@ -19,9 +19,9 @@
 
 ## 4. 題目自我檢查
 
-- [ ] 4.1 「題目自我檢查不花 LLM 費用，題目寫完後凍結」：fixlab/bench/selfcheck.py 與 `check` 子命令驗證原始 project（可見測試失敗數等於預期、至少一個 fix 測試失敗、keep 全過、數量與 problem.json 相符）與套上標準解後（三組全過），逐題印一行，有任何題目不符就以非 0 退出碼結束；不呼叫任何模型。對應 The self-check verifies every problem without calling a model 的「正確的題目通過」與「fix 組本來就通過會被報告」。驗證：tests/test_bench_selfcheck.py 用玩具題目與它的壞掉版本（fix 組本來就通過）。
-- [ ] 4.2 重跑檢查：每種執行重複指定次數（預設 20），結果不一致的題目判失敗。對應 The self-check verifies every problem 的「flaky 會被報告」。驗證：tests/test_bench_selfcheck.py 用一個每次結果不同的玩具測試，重複次數用小值。
-- [ ] 4.3 位置洩漏檢查與路徑檢查：可見測試失敗輸出含 bug_files 任一檔案的檔名就判失敗；distractors 與 bug_files 列的路徑都必須存在於 project。對應 The self-check verifies every problem 的「失敗輸出點名 bug 檔」與 Each project states its correct behavior and contains distractors。驗證：tests/test_bench_selfcheck.py 兩個情境各一個測試。
+- [x] 4.1 「題目自我檢查不花 LLM 費用，題目寫完後凍結」：fixlab/bench/selfcheck.py 與 `check` 子命令驗證原始 project（可見測試失敗數等於預期、至少一個 fix 測試失敗、keep 全過、數量與 problem.json 相符）與套上標準解後（三組全過），逐題印一行，有任何題目不符就以非 0 退出碼結束；不呼叫任何模型。對應 The self-check verifies every problem without calling a model 的「正確的題目通過」與「fix 組本來就通過會被報告」。驗證：tests/test_bench_selfcheck.py 用玩具題目與它的壞掉版本（fix 組本來就通過）。
+- [x] 4.2 重跑檢查：每種執行重複指定次數（預設 20），結果不一致的題目判失敗。對應 The self-check verifies every problem 的「flaky 會被報告」。驗證：tests/test_bench_selfcheck.py 用一個每次結果不同的玩具測試，重複次數用小值。
+- [x] 4.3 位置洩漏檢查與路徑檢查：可見測試失敗輸出含 bug_files 任一檔案的檔名就判失敗；distractors 與 bug_files 列的路徑都必須存在於 project。對應 The self-check verifies every problem 的「失敗輸出點名 bug 檔」與 Each project states its correct behavior and contains distractors。驗證：tests/test_bench_selfcheck.py 兩個情境各一個測試。
 
 ## 5. 八個題目
 
