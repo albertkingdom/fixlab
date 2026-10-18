@@ -40,6 +40,7 @@ class ModelConfig:
     api_key_env: str     # 放金鑰的環境變數名稱（設定檔不放金鑰本身）
     temperature: float | None = None
     extra_body: dict | None = None
+    max_steps: int | None = None  # 這個模型每次執行的步數上限；None 是不傳，用 fixlab 自己的預設
     price: dict | None = None   # input_per_million、output_per_million、source、date
     meta: dict = field(default_factory=dict)  # 量化方式、runtime、context 長度…，原樣記進 run_start 的 meta
 
@@ -70,11 +71,23 @@ def load_models(path) -> list[ModelConfig]:
         reserved = [key for key in entry.get("meta", {}) if key in RESERVED_META]
         if reserved:
             raise ConfigError(f"model {entry['label']!r}: meta must not use the reserved keys {', '.join(reserved)}")
+        check_max_steps(entry)
         models.append(ModelConfig(
             name=entry["name"], label=entry["label"], base_url=entry.get("base_url"),
             api_key_env=entry["api_key_env"], temperature=entry.get("temperature"),
-            extra_body=entry.get("extra_body"), price=entry.get("price"), meta=entry.get("meta", {})))
+            extra_body=entry.get("extra_body"), max_steps=entry.get("max_steps"),
+            price=entry.get("price"), meta=entry.get("meta", {})))
     return models
+
+
+def check_max_steps(entry: dict) -> None:
+    """max_steps 沒寫是合法的；寫了就必須是 1 以上的整數。"""
+    if "max_steps" not in entry:
+        return
+    value = entry["max_steps"]
+    # bool 要先排除：Python 的 True 也算整數（等於 1），但在設定檔裡一定是寫錯了
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ConfigError(f"model {entry['label']!r}: max_steps must be an integer of at least 1, got {value!r}")
 
 
 def plan_runs(problem_ids, models, conditions, repeats) -> list[RunSpec]:
@@ -100,6 +113,8 @@ def fixlab_arguments(workdir, model: ModelConfig, spec: RunSpec, digest: str, lo
         arguments += ["--temperature", str(model.temperature)]
     if model.extra_body is not None:
         arguments += ["--extra-body", json.dumps(model.extra_body)]
+    if model.max_steps is not None:  # 沒寫就不傳，fixlab 用自己的預設；兩個條件都傳同一個值
+        arguments += ["--max-steps", str(model.max_steps)]
     if spec.condition == "no_tests":
         arguments += ["--hide-tool", HIDDEN_TOOL]
     return arguments
