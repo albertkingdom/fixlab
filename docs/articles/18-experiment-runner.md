@@ -16,9 +16,9 @@
 3. **中斷就全沒了。** 跑到第 100 次斷線，要從頭來。
 4. **設定沒有記下來。** 幾天後想不起來這是哪個供應商、什麼設定跑的。
 
-第四點我真的碰到了。下面是小規模實跑的真實紀錄：同一個模型（Qwen3.5-9B）、同一題、同樣的程式，只有 OpenRouter 的**供應商**（替模型跑伺服器的公司）不同：
+第四點我真的碰到了。先講背景：OpenRouter 是一個轉接站，你把請求送給它，它再轉給真正跑模型的伺服器。同一個模型可以有好幾家**供應商**（替模型跑伺服器的公司），速度與設定各不相同。括號裡的 `bf16`、`fp8` 是供應商把模型壓縮的方式（量化，名詞表有說明）。
 
-（OpenRouter 是一個轉接站：你把請求送給它，它再轉給真正跑模型的伺服器。同一個模型可以有好幾家供應商，速度與設定各不相同。）
+下面是小規模實跑的真實紀錄：同一個模型（Qwen3.5-9B）、同一題、同樣的程式，只有供應商不同：
 
 | 供應商 | 結果 | 耗時 |
 |---|---|---|
@@ -38,13 +38,24 @@
 
 system prompt、任務文字、模型設定、題目，兩個條件完全相同。模型就算亂叫 `run_tests`，也只會被當成「不認識的工具」，什麼都不會執行（執行器會把這種次數記成 `hidden_tool_calls`，這次 160 次裡是 0）。
 
-隱藏只影響「模型看得到什麼」。`fixlab` 結束時自己再跑一次測試（給畫面顯示用）是程式自己呼叫，不受影響；評分則另外由評分器做。
+隱藏只影響「模型看得到什麼」，不是把 `run_tests` 從程式裡拿掉。`fixlab` 結束時會自己跑一次測試，把結果顯示在畫面上，這是程式自己呼叫的，不受影響；正式的評分則另外由評分器做（第 16 篇）。
 
-另外還加了兩個選項，用來固定實驗條件：`--temperature`（取樣的隨機程度）和 `--extra-body`（一個 JSON，原樣放進請求，用來固定 OpenRouter 的供應商）。它們和隱藏的工具都會記進事件檔的 `run_start`。
+另外還加了兩個選項，用來固定實驗條件：
+
+- `--temperature`：取樣的隨機程度。數字越高，模型每次的回答越不一樣；越低越穩定。
+- `--extra-body`：一個 JSON，原樣放進每次請求，用來告訴 OpenRouter 只能用哪一家供應商。例如固定用 Venice：
+
+```
+--extra-body '{"provider": {"order": ["Venice"], "allow_fallbacks": false}}'
+```
+
+`allow_fallbacks: false` 的意思是「Venice 不能用時就報錯，不要自己換一家」，這樣才不會悄悄換了供應商。
+
+隱藏的工具、`--temperature`、`--extra-body` 都會記進事件檔的 `run_start`。
 
 ## 做法二：先看計畫，確認了才會花錢
 
-沒有加 `--confirm` 的話，`run` 指令只印出計畫，不會呼叫任何模型（真實輸出）：
+沒有加 `--confirm` 的話，`run` 指令只印出計畫，不會呼叫任何模型（真實輸出）。下面的 `5 repeats` 是每個組合重複跑 5 次：模型每次的回答都不一樣，只跑一次分不出是實力還是運氣：
 
 ```
 $ python -m fixlab.bench run --models bench/models.json --out runs/stage3
@@ -55,7 +66,7 @@ results file: runs/stage3/results.jsonl (0 done, 160 to run)
 this is only the plan: every run calls a model and costs money; add --confirm to run it
 ```
 
-加上 `--confirm` 才會真的跑。真的跑之前，它還會檢查兩件事，不過就以退出碼 2 結束、一次都不跑：
+加上 `--confirm` 才會真的跑。真的跑之前，它還會檢查兩件事，只要有一項沒通過，就以退出碼 2 結束，一次都不跑：
 
 - 設定檔裡指到的金鑰環境變數有設嗎。
 - **沙箱開著嗎。** 沒有沙箱的話，agent 的 `run_tests` 可以讀到放在專案目錄裡的隱藏測試，所以不能做正式實驗。
@@ -65,8 +76,8 @@ this is only the plan: every run calls a model and costs money; add --confirm to
 ![一次執行的流程](images/18-one-run.drawio.png)
 
 1. 把題目的 `project` 複製到一個暫存目錄。每次都是原始的，上一次的修改不會留下來。
-2. 用一次性模式呼叫 `fixlab`，每次有自己的紀錄資料夾。
-3. 從那次的事件檔讀結果：`task_end` 有停止原因、步數、token、耗時；`trace` 裡有請求失敗的錯誤，和模型叫了看不到的工具的次數。
+2. 用一次性模式（不進互動畫面，直接 `fixlab 路徑` 跑完一題就結束）呼叫 `fixlab`，每次有自己的紀錄資料夾。
+3. 從那次的事件檔讀結果：`task_end` 有停止原因、步數、token、耗時；`trace`（事件檔裡記錄每次模型請求細節的事件）裡有請求失敗的錯誤，和模型叫了看不到的工具的次數。
 4. 用評分器評分（第 16 篇）。
 5. 寫一行結果到 `results.jsonl`，刪掉暫存副本，留下事件檔。
 
@@ -104,11 +115,12 @@ this is only the plan: every run calls a model and costs money; add --confirm to
 [2/2] inventory qwen3.5-9b no_tests #1: unfixed (error: NotFoundError("Error code: 404 - {'error': {'message': 'No endpoints found for qwen/qwen3.5-9b. Every candidate endpoint was removed during routing: Filter by Tool Compatibility removed parasail/bf16; ...
 ```
 
-原因是那家供應商的 Qwen3.5-9B 不支援工具呼叫，而 `fixlab` 需要工具呼叫。兩次執行都在 0.3 秒內失敗，沒有花到錢。執行器把這種情況記成 `error`，不是 `unfixed`；報告會把有錯誤的執行另外一欄計數，不算進修好率，不然「供應商出問題」會被誤判成「模型修不好」。
+原因是那家供應商的 Qwen3.5-9B 不支援工具呼叫，而 `fixlab` 需要工具呼叫。兩次執行都在 0.3 秒內失敗，沒有花到錢。執行器把這種情況記成 `error`，不是 `unfixed`；報告會把有錯誤的執行另外用一欄計數，不算進修好率，不然「供應商出問題」會被誤判成「模型修不好」。
 
 ## 設定檔：模型與供應商都寫下來
 
 模型寫在 `bench/models.json`：模型名稱、供應商、量化方式、temperature、單價（附來源與日期）、context 長度。金鑰**不放**在檔案裡，只寫「放金鑰的環境變數名稱」。每次執行期間，執行器暫時把端點與金鑰設給這個模型，執行完還原，所以每個模型走自己的端點，事件檔記到的端點也是對的。
+
 
 ## 自己跑一次
 
