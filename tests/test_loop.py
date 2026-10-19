@@ -82,6 +82,35 @@ def test_task_text_is_first_user_message(ws):
     assert client.tools[0] == ws.tool_specs()  # 模型收到的工具清單就是登記表產生的那一份
 
 
+# Requirement: The system prompt can carry extra text
+def test_extra_text_is_appended_to_the_system_prompt_after_a_blank_line(ws):
+    client = FakeClient([("Done.", None)])
+    run_agent(client, "m", ws, TASK, system_prompt_extra="Finish once the fix is made.")
+    assert client.sent[0] == [{"role": "system", "content": SYSTEM_PROMPT + "\n\nFinish once the fix is made."},
+                              {"role": "user", "content": TASK}]
+
+
+def test_extra_text_is_also_used_when_the_caller_passes_an_empty_conversation(ws):
+    client = FakeClient([("Done.", None)])
+    run_agent(client, "m", ws, TASK, messages=[], system_prompt_extra="Finish once the fix is made.")
+    assert client.sent[0][0] == {"role": "system", "content": SYSTEM_PROMPT + "\n\nFinish once the fix is made."}
+
+
+def test_without_extra_text_the_system_prompt_is_the_default(ws):
+    client = FakeClient([("Done.", None)])
+    run_agent(client, "m", ws, TASK, system_prompt_extra=None)
+    assert client.sent[0][0] == {"role": "system", "content": SYSTEM_PROMPT}
+
+
+def test_extra_text_does_not_change_a_conversation_that_already_has_content(ws):
+    earlier = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": "earlier task"},
+               {"role": "assistant", "content": "Done."}]
+    client = FakeClient([("Done.", None)])
+    run_agent(client, "m", ws, TASK, messages=earlier, system_prompt_extra="Finish once the fix is made.")
+    roles = [message["role"] for message in client.sent[0]]
+    assert roles.count("system") == 1 and client.sent[0][0]["content"] == SYSTEM_PROMPT
+
+
 # Requirement: Model decides the next step and when to stop
 def test_read_edit_test_then_finish(ws):
     client = FakeClient([

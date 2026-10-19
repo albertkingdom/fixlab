@@ -251,3 +251,27 @@ def test_the_settings_section_shows_each_models_step_limit():
 
     assert "max_steps 40" in next(row for row in text.splitlines() if row.startswith("- 模型 a："))
     assert "max_steps 預設" in next(row for row in text.splitlines() if row.startswith("- 模型 b："))
+
+
+# Scenario: The report shows the extra prompt
+def test_the_settings_section_shows_each_models_extra_system_prompt():
+    models = [ModelConfig(name="vendor/a", label="a", base_url=None, api_key_env="K", system_prompt_extra="Finish once the fix is made."),
+              ModelConfig(name="vendor/b", label="b", base_url=None, api_key_env="K")]
+    lines = [line(model="a"), line(model="b")]
+
+    text = render(lines, models)
+
+    assert 'system_prompt_extra "Finish once the fix is made."' in next(row for row in text.splitlines() if row.startswith("- 模型 a："))
+    assert "system_prompt_extra 無" in next(row for row in text.splitlines() if row.startswith("- 模型 b："))
+
+
+# Scenario: A multi-line extra prompt stays on one line
+def test_a_multi_line_extra_system_prompt_does_not_split_the_settings_line():
+    models = [ModelConfig(name="vendor/a", label="a", base_url=None, api_key_env="K", system_prompt_extra="Rules:\n1. Stop early.\n2. Be brief.",
+                          meta={"quantization": "fp8"})]
+
+    text = render([line(model="a")], models)
+
+    row = next(row for row in text.splitlines() if row.startswith("- 模型 a："))
+    assert 'system_prompt_extra "Rules:\\n1. Stop early.\\n2. Be brief."' in row  # 換行以 \n 顯示，還在同一行
+    assert "紀錄的條件" in row and "fp8" in row  # 後面的欄位沒有被拆到下一行

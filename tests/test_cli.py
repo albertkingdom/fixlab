@@ -6,6 +6,7 @@ import json
 import pytest
 
 from fixlab.cli import DEFAULT_TASK, changed_files, diff_report, fixlab_commit, main, take_snapshot
+from fixlab.loop import SYSTEM_PROMPT
 from fixlab.sandbox import sandbox_available
 from test_fixture import BUGGY, FIXED, copy_fixture  # 把 timelog 複製到暫存目錄；bug 與修法
 from test_loop import FakeClient, native  # 依序回傳劇本回覆的假 client
@@ -509,3 +510,38 @@ def test_temperature_and_extra_body_reach_every_request(project):
 
     assert len(client.kwargs) == 2
     assert all(kw["temperature"] == 0.2 and kw["extra_body"] == {"seed": 7} for kw in client.kwargs)
+
+
+# ── 額外的 system prompt：對應 run-telemetry 的 The system prompt can be extended from the command line ──
+
+# Scenario: The option is recorded
+def test_the_extra_system_prompt_is_recorded_and_sent(project, home):
+    client = FakeClient([("Done.", None)])
+    run_fix(project, client, "--system-prompt-extra", "Finish once the fix is made.")
+
+    assert event_lines(home)[0]["system_prompt_extra"] == "Finish once the fix is made."
+    assert client.sent[0][0] == {"role": "system", "content": SYSTEM_PROMPT + "\n\nFinish once the fix is made."}
+
+
+# Scenario: The option is not given
+def test_without_the_option_the_system_prompt_is_the_default_and_the_key_is_null(project, home):
+    client = FakeClient([("Done.", None)])
+    run_fix(project, client)
+
+    assert event_lines(home)[0]["system_prompt_extra"] is None
+    assert client.sent[0][0] == {"role": "system", "content": SYSTEM_PROMPT}
+
+
+# Scenario: An empty value is refused
+@pytest.mark.parametrize("text", ["", "   "])
+def test_an_empty_extra_system_prompt_exits_2_and_creates_no_file(project, home, capsys, text):
+    assert run_fix(project, FakeClient([]), "--system-prompt-extra", text) == 2
+
+    assert "--system-prompt-extra" in capsys.readouterr().err
+    assert not list(home.glob("**/events.jsonl"))
+
+
+def test_an_extra_system_prompt_with_a_visible_character_is_accepted_as_it_is(project, home):
+    run_fix(project, FakeClient([("Done.", None)]), "--system-prompt-extra", " a ")
+
+    assert event_lines(home)[0]["system_prompt_extra"] == " a "

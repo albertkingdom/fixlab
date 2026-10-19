@@ -42,7 +42,7 @@ cp -R tests/fixtures/timelog /某個暫存目錄/timelog-try
 .venv/bin/fixlab /某個暫存目錄/timelog-try
 ```
 
-選項：`-i`（互動模式，見下）、`--max-steps`（預設 20）、`--max-tokens`（預設 8192）、`--task`（換掉預設的任務文字，只用於一次性模式）、`--log-dir`、`--meta`（見〈事件檔〉）、`--hide-tool NAME`（不讓模型看到某個工具，例如 `run_tests`；可重複）、`--temperature`、`--extra-body JSON`（原樣放進請求，例如固定 OpenRouter 的供應商）。後三個用在實驗，並記進事件檔的 `run_start`。
+選項：`-i`（互動模式，見下）、`--max-steps`（預設 20）、`--max-tokens`（預設 8192）、`--task`（換掉預設的任務文字，只用於一次性模式）、`--log-dir`、`--meta`（見〈事件檔〉）、`--hide-tool NAME`（不讓模型看到某個工具，例如 `run_tests`；可重複）、`--temperature`、`--extra-body JSON`（原樣放進請求，例如固定 OpenRouter 的供應商）、`--system-prompt-extra TEXT`（把這段文字接在預設 system prompt 後面，中間空一行；空字串會被拒絕；文字以 `-` 開頭時要寫成 `--system-prompt-extra=TEXT`）。後四個用在實驗，並記進事件檔的 `run_start`。
 
 ### 一次性模式會印什麼
 
@@ -98,7 +98,9 @@ Fixed parse_duration: it only took the first unit.
 
 `bench/models.json` 的每個模型可以寫選填的 `max_steps`（1 以上的整數）：這個模型每次執行的步數上限，兩個條件用同一個值。沒寫（或寫 `null`）就用 fixlab 自己的預設 20；寫成 0、負數、小數、字串或 `true` 會在載入時被拒絕，一次都不跑。
 
-教學文章第 15 到 19 篇依序說明題目、評分器、自我檢查、實驗執行器與結果。
+同樣可以寫選填的 `system_prompt_extra`（有看得見的字的字串，或 `null`）：這個模型每次執行都在預設 system prompt 後面接這段文字，兩個條件傳同一段，用來做 prompt 的消融實驗；沒寫就是預設 prompt。寫成數字、`true`、清單、空字串或只有空白，會在載入時被拒絕，一次都不跑。
+
+教學文章第 15 到 19 篇依序說明題目、評分器、自我檢查、實驗執行器與結果；第 20 篇是後續實驗，找出 Qwen 沒有 `run_tests` 時停不下來的原因。
 
 ### 事件檔
 

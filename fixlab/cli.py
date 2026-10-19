@@ -51,6 +51,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--extra-body", metavar="JSON",
                         help='JSON object passed to the request as extra body parameters, '
                              'e.g. \'{"provider": {"order": ["Venice"]}}\' to pin an OpenRouter provider')
+    parser.add_argument("--system-prompt-extra", metavar="TEXT",
+                        help="text appended to the default system prompt (after a blank line), for prompt experiments; "
+                             "write --system-prompt-extra=TEXT if TEXT starts with a dash")
     return parser
 
 
@@ -73,6 +76,7 @@ def main(argv=None, client=None) -> int:
     try:
         meta = parse_meta(args.meta)
         args.extra_body = parse_extra_body(args.extra_body)
+        args.system_prompt_extra = check_system_prompt_extra(args.system_prompt_extra)
     except ValueError as error:
         return fail(str(error))
     log_dir = Path(args.log_dir).expanduser() if args.log_dir else default_log_dir()
@@ -113,7 +117,8 @@ def run_once(client, model: str, ws: Workspace, root: Path, args, log: EventLog)
     before = take_snapshot(root)
     log.write("task_start", task=1, text=args.task)
     result = run_agent(client, model, ws, args.task, max_steps=args.max_steps,
-                       request_extra=request_extra(args), trace=trace_to(log, 1, print_step))
+                       request_extra=request_extra(args), system_prompt_extra=args.system_prompt_extra,
+                       trace=trace_to(log, 1, print_step))
 
     # 模型可能沒跑測試就宣告完成，所以結束後自己再跑一次，看真正的結果。
     # 先跑測試、再拍「之後」的快照：測試程式在跑的過程中動了什麼檔案，也會出現在差異裡。
@@ -170,7 +175,8 @@ def run_task(client, model: str, ws: Workspace, args, log: EventLog, session: li
     print()  # 使用者打的那一行和第一個工具呼叫之間空一行
     try:
         result = run_agent(client, model, ws, text, messages=session, max_steps=args.max_steps,
-                           request_extra=request_extra(args), trace=trace_to(log, number, print_problem))
+                           request_extra=request_extra(args), system_prompt_extra=args.system_prompt_extra,
+                           trace=trace_to(log, number, print_problem))
     except KeyboardInterrupt:
         # 已完成的部分留在對話裡（迴圈已把沒有結果的工具呼叫補上結果），再接一則說明：
         # 下一個任務的模型才知道前面做到哪裡、哪些檔案可能已經被改了。
@@ -309,6 +315,14 @@ def parse_extra_body(text: str | None) -> dict | None:
     return value
 
 
+def check_system_prompt_extra(text: str | None) -> str | None:
+    """--system-prompt-extra 的值：沒傳就是 None；傳了就必須有看得見的字。
+    空字串多半是 shell 變數沒設，悄悄當成「沒給」會讓人以為測了 prompt 其實沒有，所以直接拒絕。"""
+    if text is not None and not text.strip():
+        raise ValueError("--system-prompt-extra must not be empty")
+    return text
+
+
 def request_extra(args) -> dict:
     """每次請求多帶的參數。temperature 與 extra_body 沒傳就不放，維持原本的請求。"""
     extra = {"max_tokens": args.max_tokens}
@@ -327,6 +341,7 @@ def run_conditions(args, model: str, root: Path, meta: dict, mode: str, ws: Work
         "sandbox": sandbox_status(), "fixlab_commit": fixlab_commit(),
         "python": platform.python_version(), "openai": openai.__version__, "meta": meta,
         "hidden_tools": ws.hidden_tools, "temperature": args.temperature, "extra_body": args.extra_body,
+        "system_prompt_extra": args.system_prompt_extra,
     }
 
 
