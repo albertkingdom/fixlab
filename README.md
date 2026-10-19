@@ -100,7 +100,7 @@ Fixed parse_duration: it only took the first unit.
 
 同樣可以寫選填的 `system_prompt_extra`（有看得見的字的字串，或 `null`）：這個模型每次執行都在預設 system prompt 後面接這段文字，兩個條件傳同一段，用來做 prompt 的消融實驗；沒寫就是預設 prompt。寫成數字、`true`、清單、空字串或只有空白，會在載入時被拒絕，一次都不跑。
 
-教學文章第 15 到 19 篇依序說明題目、評分器、自我檢查、實驗執行器與結果。
+教學文章第 15 到 19 篇依序說明題目、評分器、自我檢查、實驗執行器與結果；第 20 篇是後續實驗，找出 Qwen 沒有 `run_tests` 時停不下來的原因。
 
 ### 事件檔
 
