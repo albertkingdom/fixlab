@@ -239,3 +239,15 @@ def test_an_unpriced_model_whose_every_run_failed_is_reported_as_having_no_price
     text = render([line(error="404")], [model(price=None)])
 
     assert "沒有單價" in table_row(text, "m", "-")[4]
+
+
+# Scenario: The report shows each model's step limit
+def test_the_settings_section_shows_each_models_step_limit():
+    models = [ModelConfig(name="vendor/a", label="a", base_url=None, api_key_env="K", max_steps=40),
+              ModelConfig(name="vendor/b", label="b", base_url=None, api_key_env="K")]
+    lines = [line(model="a"), line(model="b")]
+
+    text = render(lines, models)
+
+    assert "max_steps 40" in next(row for row in text.splitlines() if row.startswith("- 模型 a："))
+    assert "max_steps 預設" in next(row for row in text.splitlines() if row.startswith("- 模型 b："))

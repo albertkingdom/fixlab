@@ -1,6 +1,7 @@
 # 實驗執行器的測試：對應 experiment-runner 規格。用玩具題目與假的模型 client，不呼叫任何真的 LLM。
 import json
 import os
+import re
 import shutil
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from fixlab.bench.__main__ import main as bench_main
 from fixlab.bench.problems import load_all, load_problem, problem_digest
 from fixlab.bench.runner import (ModelConfig, RunSpec, fixlab_arguments, latest_by_key, pending_runs, plan_runs,
                                  read_results, run_experiment, run_one)
+from fixlab.loop import DEFAULT_MAX_STEPS
 from test_loop import FakeClient, native
 
 TOY_ROOT = Path(__file__).resolve().parent / "fixtures" / "bench_toy"
@@ -141,6 +143,42 @@ def test_the_two_conditions_differ_only_in_the_condition_meta_and_the_hidden_too
     assert no_tests[-2:] == ["--hide-tool", "run_tests"]
     assert [a.replace("no_tests", "with_tests") for a in no_tests[:-2]] == with_tests
     assert "--temperature" in with_tests and "0.2" in with_tests and '{"seed": 1}' in with_tests
+
+
+# ── A model entry can set the step limit of its runs ──────────────────────
+
+# Scenario: The limit is the same in both conditions
+@pytest.mark.parametrize("condition", ["with_tests", "no_tests"])
+def test_a_model_step_limit_is_passed_to_fixlab_in_both_conditions(tmp_path, condition):
+    arguments = fixlab_arguments(tmp_path, model(max_steps=40), RunSpec("cart", "fake", condition, 1), "abc", tmp_path / "log")
+
+    assert arguments[arguments.index("--max-steps") + 1] == "40"
+
+
+# Scenario: A model without the key keeps the default
+def test_a_model_without_a_step_limit_passes_no_max_steps_option(tmp_path):
+    arguments = fixlab_arguments(tmp_path, model(), RunSpec("cart", "fake", "no_tests", 1), "abc", tmp_path / "log")
+
+    assert "--max-steps" not in arguments
+
+
+# Scenario: A model sets a larger step limit
+def test_the_step_limit_reaches_the_run_and_is_recorded_in_run_start(problem, tmp_path):
+    keeps_looking = [(None, [native("list_files")])] * 5
+
+    line = run_one(RunSpec("cart", "fake", "no_tests", 1), problem, model(max_steps=3), tmp_path, client=FakeClient(keeps_looking))
+
+    run_start = json.loads(Path(line["log_path"]).read_text().splitlines()[0])
+    assert line["stop_reason"] == "max_steps" and line["steps"] == 3
+    assert run_start["max_steps"] == 3
+
+
+# Scenario: A model without the key keeps the default
+def test_a_run_without_a_step_limit_records_the_fixlab_default(problem, tmp_path):
+    line = run_one(RunSpec("cart", "fake", "with_tests", 1), problem, model(), tmp_path, client=FakeClient(list(DO_NOTHING)))
+
+    run_start = json.loads(Path(line["log_path"]).read_text().splitlines()[0])
+    assert run_start["max_steps"] == DEFAULT_MAX_STEPS
 
 
 # ── Each run uses a fresh copy of the problem ─────────────────────────────
@@ -316,3 +354,35 @@ def test_a_model_meta_that_is_not_an_object_is_a_configuration_error(tmp_path, m
 
     with pytest.raises(runner.ConfigError, match="meta"):
         runner.load_models(path)
+
+
+# Scenario: An invalid value is rejected before any run
+@pytest.mark.parametrize("value", [0, -5, 2.5, "40", True, False])
+def test_a_step_limit_that_is_not_an_integer_of_at_least_one_is_rejected(tmp_path, value):
+    path = models_file(tmp_path, labels=("x",), max_steps=value)
+
+    with pytest.raises(runner.ConfigError, match=rf"'x'.*{re.escape(repr(value))}"):
+        runner.load_models(path)
+
+
+@pytest.mark.parametrize("value", [1, 40])
+def test_a_step_limit_of_one_or_more_is_loaded(tmp_path, value):
+    (loaded,) = runner.load_models(models_file(tmp_path, labels=("x",), max_steps=value))
+
+    assert loaded.max_steps == value
+
+
+def test_a_model_without_a_step_limit_loads_with_none(tmp_path):
+    (loaded,) = runner.load_models(models_file(tmp_path, labels=("x",)))
+
+    assert loaded.max_steps is None
+
+
+# Scenario: An explicit null means no step limit
+def test_a_null_step_limit_means_no_step_limit(tmp_path):
+    path = models_file(tmp_path, labels=("x",), max_steps=None)
+
+    (loaded,) = runner.load_models(path)
+    arguments = fixlab_arguments(tmp_path, loaded, RunSpec("cart", "x", "no_tests", 1), "abc", tmp_path / "log")
+
+    assert loaded.max_steps is None and "--max-steps" not in arguments
