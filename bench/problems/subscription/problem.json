@@ -1,0 +1,19 @@
+{
+  "id": "subscription",
+  "domain": "訂閱到期",
+  "bug_type": "時間基準不一致",
+  "bug_files": [
+    "subs/check.py"
+  ],
+  "distractors": [
+    "subs/tz.py"
+  ],
+  "visible": {
+    "total": 2,
+    "failing": 1
+  },
+  "hidden": {
+    "fix": 3,
+    "keep": 3
+  }
+}

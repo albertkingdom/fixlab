@@ -775,3 +775,55 @@ def test_write_file_is_offered_to_the_model(rws):
     spec = {s["function"]["name"]: s["function"] for s in rws.tool_specs()}["write_file"]
     assert spec["parameters"]["required"] == ["path", "content"]
     assert "read all of it" in spec["description"]
+
+
+# ── 隱藏工具：對應 agent-tools 規格的 Tools can be hidden from the model ─────
+
+def test_a_hidden_tool_is_not_offered_but_the_program_can_still_call_it(tmp_path):
+    w = Workspace(tmp_path)
+    register_tools(w)
+    w.hide("run_tests")
+
+    offered = [spec["function"]["name"] for spec in w.tool_specs()]
+    assert set(offered) == {"read_file", "list_files", "grep", "edit_file", "write_file"}
+    assert "run_tests" not in w.schemas()  # 驗證回覆用的 schema 也沒有，所以模型亂叫會被當成不認識的工具
+    assert w.call("run_tests", {}).ok  # 程式自己照樣能呼叫
+    assert w.hidden_tools == ["run_tests"]
+
+
+def test_hiding_an_unknown_tool_is_an_error(tmp_path):
+    w = Workspace(tmp_path)
+    register_tools(w)
+    with pytest.raises(ValueError, match="bash"):
+        w.hide("bash")
+
+
+# ── 測試執行環境：對應 agent-tools 規格的 The test run environment is deterministic ──
+
+def test_the_test_run_environment_is_fixed_whatever_the_parent_has(tmp_path, monkeypatch):
+    monkeypatch.setenv("TZ", "Asia/Taipei")
+    monkeypatch.setenv("PYTHONHASHSEED", "42")
+    (tmp_path / "test_env.py").write_text(
+        "import os\n\n\ndef test_env():\n"
+        '    assert os.environ["TZ"] == "UTC"\n'
+        '    assert os.environ["PYTHONHASHSEED"] == "0"\n'
+        '    assert os.environ["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] == "1"\n')
+    w = Workspace(tmp_path)
+    register_tools(w)
+
+    result = w.call("run_tests", {})
+
+    assert result.flags["tests_passed"], result.output
+
+
+def test_pytest_plugins_registered_by_entry_point_are_not_loaded(tmp_path):
+    # anyio 的 pytest 外掛靠 entry point 註冊；自動載入時它會匯入 anyio，所以 anyio 沒被匯入就代表沒自動載入。
+    (tmp_path / "test_plugins.py").write_text(
+        "import sys\n\n\ndef test_anyio_is_not_imported():\n"
+        '    assert "anyio" not in sys.modules\n')
+    w = Workspace(tmp_path)
+    register_tools(w)
+
+    result = w.call("run_tests", {})
+
+    assert result.flags["tests_passed"], result.output

@@ -9,6 +9,7 @@ agent 直接修改 PATH，不複製、不寫回，請對有備份或已 commit �
 
 import argparse
 import difflib
+import json
 import os
 import platform
 import subprocess
@@ -44,6 +45,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--log-dir", help="where event logs go (default: ~/.fixlab/runs)")
     parser.add_argument("--meta", action="append", default=[], metavar="KEY=VALUE",
                         help="record an experiment condition in the event log, e.g. quantization=Q4_K_M (repeatable)")
+    parser.add_argument("--hide-tool", action="append", default=[], metavar="NAME",
+                        help="do not offer this tool to the model, e.g. run_tests (repeatable)")
+    parser.add_argument("--temperature", type=float, help="sampling temperature sent with every request")
+    parser.add_argument("--extra-body", metavar="JSON",
+                        help='JSON object passed to the request as extra body parameters, '
+                             'e.g. \'{"provider": {"order": ["Venice"]}}\' to pin an OpenRouter provider')
     return parser
 
 
@@ -65,12 +72,26 @@ def main(argv=None, client=None) -> int:
     root = Path(args.path).resolve()
     try:
         meta = parse_meta(args.meta)
+        args.extra_body = parse_extra_body(args.extra_body)
     except ValueError as error:
         return fail(str(error))
     log_dir = Path(args.log_dir).expanduser() if args.log_dir else default_log_dir()
     if is_inside(log_dir, root):
         # 事件檔放在被修的目錄裡，快照 diff 會把它當成新檔，模型與被測的程式也碰得到自己的紀錄
         return fail(f"the log directory {log_dir} is inside the target {root}; use --log-dir to put it elsewhere")
+    # 修 bug：測試檔是評分標準，模型不能改，被執行的程式也不能改。
+    # 互動模式使用者在場，寫檔與跑測試前問一聲；一次性執行沒有人可以問，沿用預設（全部放行）。
+    # 工作區先建好（它不建任何檔案），工具名稱不對時才能在建事件檔之前就結束。
+    workspace_class = ShownWorkspace if args.interactive else Workspace
+    options = {"confirm": make_asker()} if args.interactive else {}
+    ws = workspace_class(root, read_only=looks_like_test_file, protect_tests=True, **options)
+    register_tools(ws)
+    try:
+        for name in args.hide_tool:
+            ws.hide(name)
+    except ValueError as error:
+        return fail(str(error))
+
     print(f"editing in place: {root}", file=sys.stderr)
     print(f"sandbox: {sandbox_status()}", file=sys.stderr)  # 沙箱是安全功能，沒開要讓使用者看得到
 
@@ -78,14 +99,7 @@ def main(argv=None, client=None) -> int:
     log = EventLog(log_dir, model)
     if log.path is not None:
         print(f"log: {log.path}", file=sys.stderr)
-    log.write("run_start", **run_conditions(args, model, root, meta, mode))
-
-    # 修 bug：測試檔是評分標準，模型不能改，被執行的程式也不能改。
-    # 互動模式使用者在場，寫檔與跑測試前問一聲；一次性執行沒有人可以問，沿用預設（全部放行）。
-    workspace_class = ShownWorkspace if args.interactive else Workspace
-    options = {"confirm": make_asker()} if args.interactive else {}
-    ws = workspace_class(root, read_only=looks_like_test_file, protect_tests=True, **options)
-    register_tools(ws)
+    log.write("run_start", **run_conditions(args, model, root, meta, mode, ws))
     try:
         if args.interactive:
             return run_interactive(client, model, ws, args, log)
@@ -99,7 +113,7 @@ def run_once(client, model: str, ws: Workspace, root: Path, args, log: EventLog)
     before = take_snapshot(root)
     log.write("task_start", task=1, text=args.task)
     result = run_agent(client, model, ws, args.task, max_steps=args.max_steps,
-                       request_extra={"max_tokens": args.max_tokens}, trace=trace_to(log, 1, print_step))
+                       request_extra=request_extra(args), trace=trace_to(log, 1, print_step))
 
     # 模型可能沒跑測試就宣告完成，所以結束後自己再跑一次，看真正的結果。
     # 先跑測試、再拍「之後」的快照：測試程式在跑的過程中動了什麼檔案，也會出現在差異裡。
@@ -156,7 +170,7 @@ def run_task(client, model: str, ws: Workspace, args, log: EventLog, session: li
     print()  # 使用者打的那一行和第一個工具呼叫之間空一行
     try:
         result = run_agent(client, model, ws, text, messages=session, max_steps=args.max_steps,
-                           request_extra={"max_tokens": args.max_tokens}, trace=trace_to(log, number, print_problem))
+                           request_extra=request_extra(args), trace=trace_to(log, number, print_problem))
     except KeyboardInterrupt:
         # 已完成的部分留在對話裡（迴圈已把沒有結果的工具呼叫補上結果），再接一則說明：
         # 下一個任務的模型才知道前面做到哪裡、哪些檔案可能已經被改了。
@@ -282,13 +296,37 @@ def is_inside(folder: Path, root: Path) -> bool:
     return real == root or root in real.parents
 
 
-def run_conditions(args, model: str, root: Path, meta: dict, mode: str) -> dict:
+def parse_extra_body(text: str | None) -> dict | None:
+    """--extra-body 的值：必須是 JSON 物件；沒傳就是 None。"""
+    if text is None:
+        return None
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError as error:
+        raise ValueError(f"--extra-body is not valid JSON: {error}") from None
+    if not isinstance(value, dict):
+        raise ValueError("--extra-body must be a JSON object")
+    return value
+
+
+def request_extra(args) -> dict:
+    """每次請求多帶的參數。temperature 與 extra_body 沒傳就不放，維持原本的請求。"""
+    extra = {"max_tokens": args.max_tokens}
+    if args.temperature is not None:
+        extra["temperature"] = args.temperature
+    if args.extra_body is not None:
+        extra["extra_body"] = args.extra_body
+    return extra
+
+
+def run_conditions(args, model: str, root: Path, meta: dict, mode: str, ws: Workspace) -> dict:
     """run_start 事件的內容：這次執行的條件。只放程式本來就知道的；量化方式之類 API 不會告訴我們的，之後由 --meta 補。"""
     return {
         "schema": 1, "mode": mode, "model": model, "base_url": os.environ.get("OPENAI_BASE_URL"),
         "path": str(root), "max_steps": args.max_steps, "max_tokens": args.max_tokens,
         "sandbox": sandbox_status(), "fixlab_commit": fixlab_commit(),
         "python": platform.python_version(), "openai": openai.__version__, "meta": meta,
+        "hidden_tools": ws.hidden_tools, "temperature": args.temperature, "extra_body": args.extra_body,
     }
 
 

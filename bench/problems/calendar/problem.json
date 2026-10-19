@@ -1,0 +1,20 @@
+{
+  "id": "calendar",
+  "domain": "行事曆",
+  "bug_type": "兩模組約定不一致",
+  "bug_files": [
+    "cal/conflicts.py"
+  ],
+  "distractors": [
+    "cal/holidays.py",
+    "cal/legacy.py"
+  ],
+  "visible": {
+    "total": 2,
+    "failing": 1
+  },
+  "hidden": {
+    "fix": 3,
+    "keep": 3
+  }
+}

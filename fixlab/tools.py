@@ -31,8 +31,8 @@ RUN_TESTS_TIMEOUT_S = 10  # 做成模組常數，測試無窮迴圈的案例時�
 # 啟動 pytest 的程式。不用 `python -m pytest`：-m 會把工作目錄放在模組搜尋路徑的最前面，
 # 工作目錄裡的 pytest.py 或 _pytest/ 就會取代真的 pytest（被測的程式可以偽造「1 passed」）。
 # 改成 -P（不自動加入工作目錄），先載入真的 pytest，再把工作目錄加到最後面，讓測試仍然找得到專案的模組。
-# 已知缺口（code review，記在 design.md）：pytest 啟動後自動載入 plugin 時，工作目錄已經在搜尋路徑上，
-# 根目錄放一個 trio.py 之類的檔案仍能騙過去；根治靠階段 3 的「用乾淨的環境重跑計分」，不靠在這裡一條條堵。
+# pytest 啟動後自動載入 plugin 時，工作目錄已經在搜尋路徑上，根目錄放一個 trio.py 之類的檔案可能搶先被載入。
+# 階段 3 用 child_environment 的 PYTEST_DISABLE_PLUGIN_AUTOLOAD 關掉自動載入來擋這條路。
 START_PYTEST = "import os, sys, pytest; sys.path.append(os.getcwd()); sys.exit(pytest.main(sys.argv[1:]))"
 
 # 測試子行程從父行程繼承的環境變數。用白名單：金鑰的名字無法窮舉（OPENAI_KEY、STRIPE_SK、GH_PAT……），
@@ -378,13 +378,18 @@ def has_a_passed_summary(text: str) -> bool:
 
 
 def child_environment(tmpdir: Path) -> dict:
-    """測試子行程的環境變數：白名單裡有設的、這次執行專屬的暫存目錄，再加上不產生 .pyc 的設定。"""
+    """測試子行程的環境變數：白名單裡有設的、這次執行專屬的暫存目錄，再加上不產生 .pyc 與讓結果不依賴機器的設定：
+    時區固定 UTC、雜湊順序固定（set 與 dict 的字串順序不會每次不同）、不自動載入 pytest plugin。
+    agent 自己的測試執行與階段 3 的評分用同一份，所以兩邊行為一致。"""
     env = {}
     for name in CHILD_ENV_NAMES:
         if name in os.environ:
             env[name] = os.environ[name]
     env["TMPDIR"] = str(tmpdir)
     env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env["TZ"] = "UTC"
+    env["PYTHONHASHSEED"] = "0"
+    env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
     return env
 
 

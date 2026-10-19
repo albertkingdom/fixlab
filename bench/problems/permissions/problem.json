@@ -1,0 +1,19 @@
+{
+  "id": "permissions",
+  "domain": "權限",
+  "bug_type": "例外的繼承關係",
+  "bug_files": [
+    "perm/errors.py"
+  ],
+  "distractors": [
+    "perm/legacy_roles.py"
+  ],
+  "visible": {
+    "total": 2,
+    "failing": 1
+  },
+  "hidden": {
+    "fix": 3,
+    "keep": 4
+  }
+}
