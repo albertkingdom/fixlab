@@ -2,6 +2,7 @@
 # 目前只涵蓋參數與錯誤、每步輸出、快照 diff。結束後再跑 run_tests 的部分，等 run_tests 完成後再補。
 # 一律先把 fixture 複製到暫存目錄再當 PATH：fixlab 會直接修改指定的目錄。
 import json
+import re
 
 import pytest
 
@@ -105,18 +106,18 @@ def test_task_without_path_is_refused(project, home, monkeypatch, capsys, task):
 
     out, err = capsys.readouterr()
     assert "--task needs PATH" in err and "fixlab> " not in out
-    assert "add -i" not in err  # -i 會忽略 --task 的文字，不能拿來當替代做法
+    assert not re.search(r"(?<![\w-])-i\b", err)  # -i 會忽略 --task 的文字，不能拿來當替代做法
     assert client.sent == []
     assert take_snapshot(project) == before
     assert not (home / ".fixlab").exists()
 
 
 # Scenario: Started from the home directory
+@pytest.mark.parametrize("where", ["home", "above"])
 @pytest.mark.parametrize("log_dir", [False, True])
-def test_implicit_target_containing_the_log_dir_is_explained(home, tmp_path, monkeypatch, capsys, log_dir):
-    # 在家目錄直接打 fixlab：預設事件檔目錄在目標裡，提示要到專案目錄執行，而不是叫人改 --log-dir。
-    # 另外指定 --log-dir 也一樣拒絕，否則加個參數就能把整個家目錄當工作區。
-    monkeypatch.chdir(home)
+def test_start_from_home_or_above_without_path_is_refused(home, tmp_path, monkeypatch, capsys, where, log_dir):
+    # 沒給 PATH 時，家目錄或它的上層不能當工作區；另外指定 --log-dir 也一樣，否則加個參數就能繞過。
+    monkeypatch.chdir(home if where == "home" else home.parent)
     client = FakeClient([])
     extra = ["--log-dir", str(tmp_path / "logs")] if log_dir else []
 
@@ -124,9 +125,20 @@ def test_implicit_target_containing_the_log_dir_is_explained(home, tmp_path, mon
 
     err = capsys.readouterr().err
     assert "is your home directory or above; run fixlab from a project directory or pass PATH" in err
-    assert ".fixlab/runs" not in err  # 原因是目錄位置，不是事件檔放在哪
+    assert str(home / ".fixlab" / "runs") not in err  # 原因是目錄位置，不是事件檔放在哪
     assert "use --log-dir" not in err
     assert client.sent == []
+
+
+def test_start_below_home_falls_back_to_the_log_dir_check(home, monkeypatch, capsys):
+    # ~/.fixlab 在家目錄底下，不是家目錄規則的範圍；它包住預設事件檔目錄，由原本的檢查擋下並建議 --log-dir。
+    (home / ".fixlab").mkdir()
+    monkeypatch.chdir(home / ".fixlab")
+
+    assert main(["--model", "m"], client=FakeClient([])) == 2
+
+    err = capsys.readouterr().err
+    assert "use --log-dir" in err and "home directory" not in err
 
 
 def test_default_task_can_be_overridden(project):

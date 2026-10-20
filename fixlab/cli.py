@@ -88,13 +88,12 @@ def main(argv=None, client=None) -> int:
         args.system_prompt_extra = check_system_prompt_extra(args.system_prompt_extra)
     except ValueError as error:
         return fail(str(error))
-    default_dir = default_log_dir()
-    if not path_given and is_inside(default_dir, root):
-        # 沒給 PATH 時目標是目前目錄；包住預設事件檔目錄（在家目錄底下）代表人在家目錄或更上層，該換目錄。
+    if not path_given and is_inside(Path.home(), root):
+        # 沒給 PATH 時目標是目前目錄；家目錄或它的上層不該默默變成工作區，該換到專案目錄。
         # 不看 --log-dir：把事件檔移走不會讓「整個家目錄當工作區」變得合理。
         return fail(f"the current directory {root} is your home directory or above; "
                     "run fixlab from a project directory or pass PATH")
-    log_dir = Path(args.log_dir).expanduser() if args.log_dir else default_dir
+    log_dir = Path(args.log_dir).expanduser() if args.log_dir else default_log_dir()
     if is_inside(log_dir, root):
         # 事件檔放在被修的目錄裡，快照 diff 會把它當成新檔，模型與被測的程式也碰得到自己的紀錄
         return fail(f"the log directory {log_dir} is inside the target {root}; use --log-dir to put it elsewhere")
