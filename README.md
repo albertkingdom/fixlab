@@ -17,9 +17,58 @@
 
 階段 3 有了 8 題 benchmark 與第一次完整實驗（160 次，花約 $0.41）：在這組題目上觀察到，Qwen3.5-9B 能自己跑測試時修好 82%，不能時 25%（而且沒有一次宣告完成）；Claude Haiku 5.5 兩個條件都 100%，題目對它太容易。**這些只是這 8 題、2 個模型的觀察，不是這個 agent 的一般成績**；結果、設定與所有限制見 [docs/benchmark-results.md](docs/benchmark-results.md)。下面「實跑紀錄」是階段 1 時 1 題、1 個模型的早期觀察。
 
-## 快速開始
+## 安裝（一般使用者）
 
-需要 Python 3.11 以上。
+fixlab 只支援用 pytest 跑測試的 Python 專案；其他語言或測試工具的專案，`run_tests` 給不出有用的結果。
+
+需要 Python 3.11 以上；電腦上沒有的話，先用 Homebrew（`brew install python`）或 python.org 的安裝程式裝一個（macOS 內建的 `/usr/bin/python3` 版本太舊）。用 uv 或 pipx 安裝成指令，它們會自動建立獨立的虛擬環境，不必自己建 venv（`OWNER` 換成實際的 GitHub 帳號）：
+
+```
+uv tool install --no-managed-python git+https://github.com/OWNER/fixlab
+pipx install git+https://github.com/OWNER/fixlab
+```
+
+裝好後若出現 `fixlab: command not found`，代表指令所在的 `~/.local/bin` 不在 PATH 上：執行 `uv tool update-shell` 或 `pipx ensurepath`，再開一個新的終端機。
+
+macOS 上 fixlab 環境的基底 Python 不能在家目錄底下：沙箱會擋住家目錄底下的讀取，`run_tests` 一啟動就失敗（見〈已知限制〉）。uv 或 pipx 建的工具環境本身放在家目錄底下沒關係，沙箱會放行它，有限制的只有基底 Python。
+
+- uv 預設會優先用它自己下載、放在家目錄底下的 Python，所以要加 `--no-managed-python`（舊版 uv 沒有這個參數時，改用 `--python-preference only-system`）。
+- pipx 預設用它自己所在的 Python；用 Homebrew 裝的 pipx 就是 Homebrew 的 Python。
+- pyenv、asdf、conda 等管理的 Python 都在家目錄底下，排在 PATH 前面時也會被選到。這時用 `--python` 指定 Homebrew 或 python.org 的 Python（`uv tool install` 與 `pipx install` 都有這個參數）。
+
+安裝前可以先確認會用到哪個 Python，印出的路徑不能在家目錄底下：
+
+```
+uv python find --system --no-managed-python '>=3.11'    # uv 會用的
+pipx environment --value PIPX_DEFAULT_PYTHON            # pipx 會用的
+```
+
+沙箱只在 macOS 啟用；其他系統上測試在沒有沙箱的情況下執行，啟動時會印出 `sandbox: OFF`。
+
+設定模型端點（寫進 `~/.zshrc` 之類的 shell 設定檔）。fixlab 本身不會讀 `.env` 檔：
+
+```
+export OPENAI_BASE_URL=https://openrouter.ai/api/v1   # 用 Ollama 就是 http://localhost:11434/v1
+export OPENAI_API_KEY=...                              # Ollama 隨便填一個占位值
+export FIXLAB_MODEL=qwen/qwen3.5-9b
+```
+
+之後在要修的專案目錄執行 `fixlab` 就會進入互動模式（在家目錄本身或更上層會被拒絕，要先 `cd` 到專案目錄）。`fixlab` 會直接修改目前目錄，請在已經 commit 或有備份的專案上用。
+
+`run_tests` 用 fixlab 自己環境裡的 Python 跑測試，被修專案需要的第三方套件要加進同一個環境：
+
+```
+uv tool install --no-managed-python --with requests --with numpy git+https://github.com/OWNER/fixlab
+pipx inject fixlab requests numpy
+```
+
+uv 每次重新安裝時，`--with` 會取代上一次加的套件，不是累加，所以要把所有需要的套件一起列出；`pipx inject` 則是在既有環境上再加。
+
+benchmark（`python -m fixlab.bench`）的題目沒有包進套件，要跑 benchmark 請 clone 專案，照下面〈快速開始（開發用）〉安裝。
+
+## 快速開始（開發用）
+
+需要 Python 3.11 以上。clone 專案後以 editable 方式安裝，改了程式碼不必重裝：
 
 ```
 python3 -m venv .venv
@@ -34,8 +83,6 @@ export OPENAI_BASE_URL=https://openrouter.ai/api/v1   # 用 Ollama 就是 http:/
 export OPENAI_API_KEY=...                              # Ollama 隨便填一個占位值
 export FIXLAB_MODEL=qwen/qwen3.5-9b
 ```
-
-本機已設定從任何目錄直接執行 `fixlab`，以目前目錄進入互動模式，並由啟動器自動載入本專案的 `.env`。設定位置、還原與重新安裝注意事項見 [本機 CLI 啟動設定](docs/local-cli-setup.md)。這是本機設定，套件本身目前不會自動載入 `.env`。
 
 想實際展示互動 CLI，可照 [Demo 操作手冊](docs/cli-demo.md) 操作：修復工時報表、接續補說明、權限控制與查看事件紀錄。
 
@@ -179,12 +226,12 @@ Fixed parse_duration: it only took the first unit.
 
 - **沙箱只有 macOS 有效**，而且 `sandbox-exec` 在 Apple 的說明裡標為 **DEPRECATED**（已棄用）。其他平台只剩工具層的限制加結束時的 diff；沒有沙箱時入口會印 `sandbox: OFF (原因)`。
 - **硬連結**：事先在沙箱外建好、指向工作目錄之外的硬連結，沙箱只檢查路徑所以擋不到。
-- **被測專案的第三方依賴**：`run_tests` 用 fixlab 自己的 Python 直譯器跑，被測專案需要的套件要裝在同一個環境。範例專案只用標準函式庫。
+- **被測專案的第三方依賴**：`run_tests` 用 fixlab 自己的 Python 直譯器跑，被測專案需要的套件要裝在同一個環境（用 uv 或 pipx 安裝時見〈安裝（一般使用者）〉的 `--with` 與 `pipx inject`）。範例專案只用標準函式庫。
 - **沙箱擋不到的偽造**：被測的程式在 pytest 行程內部竄改 pytest 本身，或自己印一行假的 `N passed` 摘要再以結束碼 0 離開（測試與原始碼在同一個行程；後者我用兩行 `atexit` 重現過，bug 還在，`tests_passed` 卻是 `True`）。階段 3 的評分器降低了這個風險（乾淨環境重跑、只讀最後一行摘要、通過數要等於題目記的數量），但**沒有根治**：被測的程式與 pytest 仍在同一個行程。見第 10、16 篇。
-- **基底 Python 在家目錄底下時，沙箱會讓 `run_tests` 失敗**：用 uv、pyenv 管理的 Python 建的環境，標準函式庫在家目錄底下，被沙箱擋住，`run_tests` 一啟動就失敗（我用 uv 的 Python 重現，錯誤是 `dyld: Library not loaded`）。關掉沙箱則正常。Homebrew 的 Python 不受影響。目前沒有設定可以放行。
+- **基底 Python 在家目錄底下時，沙箱會讓 `run_tests` 失敗**：用 uv、pyenv 管理的 Python 建的環境，標準函式庫在家目錄底下，被沙箱擋住，`run_tests` 一啟動就失敗（我用 uv 的 Python 重現，錯誤是 `dyld: Library not loaded`）。關掉沙箱則正常。Homebrew 的 Python 不受影響。目前沒有設定可以放行；用 uv 安裝時加 `--no-managed-python`、或以 `--python` 指定 Homebrew 的 Python 可避開。
 - **`run_tests` 不自動載入 pytest 外掛，時區固定 UTC、雜湊順序固定**：這是階段 3 為了讓評分不依賴機器加的，一般使用也一樣。測試要靠自動載入的外掛（例如 pytest-asyncio、pytest-mock、pytest-django）的專案，外掛不會載入，測試可能失敗；`fixlab` 針對的是小型、只用標準函式庫的專案。要改成可選需要新增旗標，目前沒做。
 - **沒有重複呼叫偵測**：模型一直重讀同一個檔案（成功的呼叫）不會觸發 `stuck`。
-- **還不能在任何目錄直接打 `fixlab`**：要用完整路徑 `.venv/bin/fixlab`，或自己把它放進 PATH（例如在 `~/.local/bin` 放一個指向它的符號連結）；API 金鑰要自己載入（`source .env`）。之後想做：放進 PATH、金鑰存系統鑰匙圈、沒給 PATH 時用目前的目錄。
+- **不會自己讀 `.env`、金鑰沒有存進系統鑰匙圈**：用 uv 或 pipx 安裝後可以在任何目錄直接打 `fixlab`（見〈安裝（一般使用者）〉），但模型端點與金鑰要用環境變數提供。之後想做：金鑰存系統鑰匙圈。
 - **互動模式的對話沒有長度上限**：用久了每一步的 prompt 會很大，小模型（Ollama 設 32768）可能撞到 context 上限；用 `/reset` 重來，上限怎麼處理等有事件檔的資料再決定。
 - **互動模式的「一律放行」範圍是整個工具**，沒有 `/permissions` 看、`/revoke` 收回。
 - **互動模式沒有串流**：模型的回覆結束後才印。實測每一步等 1 到 5 秒、多半約 1.4 秒，目前不值得；本機大模型很慢時再做。
