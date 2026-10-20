@@ -349,7 +349,12 @@ def run_tests(ws: Workspace, target: str = ".") -> ToolResult:
     with tempfile.TemporaryDirectory(prefix="fixlab-run-") as tmp:
         tmpdir = Path(tmp).resolve()
         if sandbox_available():
-            command = wrap_command(command, ws.root, ws.python, ws.project_root, ws.deny_read, tmpdir, ws.protect_tests)
+            try:
+                base = ws.base
+            except ValueError as error:  # 基底 Python 不能放行：測試跑不起來，照實回報，不是通過
+                return ToolResult(f"cannot run the tests: {error}", True, {"tests_passed": False, "timed_out": False})
+            command = wrap_command(command, ws.root, ws.python, ws.project_root, ws.deny_read, tmpdir, ws.protect_tests,
+                                   base=base)
         # KNOWN-ISSUE: 逾時只殺最上層的 pytest，測試啟動的子行程會變孤兒繼續跑（沙箱限制它能做什麼，但不會讓它停）。
         # 解法是 Popen 加 start_new_session=True，逾時後 os.killpg 整個行程群組。
         try:

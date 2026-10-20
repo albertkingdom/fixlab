@@ -3,12 +3,17 @@
 # 一律先把 fixture 複製到暫存目錄再當 PATH：fixlab 會直接修改指定的目錄。
 import json
 import re
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
 from fixlab.cli import DEFAULT_TASK, changed_files, diff_report, fixlab_commit, main, take_snapshot
 from fixlab.loop import SYSTEM_PROMPT
 from fixlab.sandbox import sandbox_available
+from fixlab.tools import START_PYTEST
+from fixlab.workspace import Workspace
 from test_fixture import BUGGY, FIXED, copy_fixture  # 把 timelog 複製到暫存目錄；bug 與修法
 from test_loop import FakeClient, native  # 依序回傳劇本回覆的假 client
 
@@ -593,3 +598,133 @@ def test_an_extra_system_prompt_with_a_visible_character_is_accepted_as_it_is(pr
     run_fix(project, FakeClient([("Done.", None)]), "--system-prompt-extra", " a ")
 
     assert event_lines(home)[0]["system_prompt_extra"] == " a "
+
+
+# ── test-interpreter：The test interpreter is checked before the run starts ──
+
+
+def fake_python(folder, body):
+    """一個假的直譯器：shell 腳本，照 body 回應啟動前的檢查。"""
+    folder.mkdir(parents=True, exist_ok=True)
+    script = folder / "python"
+    script.write_text("#!/bin/sh\n" + body + "\n")
+    script.chmod(0o755)
+    # 基底指向真的 Python 安裝（有標準函式庫），檢查才會走到執行這支腳本的那一步
+    (folder.parent / "pyvenv.cfg").write_text(f"home = {Path(sys.executable).resolve().parent}\n")
+    return script
+
+
+def assert_refused_before_start(home, capsys, client, *words):
+    err = capsys.readouterr().err
+    for word in words:
+        assert word in err, err
+    assert client.sent == []
+    assert not (home / ".fixlab").exists()  # 沒有事件檔
+
+
+# Scenario: Interpreter path does not exist
+def test_missing_interpreter_is_refused(project, home, capsys):
+    client = FakeClient([("Done.", None)])
+    assert main([str(project), "--model", "m", "--python", "/no/such/python"], client=client) == 2
+    assert_refused_before_start(home, capsys, client, "/no/such/python")
+
+
+# Scenario: Interpreter older than 3.11
+def test_old_interpreter_is_refused(project, home, tmp_path, capsys):
+    python = fake_python(tmp_path / "old" / "bin", "echo FIXLAB-CHECK 3.10")
+    client = FakeClient([("Done.", None)])
+    assert main([str(project), "--model", "m", "--python", str(python)], client=client) == 2
+    assert_refused_before_start(home, capsys, client, str(python), "3.10", "3.11")
+
+
+# Scenario: Environment without pytest
+def test_interpreter_without_pytest_is_refused(project, home, tmp_path, capsys):
+    python = fake_python(tmp_path / "nopytest" / "bin", "echo FIXLAB-CHECK 3.12; echo \"ModuleNotFoundError: No module named 'pytest'\" >&2; exit 1")
+    client = FakeClient([("Done.", None)])
+    assert main([str(project), "--model", "m", "--python", str(python)], client=client) == 2
+    assert_refused_before_start(home, capsys, client, str(python), "pytest")
+
+
+# Scenario: A virtual environment in the project is not used by itself
+def test_a_project_venv_is_neither_used_nor_executed(project, home, capsys):
+    # 專案裡的 .venv/bin/python 是一支會留下記號的腳本：它被執行過，記號檔就會出現。
+    marker = project.parent / "venv-was-executed"
+    fake_python(project / ".venv" / "bin", f"touch {marker}; echo 3.12")
+    main([str(project), "--model", "m"], client=FakeClient([("Done.", None)]))
+    assert not marker.exists()
+    start = event_lines(home)[0]
+    assert start["test_python"] == {"path": sys.executable, "source": "default",
+                                    "base": str(Workspace(project).base)}
+
+
+def venv_like_fixlab_s(folder):
+    """一個指向 fixlab 自己 venv 的「環境」：裡面有 pytest，又能驗證 run_tests 用的是指定的路徑。"""
+    folder.parent.mkdir(parents=True, exist_ok=True)
+    folder.symlink_to(Path(sys.executable).parent.parent)
+    return folder / "bin" / "python"
+
+
+def spy_on_pytest_runs(monkeypatch):
+    used = []
+    real_run = subprocess.run
+
+    def spy(command, *args, **kwargs):
+        used.append(command)
+        return real_run(command, *args, **kwargs)
+
+    # monkeypatch 換掉的是共用的 subprocess.run，git 與啟動前檢查也會經過；只看啟動 pytest 的那幾次。
+    monkeypatch.setattr("fixlab.tools.subprocess.run", spy)
+    return lambda: [command for command in used if START_PYTEST in command]
+
+
+# Scenario: Interpreter given on the command line，以及 run_start records the test interpreter
+def test_given_interpreter_runs_the_tests_and_is_recorded(project, home, tmp_path, monkeypatch):
+    python = venv_like_fixlab_s(tmp_path / "envs" / "proj")
+    pytest_runs = spy_on_pytest_runs(monkeypatch)
+    main([str(project), "--model", "m", "--python", str(python)], client=FakeClient([("Done.", None)]))
+    assert pytest_runs() and all(str(python) in command for command in pytest_runs()), pytest_runs()
+    start = event_lines(home)[0]
+    assert start["test_python"]["path"] == str(python)
+    assert start["test_python"]["source"] == "option"
+    assert start["test_python"]["base"] == str(Workspace(project, python=str(python)).base)
+
+
+# Scenario: Relative interpreter path
+def test_relative_interpreter_path_is_made_absolute(project, home, tmp_path, monkeypatch):
+    python = venv_like_fixlab_s(tmp_path / "envs" / "proj")
+    monkeypatch.chdir(tmp_path)
+    pytest_runs = spy_on_pytest_runs(monkeypatch)
+    main([str(project), "--model", "m", "--python", "envs/proj/bin/python"], client=FakeClient([("Done.", None)]))
+    assert pytest_runs() and all(str(python) in command for command in pytest_runs()), pytest_runs()
+    assert event_lines(home)[0]["test_python"]["path"] == str(python)
+
+
+# Scenario: Environment that contains the workspace
+def test_an_environment_that_contains_the_project_is_refused(project, home, capsys):
+    python = fake_python(project / "bin", "echo FIXLAB-CHECK 3.12")
+    client = FakeClient([("Done.", None)])
+    assert main([str(project), "--model", "m", "--python", str(python)], client=client) == 2
+    assert_refused_before_start(home, capsys, client, "contains the project")
+
+
+# 沒有沙箱的平台：不計算、不檢查基底（標準函式庫的位置因平台而異，而且沒有沙箱要放行它）
+def test_without_a_sandbox_the_base_is_not_checked(project, home, tmp_path, monkeypatch):
+    monkeypatch.setattr("fixlab.sandbox.SANDBOX_EXEC", None)
+    python = tmp_path / "odd" / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    python.write_text(f'#!/bin/sh\nexec {sys.executable} "$@"\n')
+    python.chmod(0o755)
+    assert main([str(project), "--model", "m", "--python", str(python)], client=FakeClient([("Done.", None)])) != 2
+    assert event_lines(home)[0]["test_python"]["base"] is None
+
+
+# Scenario: Interpreter that goes through a link inside the project（第三輪 review 重現的攻擊）
+def test_an_interpreter_that_hops_through_the_project_is_refused(project, home, capsys):
+    (project / "scripts").mkdir()
+    (project / "scripts" / "py").symlink_to(Path(sys.executable).resolve())
+    (project / ".venv" / "bin").mkdir(parents=True)
+    (project / ".venv" / "pyvenv.cfg").write_text(f"home = {Path(sys.executable).resolve().parent}\n")
+    (project / ".venv" / "bin" / "python").symlink_to(Path("../../scripts/py"))
+    client = FakeClient([("Done.", None)])
+    assert main([str(project), "--model", "m", "--python", str(project / ".venv" / "bin" / "python")], client=client) == 2
+    assert_refused_before_start(home, capsys, client, "scripts/py")

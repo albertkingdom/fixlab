@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePath
 from typing import Callable
 
+from fixlab.interpreter import environment_of, find_base, within
+
 # 走訪時跳過的目錄。list_files、grep、CLI 的快照（以及之後的測試檔指紋掃描）都用同一份，
 # 各自維護的話，改一處就會漏掉另一處。
 SKIP_DIRS = frozenset({".git", ".venv", "__pycache__", ".pytest_cache"})
@@ -125,6 +127,10 @@ class Workspace:
         # 執行工具之前問一下：confirm(工具名稱, 參數) 回 False 就不執行（使用者拒絕）。和 read_only 一樣，政策由入口決定，迴圈不管。
         self.confirm = confirm
         self.python = python  # run_tests 用哪個直譯器；不 resolve，venv 的 python 是符號連結，解析後會找不到套件
+        # 直譯器所屬的環境在工作目錄裡（例如目標專案的 .venv）時，整個環境唯讀：裡面的 pytest 決定測試算不算通過，
+        # 改掉它就能偽造通過。沙箱另外擋被測的程式寫入它（見 sandbox.py）。
+        self.environment = environment_of(python).resolve()
+        self._base: Path | ValueError | None = None  # 見 base
         self._tools: dict[str, Tool] = {}
         self._hidden: list[str] = []  # 不給模型看的工具（見 hide）
         # 模型「整檔、未截斷」讀過的檔案：解析後的真實路徑 → 讀的當下的內容指紋。write_file 覆寫既有檔案前要查它：
@@ -168,6 +174,19 @@ class Workspace:
         """給 toolparse.parse_message 驗證用的 {工具名稱: schema}。"""
         return {name: tool.schema for name, tool in self._tools.items() if name not in self._hidden}
 
+    @property
+    def base(self) -> Path:
+        """沙箱放行的基底 Python 安裝目錄：第一次用到時算一次並檢查，之後每次 run_tests 都用這個結果（連失敗也記住），
+        不在執行中重讀 pyvenv.cfg。不符合條件時丟出 ValueError；入口在啟動前就先取一次，轉成結束碼 2 的錯誤訊息。"""
+        if self._base is None:
+            try:
+                self._base = find_base(self.python, self.root, self.project_root, self.deny_read)
+            except ValueError as error:
+                self._base = error
+        if isinstance(self._base, ValueError):
+            raise self._base
+        return self._base
+
     def resolve_inside(self, rel: str) -> Path:
         """把相對路徑解析成工作目錄內的真實路徑；不合規就 raise。"""
         if not isinstance(rel, str) or not rel.strip():
@@ -186,6 +205,8 @@ class Workspace:
         # 用解析後的真實路徑判定：指向唯讀檔案的符號連結，不能拿來繞過。
         if self.read_only(p.relative_to(self.root)):
             raise ReadOnlyBlocked(f"{rel!r} is read-only and cannot be modified. If it is a test file, fix the source code instead.")
+        if within(p, self.environment):  # 比對檔案系統上的身分，路徑大小寫不同也認得
+            raise ReadOnlyBlocked(f"{rel!r} is inside the Python environment that runs the tests and cannot be modified.")
         return p
 
     def _check_args(self, name: str, tool: Tool, args: dict) -> None:

@@ -21,8 +21,9 @@ import openai
 from openai import OpenAI
 
 from fixlab.display import call_header, edit_diff_lines, footer_line, result_line
+from fixlab.interpreter import check_interpreter, choose_interpreter
 from fixlab.loop import DEFAULT_MAX_STEPS, run_agent
-from fixlab.sandbox import sandbox_status
+from fixlab.sandbox import sandbox_available, sandbox_status
 from fixlab.telemetry import EventLog, default_log_dir
 from fixlab.tools import plan_edit, register_tools
 from fixlab.workspace import FIXLAB_ROOT, ToolError, Workspace, iter_files, looks_like_test_file
@@ -44,6 +45,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="read tasks from the keyboard and keep the conversation between them")
     parser.add_argument("--task", help="replace the default task text (one-shot with PATH; ignored with -i)")
     parser.add_argument("--log-dir", help="where event logs go (default: ~/.fixlab/runs)")
+    parser.add_argument("--python", metavar="PATH",
+                        help="Python interpreter that runs the tests, e.g. the project's .venv/bin/python "
+                             "(default: the one running fixlab). You trust this environment: it runs inside the sandbox")
     parser.add_argument("--meta", action="append", default=[], metavar="KEY=VALUE",
                         help="record an experiment condition in the event log, e.g. quantization=Q4_K_M (repeatable)")
     parser.add_argument("--hide-tool", action="append", default=[], metavar="NAME",
@@ -93,6 +97,8 @@ def main(argv=None, client=None) -> int:
         # 不看 --log-dir：把事件檔移走不會讓「整個家目錄當工作區」變得合理。
         return fail(f"the current directory {root} is your home directory or above; "
                     "run fixlab from a project directory or pass PATH")
+    # 測試用直譯器只由使用者決定（--python），不偵測專案裡的 .venv：專案可能不可信，不能讓它的檔案決定執行什麼。
+    python, source = choose_interpreter(args.python)
     log_dir = Path(args.log_dir).expanduser() if args.log_dir else default_log_dir()
     if is_inside(log_dir, root):
         # 事件檔放在被修的目錄裡，快照 diff 會把它當成新檔，模型與被測的程式也碰得到自己的紀錄
@@ -102,13 +108,21 @@ def main(argv=None, client=None) -> int:
     # 工作區先建好（它不建任何檔案），工具名稱不對時才能在建事件檔之前就結束。
     workspace_class = ShownWorkspace if args.interactive else Workspace
     options = {"confirm": make_asker()} if args.interactive else {}
-    ws = workspace_class(root, read_only=looks_like_test_file, protect_tests=True, **options)
+    ws = workspace_class(root, python=python, read_only=looks_like_test_file, protect_tests=True, **options)
     register_tools(ws)
     try:
         for name in args.hide_tool:
             ws.hide(name)
     except ValueError as error:
         return fail(str(error))
+    # 其他參數都檢查完、工作區也建好之後，才執行直譯器檢查（要花時間）；之後才建事件檔、呼叫模型。
+    # 檢查用的沙箱和 run_tests 完全相同。基底 Python 在這裡算一次，之後每次 run_tests 都用同一個值。
+    try:
+        check_interpreter(ws)
+    except ValueError as error:
+        return fail(str(error))
+    # 沒有沙箱時不需要放行基底，也不計算它（標準函式庫的位置因平台而異）
+    args.test_python = {"path": python, "source": source, "base": str(ws.base) if sandbox_available() else None}
 
     print(f"editing in place: {root}", file=sys.stderr)
     print(f"sandbox: {sandbox_status()}", file=sys.stderr)  # 沙箱是安全功能，沒開要讓使用者看得到
@@ -355,7 +369,7 @@ def run_conditions(args, model: str, root: Path, meta: dict, mode: str, ws: Work
         "sandbox": sandbox_status(), "fixlab_commit": fixlab_commit(),
         "python": platform.python_version(), "openai": openai.__version__, "meta": meta,
         "hidden_tools": ws.hidden_tools, "temperature": args.temperature, "extra_body": args.extra_body,
-        "system_prompt_extra": args.system_prompt_extra,
+        "system_prompt_extra": args.system_prompt_extra, "test_python": args.test_python,
     }
 
 

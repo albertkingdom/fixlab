@@ -4,9 +4,11 @@
 後面的會覆蓋前面的，順序就是邏輯：
   1. 預設全部允許（Python 啟動要讀的系統路徑太多，列不齊），但禁止網路。
   2. 禁止讀家目錄、fixlab 專案目錄、額外的 deny_read 目錄。
-  3. 再放行自己的工作目錄與虛擬環境（所以 deny 都要寫在這條 allow 之前）。
+  3. 再放行自己的工作目錄、測試用直譯器的環境與它的基底 Python 安裝目錄（所以 deny 都要寫在這條 allow 之前）。
+     基底 Python 在家目錄底下（uv 管理的 Python、pyenv）時，沒有這一條，標準函式庫與 libpython 會被第 2 條擋住。
   4. 允許讀「檔案中繼資料」（存在與否、大小），因為取得目前目錄要走過上層目錄。
-  5. 只能寫工作目錄、這次執行專用的暫存目錄、/dev。
+  5. 只能寫工作目錄、這次執行專用的暫存目錄、/dev；測試用直譯器的環境一律不能寫（它在工作目錄裡時，
+     改掉裡面的 pytest 就能偽造通過）。
   6. （選用，protect_tests=True 才有）工作目錄裡看起來像測試檔的路徑，連寫入也不行（覆寫、新建、刪除、改名、搬移都擋）。
      測試檔是評分標準：被測的程式如果能改寫它，把失敗的測試改成 assert True，就是假通過。
      工具層（read_only）已經擋住「模型直接改測試檔」，這一條擋「模型改過的程式自己去改」。
@@ -57,6 +59,8 @@ import shutil
 import sys
 from pathlib import Path
 
+from fixlab.interpreter import environment_of, readable_environment, same_entry
+
 # 模組載入時決定一次。測試會把它改成 None 來模擬「沒有沙箱可用」。
 SANDBOX_EXEC = shutil.which("sandbox-exec") if sys.platform == "darwin" else None
 
@@ -91,18 +95,23 @@ def protected_path_patterns() -> list[str]:
     ]
 
 
-def build_profile(deny_count: int, protect_tests: bool = False) -> str:
-    """沙箱規則文字。裡面只有 (param "名稱")，路徑由 -D 另外傳；deny_count 是額外禁止讀取的目錄數。"""
+def build_profile(deny_count: int, protect_tests: bool = False, env_dir_count: int = 0) -> str:
+    """沙箱規則文字。裡面只有 (param "名稱")，路徑由 -D 另外傳；deny_count 是額外禁止讀取的目錄數，
+    env_dir_count 是工作目錄裡「測試用環境與它的各層上層」的資料夾數（環境不在工作目錄裡就是 0）。"""
     extra_denies = "".join(f'(deny file-read* (subpath (param "DENY_{i}")))' for i in range(deny_count))
     profile = (
         "(version 1)(allow default)(deny network*)"
         '(deny file-read* (subpath (param "HOME")))'
         '(deny file-read* (subpath (param "PROJECT")))'
         + extra_denies
-        + '(allow file-read* (subpath (param "WS")) (subpath (param "VENV")))'
+        + '(allow file-read* (subpath (param "WS")) (subpath (param "VENV")) (subpath (param "BASE")))'
         "(allow file-read-metadata)"
         '(deny file-write* (require-not (require-any (subpath (param "WS")) (subpath (param "TMP")) (subpath "/dev"))))'
+        '(deny file-write* (subpath (param "VENV")) (subpath (param "ENV")))'
     )
+    # 測試用環境在工作目錄裡時，環境與它在工作目錄內的每一層上層都不能刪除、改名、搬移：
+    # 否則把上層改名，裡面的 pytest 就離開了 VENV 的路徑，改完再改回來就能偽造通過。與 protect_tests 無關。
+    profile += "".join(f'(deny file-write-unlink (literal (param "ENVDIR_{i}")))' for i in range(env_dir_count))
     if protect_tests:
         patterns = "|".join(protected_path_patterns())
         # ^ 加上被跳脫的工作目錄開頭，所以工作目錄「上層」有叫 tests 的資料夾（例如 tests/fixtures/x）不受影響
@@ -113,27 +122,44 @@ def build_profile(deny_count: int, protect_tests: bool = False) -> str:
     return profile
 
 
-def sandbox_paths(root: Path, python: str, project_root: Path, deny_read: tuple, tmp: Path) -> dict[str, Path]:
-    """規則用到的路徑，全部轉成真實路徑。"""
+def sandbox_paths(root: Path, python: str, project_root: Path, deny_read: tuple, tmp: Path, base: Path) -> dict[str, Path]:
+    """規則用到的路徑，全部轉成真實路徑。base 是已經檢查過的基底 Python 安裝目錄（見 interpreter.find_base）。"""
     paths = {
         "WS": root,
         "HOME": Path.home(),
         "PROJECT": project_root,
         # 虛擬環境由 python 路徑往上兩層推得（.venv/bin/python → .venv）。python 本身刻意不解析：
-        # 它是指向 Homebrew Python 的捷徑，解析後就找不到虛擬環境的套件了。
-        # KNOWN-ISSUE: 基底 Python 在家目錄底下（uv、pyenv）時，它的標準函式庫被上面的 HOME 規則擋住，run_tests 一啟動就失敗
-        # （dyld: Library not loaded）。2026-10-17 用 uv 的 Python 重現，關掉沙箱則正常。解法是放行基底 Python 的目錄，延後到階段 2。
-        "VENV": Path(python).absolute().parent.parent,
+        # 它是指向 Homebrew Python 的捷徑，解析後就找不到虛擬環境的套件了。不是 venv 的直譯器只放行基底（見 readable_environment）。
+        "VENV": readable_environment(python, base),
+        "BASE": base,
+        # 跑測試用的環境（直譯器往上兩層，不論是不是 venv）：一律不能寫。放行讀取的 VENV 可能是基底，不能拿來代替它。
+        "ENV": environment_of(python),
         "TMP": tmp,
     }
     for i, folder in enumerate(deny_read):
         paths[f"DENY_{i}"] = folder
+    for i, folder in enumerate(environment_dirs_in(root, environment_of(python))):
+        paths[f"ENVDIR_{i}"] = folder
     return {name: Path(path).resolve() for name, path in paths.items()}
 
 
+def environment_dirs_in(root: Path, environment: Path) -> list[Path]:
+    """環境在工作目錄裡時，回傳環境本身與它在工作目錄內的每一層上層（不含工作目錄）；不在裡面就是空的。"""
+    # 往上找到「就是工作目錄」的那一層為止；比對檔案系統上的身分，路徑大小寫不同也認得。
+    folders, current = [], Path(environment).resolve()
+    while current != current.parent:
+        if same_entry(current, root):
+            return folders
+        folders.append(current)
+        current = current.parent
+    return []
+
+
 def wrap_command(command: list[str], root: Path, python: str, project_root: Path, deny_read: tuple, tmp: Path,
-                 protect_tests: bool = False) -> list[str]:
-    """把指令包進 sandbox-exec。"""
-    paths = sandbox_paths(root, python, project_root, deny_read, tmp)
+                 protect_tests: bool = False, *, base: Path) -> list[str]:
+    """把指令包進 sandbox-exec。base 是 Workspace 算好並檢查過的基底 Python 安裝目錄（Workspace.base），
+    必填：不在這裡重讀 pyvenv.cfg，整個執行期間用同一個值。"""
+    paths = sandbox_paths(root, python, project_root, deny_read, tmp, base)
     definitions = [arg for name, path in paths.items() for arg in ("-D", f"{name}={path}")]
-    return [SANDBOX_EXEC, *definitions, "-p", build_profile(len(deny_read), protect_tests), *command]
+    env_dir_count = sum(name.startswith("ENVDIR_") for name in paths)
+    return [SANDBOX_EXEC, *definitions, "-p", build_profile(len(deny_read), protect_tests, env_dir_count), *command]
