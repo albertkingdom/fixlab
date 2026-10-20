@@ -106,7 +106,7 @@ less /替換成實際的路徑/events.jsonl
 
 ## 6. 選做：換一個業務情境
 
-例如購物收據與折扣碼：
+例如購物收據與折扣碼（沿用第 1 節設定的 `FIXLAB_HOME`；新開的終端機要先重新設定）：
 
 ```bash
 demo_dir=$(mktemp -d /private/tmp/fixlab-billing-demo.XXXXXX)
