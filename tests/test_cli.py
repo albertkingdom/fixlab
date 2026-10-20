@@ -93,6 +93,21 @@ def test_agent_cannot_edit_test_files(project, capsys):
     assert take_snapshot(project) == before  # 測試檔沒被動到
 
 
+@pytest.mark.parametrize("task", ["explain parser", ""])
+def test_task_without_path_runs_once_in_current_directory(project, home, monkeypatch, capsys, task):
+    monkeypatch.chdir(project)
+    client = FakeClient([("Done.", None)])
+
+    assert main(["--model", "m", "--task", task], client=client) == 1
+
+    out, err = capsys.readouterr()
+    assert "fixlab> " not in out and "RESULT: tests FAILED" in out
+    assert client.sent[0][1] == {"role": "user", "content": task}
+    start = event_lines(home)[0]
+    assert start["mode"] == "once"
+    assert start["path"] == str(project.resolve())
+
+
 def test_default_task_can_be_overridden(project):
     default_client = FakeClient([("Done.", None)])
     run_fix(project, default_client)

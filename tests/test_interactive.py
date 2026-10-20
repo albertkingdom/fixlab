@@ -53,6 +53,43 @@ def event_lines(home):
 # ── Interactive mode is entered with -i ───────────────────────────────────
 
 
+@pytest.mark.parametrize("extra", [[], ["-i"], ["--model", "m"], ["-i", "--task", "ignored"]])
+def test_omitted_path_starts_interactive_in_current_directory(project, home, monkeypatch, capsys, extra):
+    monkeypatch.chdir(project)
+    monkeypatch.setenv("FIXLAB_MODEL", "m")
+    client = FakeClient([])
+
+    def eof(prompt=""):
+        print(prompt, end="")
+        raise EOFError
+
+    def no_tests(*args, **kwargs):
+        raise AssertionError("interactive startup must not run tests")
+
+    monkeypatch.setattr("builtins.input", eof)
+    monkeypatch.setattr("fixlab.cli.run_once", no_tests)
+    assert main(extra, client=client) == 0
+
+    out, err = capsys.readouterr()
+    assert "fixlab> " in out and "RESULT:" not in out
+    assert f"editing in place: {project.resolve()}" in err
+    assert client.sent == []
+    events = event_lines(home)
+    assert events[0]["mode"] == "interactive"
+    assert events[0]["path"] == str(project.resolve())
+    assert not any(event["event"] == "task_start" for event in events)
+
+
+def test_omitted_path_still_checks_model(project, monkeypatch, capsys):
+    monkeypatch.chdir(project)
+    monkeypatch.delenv("FIXLAB_MODEL", raising=False)
+    client = FakeClient([])
+    assert main([], client=client) == 2
+    out, err = capsys.readouterr()
+    assert "no model" in err and "fixlab> " not in out
+    assert client.sent == []
+
+
 # Scenario: Without -i nothing changes
 def test_without_dash_i_it_is_the_one_shot_command(project, monkeypatch, capsys):
     def no_input(prompt=""):
