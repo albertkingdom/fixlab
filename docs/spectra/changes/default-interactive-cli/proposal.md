@@ -5,7 +5,7 @@
 ## What Changes
 
 - 未提供 PATH 時使用目前工作目錄；未提供 PATH 與 --task 時預設進入互動模式。
-- 保留 fixlab PATH 的一次性模式、-i 的明確互動模式；--task 可搭配省略 PATH 執行一次性任務。
+- 保留 fixlab PATH 的一次性模式、-i 的明確互動模式；一次性的 --task 必須搭配 PATH，省略 PATH 時拒絕執行。
 - 更新說明與回歸測試，驗證本機既有啟動器可從專案外啟動。
 
 ## Capabilities
