@@ -27,6 +27,11 @@ path 改為可省略，使用 None 區分是否明確提供；--task 同樣以 N
 
 原本沒有 PATH 的命令會從參數錯誤變為等待輸入 → --help 清楚說明；非終端機 EOF 直接退出。
 指定 PATH 仍預設一次性 → README 列出 fixlab、fixlab PATH -i、fixlab PATH 的差別。
+code review 延後的意見（不改程式）：
+- 在任何目錄打 fixlab 都以該目錄為工作區，讀檔工具不需確認 → 這是本變更的目的；寫檔與跑測試仍會詢問，家目錄啟動已改為明確拒絕。
+- -i 與 --task 同時提供時 --task 文字被忽略且不提示 → 沿用變更前行為，README 已說明 -i 優先、任務由提示字元輸入。
+- --task "" 會送出空任務 → 沿用變更前行為，不在本變更處理。
+- 一次性模式的快照整個讀進記憶體、讀不到的檔案會中斷 → 既有 KNOWN-ISSUE（cli.py take_snapshot）；一次性模式現在必須明確給 PATH，不會因省略 PATH 而擴大範圍。
 
 ## Migration Plan
 
