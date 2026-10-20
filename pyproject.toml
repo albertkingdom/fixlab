@@ -16,8 +16,11 @@ dependencies = [
 [project.scripts]
 fixlab = "fixlab.cli:main"
 
-[tool.setuptools]
-packages = ["fixlab"]
+# 自動尋找 fixlab 底下的子套件（例如 fixlab.bench）；固定清單在一般安裝時會漏掉子套件。
+[tool.setuptools.packages.find]
+include = ["fixlab", "fixlab.*"]
+# 沒有 __init__.py 的資料夾不算套件，打包內容才和 fixlab 底下的套件目錄一致。
+namespaces = false
 
 [tool.pytest.ini_options]
 # 覆寫 norecursedirs 會蓋掉 pytest 的預設值，所以把預設裡需要的（.*、venv 等）一起列出。

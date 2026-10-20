@@ -11,6 +11,8 @@ runs/
 # Spectra vector search index
 docs/spectra/.vector-search.db*
 *.egg-info/
+# 從本機路徑做非 editable 安裝（uv tool install .、pipx install .）時 setuptools 留下的建置目錄
+build/
 
 # tests/test_isolation.py 在專案目錄底下建的臨時資料夾（被中斷時會留下）
 .fixlab-test-*/
