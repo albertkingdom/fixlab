@@ -65,7 +65,7 @@ def main(argv=None, client=None) -> int:
     path_given = args.path is not None
     if not path_given and args.task is not None and not args.interactive:
         # 一次性執行寫檔不會詢問，目標目錄必須明確指定，不能默默用目前目錄。
-        return fail("--task needs PATH in one-shot mode: run fixlab PATH --task TEXT, or add -i")
+        return fail("--task needs PATH in one-shot mode: run fixlab PATH --task TEXT")
     args.interactive = args.interactive or not path_given
     args.path = args.path if path_given else "."
     args.task = args.task if args.task is not None else DEFAULT_TASK
@@ -88,13 +88,14 @@ def main(argv=None, client=None) -> int:
         args.system_prompt_extra = check_system_prompt_extra(args.system_prompt_extra)
     except ValueError as error:
         return fail(str(error))
+    if not path_given and is_inside(default_log_dir(), root):
+        # 沒給 PATH 時目標是目前目錄；包住預設事件檔目錄通常代表人在家目錄（或更上層），該換目錄。
+        # 不看 --log-dir：把事件檔移走不會讓「整個家目錄當工作區」變得合理。
+        return fail(f"the current directory {root} contains the log directory {default_log_dir()}; "
+                    "run fixlab from a project directory or pass PATH")
     log_dir = Path(args.log_dir).expanduser() if args.log_dir else default_log_dir()
     if is_inside(log_dir, root):
         # 事件檔放在被修的目錄裡，快照 diff 會把它當成新檔，模型與被測的程式也碰得到自己的紀錄
-        if not path_given and not args.log_dir:
-            # 沒給 PATH 時目標是目前目錄；包住預設事件檔目錄通常代表人在家目錄，該換目錄而不是改 --log-dir
-            return fail(f"the current directory {root} contains the log directory {log_dir}; "
-                        "run fixlab from a project directory or pass PATH")
         return fail(f"the log directory {log_dir} is inside the target {root}; use --log-dir to put it elsewhere")
     # 修 bug：測試檔是評分標準，模型不能改，被執行的程式也不能改。
     # 互動模式使用者在場，寫檔與跑測試前問一聲；一次性執行沒有人可以問，沿用預設（全部放行）。
