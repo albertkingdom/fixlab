@@ -17,3 +17,4 @@
 - 從 /private/tmp 的專案目錄透過 PATH 的 fixlab 與 .venv/bin/fixlab 啟動，EOF 正常結束（exit 0）；prompt、目標目錄、interactive telemetry 正確，沒有 task_start 或模型呼叫。驗證事件檔放在暫存 HOME，未寫入使用者的正式事件目錄。
 - 已審查本次 CLI、測試、文件與規格差異，無阻擋或重要問題；git diff --check 通過。保留原有未提交文件內容，當時尚未 commit、未歸檔。
 - 2026-10-20 code review 兩輪修正後（9a8bd73）：完整 pytest 559 passed；spectra validate 通過。新增或修改的測試都先確認修正前會失敗。
+- 2026-10-20 第四輪 review 修正後（4d4059b）：家目錄判斷改為直接比對家目錄；完整 pytest 562 passed；spectra validate 通過。
