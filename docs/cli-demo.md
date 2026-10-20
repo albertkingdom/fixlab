@@ -8,15 +8,18 @@
 
 目前這台電腦已設定 `fixlab` 從任何目錄啟動，並自動載入 fixlab 專案的 `.env`，詳見 [本機 CLI 啟動設定](local-cli-setup.md)。若使用 Ollama，先確認服務已啟動且模型已下載；若使用遠端端點，確認可連線。
 
-在終端機執行以下整段，每次都會建立新的範例複本：
+在終端機執行以下整段，每次都會建立新的範例複本。`FIXLAB_HOME` 換成 fixlab clone 所在的路徑：
 
 ```bash
+FIXLAB_HOME=/path/to/fixlab
 demo_dir=$(mktemp -d /private/tmp/fixlab-demo.XXXXXX)
-cp -R /Users/yklin/Documents/AI_projects/fixlab/tests/fixtures/timelog/. "$demo_dir"
+cp -R "$FIXLAB_HOME/tests/fixtures/timelog/." "$demo_dir"
 cd "$demo_dir"
 pwd
-fixlab . -i
+fixlab
 ```
+
+在目前目錄直接執行 `fixlab` 就會進入互動模式；也可用 `fixlab PATH -i` 指定其他目錄。
 
 `fixlab` 會直接修改這份複本。不要直接拿 `tests/fixtures/timelog` 當修復目標，否則下一次展示可能已沒有原始 bug。
 
@@ -107,9 +110,9 @@ less /替換成實際的路徑/events.jsonl
 
 ```bash
 demo_dir=$(mktemp -d /private/tmp/fixlab-billing-demo.XXXXXX)
-cp -R /Users/yklin/Documents/AI_projects/fixlab/bench/problems/billing/project/. "$demo_dir"
+cp -R "$FIXLAB_HOME/bench/problems/billing/project/." "$demo_dir"
 cd "$demo_dir"
-fixlab . -i
+fixlab
 ```
 
 輸入：
