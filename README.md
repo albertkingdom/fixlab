@@ -24,24 +24,11 @@ fixlab 只支援用 pytest 跑測試的 Python 專案；其他語言或測試工
 需要 Python 3.11 以上；電腦上沒有的話，先用 Homebrew（`brew install python`）或 python.org 的安裝程式裝一個（macOS 內建的 `/usr/bin/python3` 版本太舊）。用 uv 或 pipx 安裝成指令，它們會自動建立獨立的虛擬環境，不必自己建 venv（`OWNER` 換成實際的 GitHub 帳號）：
 
 ```
-uv tool install --no-managed-python git+https://github.com/OWNER/fixlab
+uv tool install git+https://github.com/OWNER/fixlab
 pipx install git+https://github.com/OWNER/fixlab
 ```
 
 裝好後若出現 `fixlab: command not found`，代表指令所在的 `~/.local/bin` 不在 PATH 上：執行 `uv tool update-shell` 或 `pipx ensurepath`，再開一個新的終端機。
-
-macOS 上 fixlab 環境的基底 Python 不能在家目錄底下：沙箱會擋住家目錄底下的讀取，`run_tests` 一啟動就失敗（見〈已知限制〉）。uv 或 pipx 建的工具環境本身放在家目錄底下沒關係，沙箱會放行它，有限制的只有基底 Python。
-
-- uv 預設會優先用它自己下載、放在家目錄底下的 Python，所以要加 `--no-managed-python`（舊版 uv 沒有這個參數時，改用 `--python-preference only-system`）。
-- pipx 預設用它自己所在的 Python；用 Homebrew 裝的 pipx 就是 Homebrew 的 Python。
-- pyenv、asdf、conda 等管理的 Python 都在家目錄底下，排在 PATH 前面時也會被選到。這時用 `--python` 指定 Homebrew 或 python.org 的 Python（`uv tool install` 與 `pipx install` 都有這個參數）。
-
-安裝前可以先確認會用到哪個 Python，印出的路徑不能在家目錄底下：
-
-```
-uv python find --system --no-managed-python '>=3.11'    # uv 會用的
-pipx environment --value PIPX_DEFAULT_PYTHON            # pipx 會用的
-```
 
 沙箱只在 macOS 啟用；其他系統上測試在沒有沙箱的情況下執行，啟動時會印出 `sandbox: OFF`。
 
@@ -55,16 +42,21 @@ export FIXLAB_MODEL=qwen/qwen3.5-9b
 
 之後在要修的專案目錄執行 `fixlab` 就會進入互動模式（在家目錄本身或更上層會被拒絕，要先 `cd` 到專案目錄）。`fixlab` 會直接修改目前目錄，請在已經 commit 或有備份的專案上用。
 
-`run_tests` 用 fixlab 自己環境裡的 Python 跑測試，被修專案需要的第三方套件要加進同一個環境：
-
-```
-uv tool install --no-managed-python --with requests --with numpy git+https://github.com/OWNER/fixlab
-pipx inject fixlab requests numpy
-```
-
-uv 每次重新安裝時，`--with` 會取代上一次加的套件，不是累加，所以要把所有需要的套件一起列出；`pipx inject` 則是在既有環境上再加。
-
 benchmark（`python -m fixlab.bench`）的題目沒有包進套件，要跑 benchmark 請 clone 專案，照下面〈快速開始（開發用）〉安裝。
+
+### 用專案自己的 Python 跑測試
+
+`run_tests` 預設用執行 fixlab 的那個 Python。被修的專案需要第三方套件時，用 `--python` 指定專案自己的環境，套件裝在專案的環境裡就好，不用加進 fixlab 的環境：
+
+```
+fixlab --python .venv/bin/python
+```
+
+指定的 Python 要 3.11 以上（`run_tests` 用 `-P` 啟動 pytest，舊版本沒有這個參數），而且裝了 pytest；不符合時一開始就以結束碼 2 結束並說明原因，不會呼叫模型。用的是哪個直譯器、從哪裡來，記在事件檔 `run_start` 的 `test_python`。
+
+**指定 `--python` 等於信任那個環境。** 它的 Python 與套件會在沙箱裡執行；如果它的基底 Python 裝在家目錄底下（uv、pyenv 下載的 Python），沙箱會放行讀取那個安裝目錄（只有那個目錄，家目錄的其他地方仍然讀不到）。fixlab 會檢查這個基底目錄：`pyvenv.cfg` 的 `home` 必須是絕對路徑、目錄裡要有 Python 的標準函式庫、不能是家目錄本身或上層、不能和專案目錄重疊；環境也不能透過專案裡的符號連結指到別處（測試可能把連結換掉）。不符合就拒絕執行。這些檢查擋得住打錯路徑與明顯的誤設定，擋不住一個刻意做壞的 Python 環境，所以只指定你自己建立或信任的環境。
+
+**為什麼不自動偵測專案裡的 `.venv`：** 被修的專案可能是剛 clone 下來、還沒讀過的程式碼。自動使用它的 `.venv`，等於讓專案裡的檔案決定 fixlab 執行哪個程式、沙箱放行哪個目錄：`.venv/pyvenv.cfg` 裡的一行設定就可能讓沙箱放行 `~/.ssh`，而 `.venv/bin/python` 會在你確認任何事情之前就被執行。所以 fixlab 只在你用 `--python` 明確指定時才使用專案的環境。
 
 ## 快速開始（開發用）
 
@@ -93,7 +85,7 @@ cp -R tests/fixtures/timelog /某個暫存目錄/timelog-try
 .venv/bin/fixlab /某個暫存目錄/timelog-try
 ```
 
-選項：`-i`（互動模式，見下）、`--max-steps`（預設 20）、`--max-tokens`（預設 8192）、`--task`（換掉預設的任務文字，只用於一次性模式）、`--log-dir`、`--meta`（見〈事件檔〉）、`--hide-tool NAME`（不讓模型看到某個工具，例如 `run_tests`；可重複）、`--temperature`、`--extra-body JSON`（原樣放進請求，例如固定 OpenRouter 的供應商）、`--system-prompt-extra TEXT`（把這段文字接在預設 system prompt 後面，中間空一行；空字串會被拒絕；文字以 `-` 開頭時要寫成 `--system-prompt-extra=TEXT`）。後四個用在實驗，並記進事件檔的 `run_start`。
+選項：`-i`（互動模式，見下）、`--python PATH`（跑測試用的直譯器，見〈用專案自己的 Python 跑測試〉）、`--max-steps`（預設 20）、`--max-tokens`（預設 8192）、`--task`（換掉預設的任務文字，只用於一次性模式）、`--log-dir`、`--meta`（見〈事件檔〉）、`--hide-tool NAME`（不讓模型看到某個工具，例如 `run_tests`；可重複）、`--temperature`、`--extra-body JSON`（原樣放進請求，例如固定 OpenRouter 的供應商）、`--system-prompt-extra TEXT`（把這段文字接在預設 system prompt 後面，中間空一行；空字串會被拒絕；文字以 `-` 開頭時要寫成 `--system-prompt-extra=TEXT`）。後四個用在實驗，並記進事件檔的 `run_start`。
 
 ### 一次性模式會印什麼
 
@@ -216,7 +208,7 @@ Fixed parse_duration: it only took the first unit.
 
 - 所有路徑必須落在工作目錄內：`../`、絕對路徑、`~`、符號連結逃逸都被擋，並在回傳裡設 `blocked` 旗標。
 - **測試檔不可寫**：`edit_file`、`write_file` 碰到測試檔會被拒絕；`run_tests` 跑的程式在沙箱裡也寫不了測試檔（防止模型在原始碼裡塞「執行時改寫測試」的程式來假通過）。這是修 bug 模式的政策，不是通用限制，由入口決定。
-- **`run_tests` 在沙箱裡跑**（macOS）：不能連網、不能讀家目錄與 fixlab 自己的專案目錄、只能寫工作目錄。
+- **`run_tests` 在沙箱裡跑**（macOS）：不能連網、不能讀家目錄與 fixlab 自己的專案目錄（跑測試用的 Python 環境與它的基底 Python 安裝目錄例外，放行讀取）、只能寫工作目錄，而且不能寫跑測試用的 Python 環境（它在工作目錄裡時，改掉裡面的 pytest 就能偽造通過；工具層同樣擋下）。
 - **子行程環境變數白名單**：只傳 `PATH`、`LANG`、`LC_ALL`、`TMPDIR` 與 `PYTHONDONTWRITEBYTECODE=1`，API 金鑰不會被被測的程式看到。另外固定 `TZ=UTC`、`PYTHONHASHSEED=0`，並設 `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`（不自動載入 pytest 外掛），測試結果才不依賴機器。
 - **判定測試通過不只看結束碼**：用 `python -P` 啟動以免根目錄的 `pytest.py` 取代真的 pytest，並要求輸出最後一行有 `N passed`。
 - **互動模式會先問**：改檔、寫檔、跑測試之前問使用者；一次性模式沒有人可以問，改成事後的差異與重跑測試。
@@ -226,9 +218,9 @@ Fixed parse_duration: it only took the first unit.
 
 - **沙箱只有 macOS 有效**，而且 `sandbox-exec` 在 Apple 的說明裡標為 **DEPRECATED**（已棄用）。其他平台只剩工具層的限制加結束時的 diff；沒有沙箱時入口會印 `sandbox: OFF (原因)`。
 - **硬連結**：事先在沙箱外建好、指向工作目錄之外的硬連結，沙箱只檢查路徑所以擋不到。
-- **被測專案的第三方依賴**：`run_tests` 用 fixlab 自己的 Python 直譯器跑，被測專案需要的套件要裝在同一個環境（用 uv 或 pipx 安裝時見〈安裝（一般使用者）〉的 `--with` 與 `pipx inject`）。範例專案只用標準函式庫。
+- **不自動使用專案裡的環境**：要用專案自己的套件跑測試，必須以 `--python` 指定（原因見〈用專案自己的 Python 跑測試〉）；指定的 Python 要 3.11 以上，而且裝了 pytest。
+- **`--python` 的檢查擋不住刻意做壞的環境**：基底目錄的檢查只確認它像一個 Python 安裝、不碰到受保護的目錄；指定的環境本身會在沙箱裡執行，只指定你信任的環境。
 - **沙箱擋不到的偽造**：被測的程式在 pytest 行程內部竄改 pytest 本身，或自己印一行假的 `N passed` 摘要再以結束碼 0 離開（測試與原始碼在同一個行程；後者我用兩行 `atexit` 重現過，bug 還在，`tests_passed` 卻是 `True`）。階段 3 的評分器降低了這個風險（乾淨環境重跑、只讀最後一行摘要、通過數要等於題目記的數量），但**沒有根治**：被測的程式與 pytest 仍在同一個行程。見第 10、16 篇。
-- **基底 Python 在家目錄底下時，沙箱會讓 `run_tests` 失敗**：用 uv、pyenv 管理的 Python 建的環境，標準函式庫在家目錄底下，被沙箱擋住，`run_tests` 一啟動就失敗（我用 uv 的 Python 重現，錯誤是 `dyld: Library not loaded`）。關掉沙箱則正常。Homebrew 的 Python 不受影響。目前沒有設定可以放行；用 uv 安裝時加 `--no-managed-python`、或以 `--python` 指定 Homebrew 的 Python 可避開。
 - **`run_tests` 不自動載入 pytest 外掛，時區固定 UTC、雜湊順序固定**：這是階段 3 為了讓評分不依賴機器加的，一般使用也一樣。測試要靠自動載入的外掛（例如 pytest-asyncio、pytest-mock、pytest-django）的專案，外掛不會載入，測試可能失敗；`fixlab` 針對的是小型、只用標準函式庫的專案。要改成可選需要新增旗標，目前沒做。
 - **沒有重複呼叫偵測**：模型一直重讀同一個檔案（成功的呼叫）不會觸發 `stuck`。
 - **不會自己讀 `.env`、金鑰沒有存進系統鑰匙圈**：用 uv 或 pipx 安裝後可以在任何目錄直接打 `fixlab`（見〈安裝（一般使用者）〉），但模型端點與金鑰要用環境變數提供。之後想做：金鑰存系統鑰匙圈。
