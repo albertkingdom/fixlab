@@ -93,19 +93,35 @@ def test_agent_cannot_edit_test_files(project, capsys):
     assert take_snapshot(project) == before  # 測試檔沒被動到
 
 
+# Scenario: Explicit task without a path
 @pytest.mark.parametrize("task", ["explain parser", ""])
-def test_task_without_path_runs_once_in_current_directory(project, home, monkeypatch, capsys, task):
+def test_task_without_path_is_refused(project, home, monkeypatch, capsys, task):
+    # 一次性模式寫檔不會詢問，所以要明確指定目標目錄，不能默默用目前目錄。
     monkeypatch.chdir(project)
+    before = take_snapshot(project)
     client = FakeClient([("Done.", None)])
 
-    assert main(["--model", "m", "--task", task], client=client) == 1
+    assert main(["--model", "m", "--task", task], client=client) == 2
 
     out, err = capsys.readouterr()
-    assert "fixlab> " not in out and "RESULT: tests FAILED" in out
-    assert client.sent[0][1] == {"role": "user", "content": task}
-    start = event_lines(home)[0]
-    assert start["mode"] == "once"
-    assert start["path"] == str(project.resolve())
+    assert "--task needs PATH" in err and "fixlab> " not in out
+    assert client.sent == []
+    assert take_snapshot(project) == before
+    assert not (home / ".fixlab").exists()
+
+
+# Scenario: Started from the home directory
+def test_implicit_target_containing_the_log_dir_is_explained(home, monkeypatch, capsys):
+    # 在家目錄直接打 fixlab：預設事件檔目錄在目標裡，提示要到專案目錄執行，而不是叫人改 --log-dir。
+    monkeypatch.chdir(home)
+    client = FakeClient([])
+
+    assert main(["--model", "m"], client=client) == 2
+
+    err = capsys.readouterr().err
+    assert "run fixlab from a project directory or pass PATH" in err
+    assert "use --log-dir" not in err
+    assert client.sent == []
 
 
 def test_default_task_can_be_overridden(project):

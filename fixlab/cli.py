@@ -42,7 +42,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS)
     parser.add_argument("-i", "--interactive", action="store_true",
                         help="read tasks from the keyboard and keep the conversation between them")
-    parser.add_argument("--task", help="replace the default task text; selects one-shot mode unless -i is set")
+    parser.add_argument("--task", help="replace the default task text (one-shot with PATH; ignored with -i)")
     parser.add_argument("--log-dir", help="where event logs go (default: ~/.fixlab/runs)")
     parser.add_argument("--meta", action="append", default=[], metavar="KEY=VALUE",
                         help="record an experiment condition in the event log, e.g. quantization=Q4_K_M (repeatable)")
@@ -62,8 +62,12 @@ def main(argv=None, client=None) -> int:
     """argv 沒傳就讀終端機的參數；client 沒傳才建真的，傳了就直接用（只給測試注入假的）。"""
     args = build_parser().parse_args(argv)
     # 保留「明確給 PATH 就一次性」的既有用法；省略參數才採用互動預設。
-    args.interactive = args.interactive or (args.path is None and args.task is None)
-    args.path = args.path if args.path is not None else "."
+    path_given = args.path is not None
+    if not path_given and args.task is not None and not args.interactive:
+        # 一次性執行寫檔不會詢問，目標目錄必須明確指定，不能默默用目前目錄。
+        return fail("--task needs PATH in one-shot mode: run fixlab PATH --task TEXT, or add -i")
+    args.interactive = args.interactive or not path_given
+    args.path = args.path if path_given else "."
     args.task = args.task if args.task is not None else DEFAULT_TASK
 
     if not Path(args.path).is_dir():
@@ -87,6 +91,10 @@ def main(argv=None, client=None) -> int:
     log_dir = Path(args.log_dir).expanduser() if args.log_dir else default_log_dir()
     if is_inside(log_dir, root):
         # 事件檔放在被修的目錄裡，快照 diff 會把它當成新檔，模型與被測的程式也碰得到自己的紀錄
+        if not path_given and not args.log_dir:
+            # 沒給 PATH 時目標是目前目錄；包住預設事件檔目錄通常代表人在家目錄，該換目錄而不是改 --log-dir
+            return fail(f"the current directory {root} contains the log directory {log_dir}; "
+                        "run fixlab from a project directory or pass PATH")
         return fail(f"the log directory {log_dir} is inside the target {root}; use --log-dir to put it elsewhere")
     # 修 bug：測試檔是評分標準，模型不能改，被執行的程式也不能改。
     # 互動模式使用者在場，寫檔與跑測試前問一聲；一次性執行沒有人可以問，沿用預設（全部放行）。
