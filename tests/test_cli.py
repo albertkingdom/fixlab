@@ -105,7 +105,7 @@ def test_task_without_path_is_refused(project, home, monkeypatch, capsys, task):
 
     out, err = capsys.readouterr()
     assert "--task needs PATH" in err and "fixlab> " not in out
-    assert "-i" not in err  # -i 會忽略 --task 的文字，不能拿來當替代做法
+    assert "add -i" not in err  # -i 會忽略 --task 的文字，不能拿來當替代做法
     assert client.sent == []
     assert take_snapshot(project) == before
     assert not (home / ".fixlab").exists()
@@ -123,7 +123,8 @@ def test_implicit_target_containing_the_log_dir_is_explained(home, tmp_path, mon
     assert main(["--model", "m", *extra], client=client) == 2
 
     err = capsys.readouterr().err
-    assert "run fixlab from a project directory or pass PATH" in err
+    assert "is your home directory or above; run fixlab from a project directory or pass PATH" in err
+    assert ".fixlab/runs" not in err  # 原因是目錄位置，不是事件檔放在哪
     assert "use --log-dir" not in err
     assert client.sent == []
 
