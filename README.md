@@ -112,7 +112,7 @@ Fixed parse_duration: it only took the first unit.
 
 每次執行（一次性或一個互動 session）都會寫一個 JSON Lines 檔：預設在 `~/.fixlab/runs/<UTC 時間>-<模型>/events.jsonl`，開始時 stderr 會印 `log: <路徑>`。階段 3 的統計腳本要讀的就是它。
 
-- `--log-dir DIR` 換位置；不能在被修的目錄裡面（會被拒絕，退出碼 2），不然快照 diff 會看到它，模型與被測的程式也碰得到自己的紀錄。
+- `--log-dir DIR` 換位置；不能在被修的目錄裡面（會被拒絕，退出碼 2），不然快照 diff 會看到它，模型與被測的程式也碰得到自己的紀錄。省略 PATH 時若目前目錄是家目錄或更上層，不論有沒有 `--log-dir` 都會被拒絕，請到專案目錄執行或指定 PATH。
 - `--meta KEY=VALUE`（可重複）記下 API 不會告訴我們的實驗條件，例如 `--meta quantization=Q4_K_M --meta context_length=32768`。
 - 一行一個事件，只有四種：
 

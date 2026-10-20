@@ -16,7 +16,7 @@ path 改為可省略，使用 None 區分是否明確提供；--task 同樣以 N
 ## Implementation Contract
 
 - fixlab、fixlab --model m：目前目錄互動，出現 fixlab>，等待任務，不自動呼叫模型或跑測試。
-- fixlab -i、fixlab PATH -i：互動；fixlab PATH：維持一次性；fixlab --task TEXT（無 PATH、無 -i）：拒絕並提示改用 fixlab PATH --task TEXT 或加 -i。-i 與 --task 同時提供時維持原行為，使用者輸入任務而非自動執行 --task。
+- fixlab -i、fixlab PATH -i：互動；fixlab PATH：維持一次性；fixlab --task TEXT（無 PATH、無 -i）：拒絕並提示改用 fixlab PATH --task TEXT。-i 與 --task 同時提供時維持原行為，使用者輸入任務而非自動執行 --task。
 - 缺模型、缺金鑰、無效 PATH 與事件檔位於目標內的檢查維持結束碼 2；省略 PATH 且目前目錄包住預設事件檔目錄（通常是在家目錄執行）時，不論是否指定 --log-dir 都拒絕，並提示到專案目錄執行或指定 PATH；EOF 與 /exit 正常結束。
 - API 影響：僅 CLI path 與 --task 的省略規則；無 HTTP API 或函式簽名變更。
 - 資料影響：無 schema、migration、seed 變更；run_start 的 mode 與 path 記錄實際執行模式與目錄。
@@ -30,6 +30,7 @@ path 改為可省略，使用 None 區分是否明確提供；--task 同樣以 N
 code review 延後的意見（不改程式）：
 - 在任何目錄打 fixlab 都以該目錄為工作區，讀檔工具不需確認 → 這是本變更的目的；寫檔與跑測試仍會詢問。省略 PATH 且目前目錄包住預設事件檔目錄（家目錄或更上層）時一律拒絕；明確給 PATH（例如 fixlab ~ -i）是使用者自己的選擇，只有原本「事件檔目錄在目標內」的檢查，另指定 --log-dir 即可執行。
 - -i 與 --task 同時提供時 --task 文字被忽略且不提示 → 沿用變更前行為，README 已說明 -i 優先、任務由提示字元輸入。
+- 家目錄的判斷借用「目前目錄是否包住預設事件檔目錄」，而不是直接比對家目錄；預設事件檔目錄日後若搬離家目錄，這個保護需要一併改寫。
 - --task "" 會送出空任務 → 沿用變更前行為，不在本變更處理。
 - 一次性模式的快照整個讀進記憶體、讀不到的檔案會中斷 → 既有 KNOWN-ISSUE（cli.py take_snapshot）；一次性模式現在必須明確給 PATH，不會因省略 PATH 而擴大範圍。
 
