@@ -3,7 +3,7 @@
 一次性（fixlab PATH）：檢查參數與金鑰 → 對 PATH 拍快照 → 跑 agent → 自己再跑一次測試 → 印結果與快照 diff。
 最後那次測試不聽模型怎麼說，結果決定結束碼：0 是測試通過，1 是沒通過，2 是輸入有誤。
 一次性執行沒有人在旁邊授權，所以改成事後審查，diff 涵蓋測試檔，竄改看得到。
-互動（fixlab PATH -i）：一次讀一行當任務，同一個 session 內保留對話；使用者在場，不自動再跑測試。
+互動（fixlab 或 fixlab PATH -i）：一次讀一行當任務，同一個 session 內保留對話；使用者在場，不自動再跑測試。
 agent 直接修改 PATH，不複製、不寫回，請對有備份或已 commit 的目錄使用。兩種模式的過程都寫進事件檔。
 """
 
@@ -34,14 +34,15 @@ DEFAULT_MAX_TOKENS = 8192
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="fixlab", description="Let the agent fix the failing tests in PATH. PATH is edited in place.")
-    parser.add_argument("path")
+        prog="fixlab", description="Let the agent fix the failing tests in PATH. PATH is edited in place. "
+                                   "With no PATH or --task, start interactive mode in the current directory.")
+    parser.add_argument("path", nargs="?", help="project directory (default: current directory)")
     parser.add_argument("--model", help="model name (default: $FIXLAB_MODEL)")
     parser.add_argument("--max-steps", type=int, default=DEFAULT_MAX_STEPS)
     parser.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS)
     parser.add_argument("-i", "--interactive", action="store_true",
                         help="read tasks from the keyboard and keep the conversation between them")
-    parser.add_argument("--task", default=DEFAULT_TASK, help="replace the default task text (one-shot only)")
+    parser.add_argument("--task", help="replace the default task text (one-shot with PATH; ignored with -i)")
     parser.add_argument("--log-dir", help="where event logs go (default: ~/.fixlab/runs)")
     parser.add_argument("--meta", action="append", default=[], metavar="KEY=VALUE",
                         help="record an experiment condition in the event log, e.g. quantization=Q4_K_M (repeatable)")
@@ -60,6 +61,14 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv=None, client=None) -> int:
     """argv 沒傳就讀終端機的參數；client 沒傳才建真的，傳了就直接用（只給測試注入假的）。"""
     args = build_parser().parse_args(argv)
+    # 保留「明確給 PATH 就一次性」的既有用法；省略參數才採用互動預設。
+    path_given = args.path is not None
+    if not path_given and args.task is not None and not args.interactive:
+        # 一次性執行寫檔不會詢問，目標目錄必須明確指定，不能默默用目前目錄。
+        return fail("--task needs PATH in one-shot mode: run fixlab PATH --task TEXT")
+    args.interactive = args.interactive or not path_given
+    args.path = args.path if path_given else "."
+    args.task = args.task if args.task is not None else DEFAULT_TASK
 
     if not Path(args.path).is_dir():
         return fail(f"not a directory: {args.path}")
@@ -79,6 +88,11 @@ def main(argv=None, client=None) -> int:
         args.system_prompt_extra = check_system_prompt_extra(args.system_prompt_extra)
     except ValueError as error:
         return fail(str(error))
+    if not path_given and is_inside(Path.home(), root):
+        # 沒給 PATH 時目標是目前目錄；家目錄或它的上層不該默默變成工作區，該換到專案目錄。
+        # 不看 --log-dir：把事件檔移走不會讓「整個家目錄當工作區」變得合理。
+        return fail(f"the current directory {root} is your home directory or above; "
+                    "run fixlab from a project directory or pass PATH")
     log_dir = Path(args.log_dir).expanduser() if args.log_dir else default_log_dir()
     if is_inside(log_dir, root):
         # 事件檔放在被修的目錄裡，快照 diff 會把它當成新檔，模型與被測的程式也碰得到自己的紀錄
