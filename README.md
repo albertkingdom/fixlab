@@ -35,6 +35,10 @@ export OPENAI_API_KEY=...                              # Ollama 隨便填一個�
 export FIXLAB_MODEL=qwen/qwen3.5-9b
 ```
 
+本機已設定從任何目錄直接執行 `fixlab`，以目前目錄進入互動模式，並由啟動器自動載入本專案的 `.env`。設定位置、還原與重新安裝注意事項見 [本機 CLI 啟動設定](docs/local-cli-setup.md)。這是本機設定，套件本身目前不會自動載入 `.env`。
+
+想實際展示互動 CLI，可照 [Demo 操作手冊](docs/cli-demo.md) 操作：修復工時報表、接續補說明、權限控制與查看事件紀錄。
+
 然後對**範例專案的複本**執行（`fixlab` 會直接修改你指定的目錄）：
 
 ```
@@ -54,7 +58,9 @@ cp -R tests/fixtures/timelog /某個暫存目錄/timelog-try
 
 ### 互動模式
 
-`fixlab PATH -i` 一次讀一行當任務，同一個 session 內**保留對話**，所以修完 bug 之後可以接著說「幫那個函式加上說明文字」。下面是畫面的格式（用寫好劇本的假模型跑出來的，所以最後一行的 token 與耗時不代表真實的用量）：
+在要處理的專案目錄直接執行 `fixlab`，就會進入互動模式，不需要加 `.` 或 `-i`。也可用 `fixlab PATH -i` 指定其他目錄。一次讀一行當任務，同一個 session 內**保留對話**，所以修完 bug 之後可以接著說「幫那個函式加上說明文字」。
+
+`fixlab PATH` 仍為一次性模式；`fixlab --task '任務內容'` 則在目前目錄執行一次性任務。`-i` 明確指定互動模式，優先於 `--task`，任務由提示字元輸入。下面是畫面的格式（用寫好劇本的假模型跑出來的，所以最後一行的 token 與耗時不代表真實的用量）：
 
 ```
 fixlab> fix the failing test
