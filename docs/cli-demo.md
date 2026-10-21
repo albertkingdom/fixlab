@@ -6,7 +6,7 @@
 
 ## 1. 準備與啟動
 
-先照 README 的〈安裝（一般使用者）〉安裝 `fixlab` 並設定模型的環境變數。範例專案在 fixlab 的原始碼裡，所以另外需要一份 clone，下面的 `FIXLAB_HOME` 指向它；只做開發用安裝的話，把下面的 `fixlab` 換成 `"$FIXLAB_HOME/.venv/bin/fixlab"`。若使用 Ollama，先確認服務已啟動且模型已下載；若使用遠端端點，確認可連線。
+先照 [README 的安裝說明](../README.md#安裝一般使用者)安裝 `fixlab` 並設定模型的環境變數。範例專案在 fixlab 的原始碼裡，所以另外需要一份 clone，下面的 `FIXLAB_HOME` 指向它；只做開發用安裝的話，把下面的 `fixlab` 換成 `"$FIXLAB_HOME/.venv/bin/fixlab"`。若使用 Ollama，先確認服務已啟動且模型已下載；若使用遠端端點，確認可連線。
 
 在終端機執行以下整段，每次都會建立新的範例複本。`FIXLAB_HOME` 換成 fixlab clone 所在的路徑：
 
@@ -129,7 +129,7 @@ fixlab
 
 - `/reset` 只清空對話，不會還原檔案；要重做原始 bug，先 `/exit`，再重跑第 1 節建立全新複本。
 - 出現 `no model`：確認 `FIXLAB_MODEL` 等環境變數已設定，並用 `type -a fixlab` 檢查實際執行的是哪個 `fixlab`。
-- 測試因 Python 或沙箱問題無法啟動：保留錯誤訊息，對照 README 的已知限制；這不代表已修好 bug。
+- 測試因 Python 或沙箱問題無法啟動：保留錯誤訊息，對照[安全與限制](safety.md)及[Python 環境說明](usage.md#用專案自己的-python-跑測試)；這不代表已修好 bug。
 - 任務撞到步數上限或模型沒有修好：照實保留結果，檢查事件檔；不要把預期流程當成已發生的結果。
 
 第一次試跑以第 1、2、3、5 節為主，權限拒絕與第二題可另外練習。

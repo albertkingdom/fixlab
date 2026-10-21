@@ -406,7 +406,7 @@ RESULT: tests passed
 
 ## 補充：空回覆的回饋措辭已改
 
-上面例 3 的輸出是改過之後的版本。原本的回饋是 `Your tool call was invalid: empty response ... Please call a tool with valid arguments.`。後來第一次完整的真模型修復（見 README 的實跑紀錄）裡，兩次空回覆都出現在模型已經驗證完畢、只差說一句結論的時候，這句回饋卻叫它「呼叫工具」，措辭有誤導，模型要再多回一次才給出結論。現在改成同時涵蓋兩種情況：`Your reply was empty. If you are finished, reply with a short final message; otherwise call a tool.`
+上面例 3 的輸出是改過之後的版本。原本的回饋是 `Your tool call was invalid: empty response ... Please call a tool with valid arguments.`。後來第一次完整的真模型修復（見[階段 1 實跑紀錄](../first-repair.md)）裡，兩次空回覆都出現在模型已經驗證完畢、只差說一句結論的時候，這句回饋卻叫它「呼叫工具」，措辭有誤導，模型要再多回一次才給出結論。現在改成同時涵蓋兩種情況：`Your reply was empty. If you are finished, reply with a short final message; otherwise call a tool.`
 
 ## 下一篇
 

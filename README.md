@@ -1,29 +1,16 @@
 # fixlab
 
-教學導向的最小 CLI coding agent：給它一個有 bug 的多檔小專案，它自己找、改、驗證。
+教學導向的最小 CLI coding agent：給它一個有 bug 的多檔 Python 小專案，它自己找出原因、修改原始碼、用 pytest 驗證。
 
-預設 system prompt 明確要求模型找出失敗行為的原因，並修復原始碼，工作環境設定為使用 pytest、測試檔唯讀的多檔 Python 專案。`--task` 或互動模式可以提供其他任務文字，但不會替換這個 system prompt；目前也沒有檢查或拒絕非修 bug 請求的機制。因此，修 bug 是目前的設計與評測範圍，其他任務的表現未經這套 benchmark 驗證。
+模型自行決定下一步與何時完成；程式提供六個內建工具、步數與連續失敗上限、檔案保護及 telemetry。這個專案也附有 20 篇教學文章與自建的多檔 bug benchmark，用來觀察修好率、假通過、既有功能退化與成本。
 
-背景與範圍見 [AGENTS.md](AGENTS.md)。這個專案同時是一套教學文章：每個工具、每道保險各有一篇，從最天真的版本寫起，附真實的輸出（見最後的〈教學文章〉）。
-
-## 目前做到哪裡
-
-| 階段 | 內容 | 狀態 | tag |
-|---|---|---|---|
-| 1 骨架與規格 | agent 迴圈、六個工具、原生 tool call 解析、macOS 沙箱、`fixlab PATH` 最小入口 | 完成 | `stage-1` |
-| 2 CLI 與 telemetry | 事件檔（JSONL）、互動模式、權限提示 | 完成 | `stage-2` |
-| 3 Benchmark 與實驗 | 8 題多檔 bug、隱藏測試、評分器、題目自我檢查、有／無 `run_tests` 對照、兩個模型 | 完成 | `stage-3` |
-| 4 選做 | MCP connector（呼叫外部 MCP server 的工具，見〈呼叫外部 MCP server 的工具〉）；多 agent 對照未做 | 部分完成 | |
-
-可以用 `git checkout stage-1`、`stage-2` 或 `stage-3` 看到各階段完成時的程式。
-
-階段 3 有了 8 題 benchmark 與第一次完整實驗（160 次，花約 $0.41）：在這組題目上觀察到，Qwen3.5-9B 能自己跑測試時修好 82%，不能時 25%（而且沒有一次宣告完成）；Claude Haiku 5.5 兩個條件都 100%，題目對它太容易。**這些只是這 8 題、2 個模型的觀察，不是這個 agent 的一般成績**；結果、設定與所有限制見 [docs/benchmark-results.md](docs/benchmark-results.md)。下面「實跑紀錄」是階段 1 時 1 題、1 個模型的早期觀察。
+**定位是修 bug。** 預設 system prompt 要求修復失敗行為，測試檔唯讀。`--task` 與互動輸入不會替換這個 system prompt；目前沒有拒絕非修 bug 請求的機制，其他任務也未經這套 benchmark 驗證。背景與範圍見 [AGENTS.md](AGENTS.md)。
 
 ## 安裝（一般使用者）
 
 fixlab 只支援用 pytest 跑測試的 Python 專案；其他語言或測試工具的專案，`run_tests` 給不出有用的結果。
 
-需要 Python 3.11 以上；電腦上沒有的話，先用 Homebrew（`brew install python`）或 python.org 的安裝程式裝一個（macOS 內建的 `/usr/bin/python3` 版本太舊）。用 uv 或 pipx 安裝成指令，它們會自動建立獨立的虛擬環境，不必自己建 venv（`OWNER` 換成實際的 GitHub 帳號）：
+需要 Python 3.11 以上；電腦上沒有的話，先用 Homebrew（`brew install python`）或 python.org 的安裝程式裝一個（macOS 內建的 `/usr/bin/python3` 版本太舊）。用 uv 或 pipx 擇一安裝成指令，它們會自動建立獨立的虛擬環境，不必自己建 venv（`OWNER` 換成實際的 GitHub 帳號）：
 
 ```
 uv tool install git+https://github.com/OWNER/fixlab
@@ -44,450 +31,69 @@ export FIXLAB_MODEL=qwen/qwen3.5-9b
 
 之後在要修的專案目錄執行 `fixlab` 就會進入互動模式（在家目錄本身或更上層會被拒絕，要先 `cd` 到專案目錄）。`fixlab` 會直接修改目前目錄，請在已經 commit 或有備份的專案上用。
 
-benchmark（`python -m fixlab.bench`）的題目沒有包進套件，要跑 benchmark 請 clone 專案，照下面〈快速開始（開發用）〉安裝。
+開發用安裝、範例專案與測試步驟見[開發指南](docs/development.md)。benchmark 題目沒有包進套件，需 clone 原始碼後執行，見[操作說明](docs/benchmark.md)。
 
-### 用專案自己的 Python 跑測試
+## 快速使用
 
-`run_tests` 預設用執行 fixlab 的那個 Python。被修的專案需要第三方套件時，用 `--python` 指定專案自己的環境，套件裝在專案的環境裡就好，不用加進 fixlab 的環境：
-
-```
-fixlab --python .venv/bin/python
-```
-
-`--python` 的相對路徑以啟動 fixlab 時的目前目錄為準，不會以 `PATH` 指定的目標專案為準。從別的目錄操作時，可用絕對路徑，例如 `fixlab /path/to/project --python /path/to/project/.venv/bin/python`。
-
-指定的 Python 要 3.11 以上（`run_tests` 用 `-P` 啟動 pytest，舊版本沒有這個參數），而且裝了 pytest；不符合時一開始就以結束碼 2 結束並說明原因，不會呼叫模型。用的是哪個直譯器、從哪裡來，記在事件檔 `run_start` 的 `test_python`。
-
-**指定 `--python` 等於信任那個環境。** 它的 Python 與套件會在沙箱裡執行；如果它的基底 Python 裝在家目錄底下（uv、pyenv 下載的 Python），沙箱會放行讀取那個安裝目錄（只有那個目錄，家目錄的其他地方仍然讀不到）。fixlab 會檢查這個基底目錄：`pyvenv.cfg` 的 `home` 必須是絕對路徑、目錄裡要有 Python 的標準函式庫、不能是家目錄本身或上層、不能和專案目錄重疊；環境也不能透過專案裡的符號連結指到別處（測試可能把連結換掉）。不符合就拒絕執行。這些檢查擋得住打錯路徑與明顯的誤設定，擋不住一個刻意做壞的 Python 環境，所以只指定你自己建立或信任的環境。
-
-**為什麼不自動偵測專案裡的 `.venv`：** 被修的專案可能是剛 clone 下來、還沒讀過的程式碼。自動使用它的 `.venv`，等於讓專案裡的檔案決定 fixlab 執行哪個程式、沙箱放行哪個目錄：`.venv/pyvenv.cfg` 裡的一行設定就可能讓沙箱放行 `~/.ssh`，而 `.venv/bin/python` 會在你確認任何事情之前就被執行。所以 fixlab 只在你用 `--python` 明確指定時才使用專案的環境。
-
-### 呼叫外部 MCP server 的工具
-
-互動模式下，agent 可以呼叫本機 [MCP](https://modelcontextprotocol.io) server 提供的工具，例如查 issue 或查文件。**目前只支援 stdio 傳輸**：由 fixlab 啟動本機 server，透過標準輸入／輸出通訊；不支援以 URL 連線的遠端 HTTP server（包含 Streamable HTTP 與 SSE）。需要將官方 SDK 裝進執行 fixlab 的同一個環境；依原本的安裝方式選一種（`OWNER` 同上）：
-
-```sh
-# 原本用 uv tool 安裝：重新安裝並加入 mcp extra
-uv tool install --force 'fixlab[mcp] @ git+https://github.com/OWNER/fixlab'
-
-# 原本用 pipx 安裝：重新安裝並加入 mcp extra
-pipx install --force 'fixlab[mcp] @ git+https://github.com/OWNER/fixlab'
-
-# 開發用安裝：在 fixlab 原始碼根目錄執行
-.venv/bin/python -m pip install -e '.[mcp]'
-```
-
-裝好後，在要修的專案目錄啟動（設定檔內容見下）：
-
-```sh
-fixlab --mcp-config servers.json
-```
-
-設定檔沿用常見的 `mcpServers` 格式，只支援以 `command` 啟動的本機（stdio）server：
-
-```json
-{
-  "mcpServers": {
-    "docs": {"command": "npx", "args": ["-y", "some-docs-mcp-server"], "env": {"DOCS_TOKEN": "..."}}
-  }
-}
-```
-
-- 工具在模型眼中的名稱是 `mcp__<server>__<tool>`，說明前面標著它來自哪個外部 server。
-- **只在互動模式能用，每次呼叫都先問你，MCP 工具沒有「一律放行」**（回答 `a` 視為拒絕，每次都要回答 `y`）；詢問前會印出 server、工具名稱與完整的參數（非 ASCII 字元會跳脫，避免畫面和實際送出的不一樣）。參數長到畫面看不完（超過 4000 字元）的呼叫直接拒絕。一次性模式給了 `--mcp-config` 會直接拒絕，因為沒有人可以確認。
-- 呼叫超過 60 秒會被取消；server 回報錯誤、結束或逾時都只讓那次呼叫失敗，不會讓 agent 停下來。
-- 結束時最多花 10 秒關閉所有 server；在 macOS 與 Linux 上，不肯結束的 server 最後會被強制結束（SIGKILL），Windows 上只有 SDK 本身的關閉流程。
-- 設定檔只從 `--mcp-config` 讀，fixlab 不會自動讀專案或家目錄裡的 MCP 設定：專案可能是還沒讀過的程式碼。
-- 事件檔的 `run_start` 記錄 `mcp`：server 名稱、登記與略過的工具、SDK 版本；不記錄指令、參數與環境變數（可能含金鑰）。
-
-**指定 MCP server 等於信任它。** server 是以你的權限執行的程式，**不受 fixlab 的沙箱限制**：它可以讀寫你帳號能碰到的任何檔案、連網，fixlab 的工作目錄限制與測試檔保護都管不到它自己做的事。fixlab 擋得住的只有「模型不經你同意就呼叫它的工具」。只設定你信任的 server。
-
-#### 可照做的 stdio 連線範例
-
-下面自己建立一個只回傳固定文字的 server，不需要 Node.js 或額外的服務帳號。先完成上面的 fixlab 安裝（含 `[mcp]`）與模型環境變數設定，再為 server 建立獨立環境：
-
-```sh
-mkdir -p "$HOME/fixlab-mcp-demo"
-cd "$HOME/fixlab-mcp-demo"
-python3 -m venv .venv
-.venv/bin/python -m pip install 'mcp>=2.3,<3'
-pwd
-```
-
-在這個目錄建立 `server.py`，內容如下（使用與 fixlab 相同版本範圍的官方 MCP Python SDK）：
-
-```python
-from mcp.server.mcpserver import MCPServer
-
-app = MCPServer("demo")
-
-
-@app.tool()
-def connection_status() -> str:
-    """Check the MCP connection before debugging a project."""
-    return "MCP connection OK."
-
-
-if __name__ == "__main__":
-    app.run()
-```
-
-同一目錄建立 `servers.json`。把下面兩處 `/absolute/path/fixlab-mcp-demo` 都換成剛才 `pwd` 印出的完整路徑；JSON 裡不要用 `~` 或 `$HOME`，它們不會經過 shell 展開：
-
-```json
-{
-  "mcpServers": {
-    "demo": {
-      "command": "/absolute/path/fixlab-mcp-demo/.venv/bin/python",
-      "args": ["/absolute/path/fixlab-mcp-demo/server.py"]
-    }
-  }
-}
-```
-
-切到要修的 Python 專案，再啟動 fixlab（`servers.json` 的完整路徑也要換成自己的）：
+在已 commit 或有備份的專案操作，fixlab 會直接修改檔案：
 
 ```sh
 cd /path/to/your-python-project
-fixlab --mcp-config /absolute/path/fixlab-mcp-demo/servers.json
+fixlab                         # 互動模式：輸入修復任務
 ```
 
-不必另開終端機執行 `server.py`，fixlab 會啟動及關閉它。在 `fixlab>` 輸入「修復失敗的測試；開始前先呼叫 `mcp__demo__connection_status` 確認 MCP 連線」。模型決定是否呼叫工具；若它選用該工具，確認畫面會顯示 `mcp__demo__connection_status` 與空參數 `{}`，接著詢問 `Allow? [y]es / [N]o:`。輸入 `y` 才會送出呼叫，server 回傳 `MCP connection OK.`；這只確認 MCP 連線，修復結果仍要看測試。
+也可指定目錄做一次性修復：
 
-啟動時目前不會列出工具清單。要確認工具已載入，可開啟啟動時 `log:` 顯示的 JSONL 事件檔，在第一筆 `run_start` 的 `mcp.servers` 找到名稱 `demo`，其 `tools` 應包含 `mcp__demo__connection_status`。工具呼叫的確認畫面則表示模型已選用它；被拒絕的呼叫不會送到 server。
-
-`--mcp-config` 的相對路徑以啟動 fixlab 時的目前目錄為準，並非設定檔所在目錄；server 的 `args` 也不會自動以設定檔目錄解析，所以這個範例一律用絕對路徑。若啟動失敗，fixlab 會顯示 server 名稱與錯誤，並在可取得時附上 server stderr 的最後幾行；先檢查 Python、`server.py` 路徑，以及該 Python 環境是否裝好 MCP SDK。
-
-## 快速開始（開發用）
-
-需要 Python 3.11 以上。clone 專案後以 editable 方式安裝，改了程式碼不必重裝：
-
-```
-python3 -m venv .venv
-.venv/bin/pip install -e .
-.venv/bin/pytest                     # fixlab 自己的測試，約 30 秒
+```sh
+fixlab /path/to/your-python-project
 ```
 
-跑 agent 要有一個 OpenAI 相容的端點。三個環境變數（或用 `--model` 覆寫模型）：
+互動模式會在改檔與跑測試前詢問；一次性模式直接執行，結束時印出差異並自行重跑測試，結束碼 0 表示最後測試通過、1 表示沒通過、2 表示輸入或設定有誤。
 
-```
-export OPENAI_BASE_URL=https://openrouter.ai/api/v1   # 用 Ollama 就是 http://localhost:11434/v1
-export OPENAI_API_KEY=...                              # Ollama 隨便填一個占位值
-export FIXLAB_MODEL=qwen/qwen3.5-9b
-```
+專案需要自己的 Python 環境時，在專案目錄執行 `fixlab --python .venv/bin/python`。該環境須有 Python 3.11 以上與 pytest；相對路徑從啟動目錄解析，不會自動偵測 `.venv`。完整選項、權限提示、事件檔與快照說明見[使用手冊](docs/usage.md)，展示流程見 [Demo 操作手冊](docs/cli-demo.md)。
 
-想實際展示互動 CLI，可照 [Demo 操作手冊](docs/cli-demo.md) 操作：修復工時報表、接續補說明、權限控制與查看事件紀錄。
+### MCP（選用）
 
-然後對**範例專案的複本**執行（`fixlab` 會直接修改你指定的目錄）：
+互動模式可呼叫外部 MCP 工具，**只支援由 fixlab 啟動的本機 stdio server**，不支援遠端 HTTP／SSE。每次呼叫都需要確認；server 以你的權限在沙箱外執行，只設定你信任的 server。
 
-```
-cp -R tests/fixtures/timelog /某個暫存目錄/timelog-try
-.venv/bin/fixlab /某個暫存目錄/timelog-try
-```
+依原本安裝方式加入 MCP SDK 後，用 `fixlab --mcp-config /absolute/path/servers.json` 啟動。安裝指令、設定格式、可照做的本機 server 範例與錯誤排查見 [MCP 使用指南](docs/mcp.md)。
 
-選項：`-i`（互動模式，見下）、`--python PATH`（跑測試用的直譯器，見〈用專案自己的 Python 跑測試〉）、`--max-steps`（預設 20）、`--max-tokens`（預設 8192）、`--task`（換掉預設的任務文字，只用於一次性模式）、`--log-dir`、`--meta`（見〈事件檔〉）、`--hide-tool NAME`（不讓模型看到某個工具，例如 `run_tests`；可重複）、`--temperature`、`--extra-body JSON`（原樣放進請求，例如固定 OpenRouter 的供應商）、`--system-prompt-extra TEXT`（把這段文字接在預設 system prompt 後面，中間空一行；空字串會被拒絕；文字以 `-` 開頭時要寫成 `--system-prompt-extra=TEXT`）。後四個用在實驗，並記進事件檔的 `run_start`。
+## 重要限制
 
-### 一次性模式會印什麼
+- 針對小型、使用 pytest 的 Python 專案；模型須支援原生 tool calling，沒有任意 shell 工具。
+- 測試固定使用 pytest 參數，忽略專案的 pytest 設定檔，不自動載入外掛；即使指定專案自己的 Python，結果仍可能與平常執行 pytest 不同。
+- 測試沙箱僅在 macOS 且 `sandbox-exec` 可用時啟用；其他情況會顯示 `sandbox: OFF`，測試不受沙箱保護。`sandbox-exec` 已被標為棄用。
+- 測試通過不代表 bug 一定修好；目前也無法完全防止被測程式偽造結果。互動模式結束任務後不會額外自動重跑測試。
+- 對話只保留在同一個互動 session，沒有 context 長度管理；事件檔可能包含原始碼或祕密，分享前需檢查。
 
-- **執行中**（stderr）：被修改的目錄、沙箱狀態（`sandbox: on` 或 `sandbox: OFF (原因)`），之後每個工具呼叫一行，例如 `read_file  ok=True  flags={}`。
-- **結束後**（stdout）：stop reason（`done` 模型自己宣告完成、`max_steps` 步數用完、`stuck` 連續三輪全失敗、`error` 請求失敗）、步數、token，然後是**快照 diff**，再來是 fixlab **自己再跑一次**測試的輸出，最後一行是 `RESULT: tests passed`、`RESULT: tests FAILED` 或逾時時的 `RESULT: tests FAILED (timed out)`。
-- **結束碼**：0 最後那次測試通過；1 沒通過；2 輸入有誤（路徑不是目錄、沒設金鑰、沒指定模型）。
+完整保護機制、適用範圍與已知缺口見[安全與限制](docs/safety.md)。
 
-最後那次測試不聽模型怎麼說：模型可能沒跑測試就宣稱完成，所以結果以 fixlab 自己跑的為準。
+## Benchmark 的觀察
 
-### 互動模式
+2026-10-18 的第一次完整實驗包含 8 題、2 個模型、兩個條件各 5 次，共 160 次，花費約 $0.41：Qwen3.5-9B 有 `run_tests` 時修好 33／40（82%），沒有時 10／40（25%）；Claude Haiku 5.5 兩個條件各 40／40。**這只是這組題目的觀察，不能當成一般成功率。**
 
-在要處理的專案目錄直接執行 `fixlab`，就會進入互動模式，不需要加 `.` 或 `-i`。也可用 `fixlab PATH -i` 指定其他目錄。一次讀一行當任務，同一個 session 內**保留對話**，所以修完 bug 之後可以接著說「幫那個函式加上說明文字」。
+[結果報告](docs/benchmark-results.md)包含設定、限制與後續 prompt 實驗；[benchmark 操作](docs/benchmark.md)說明自我檢查、評分與重跑方式。正式實驗需要 macOS 沙箱，加 `--confirm` 才會呼叫模型並產生費用。
 
-`fixlab PATH` 仍為一次性模式，可用 `fixlab PATH --task '任務內容'` 換掉任務文字；一次性模式寫檔不會詢問，所以不給 PATH 只給 `--task` 會被拒絕。`-i` 明確指定互動模式，優先於 `--task`，任務由提示字元輸入。下面是畫面的格式（使用假模型劇本示意，測試時間、token 與耗時不代表真模型的用量；差異由目前的顯示函式產生）：
+## 進度與文件
 
-```
-fixlab> fix the failing test
-
-  ▸ run_tests .
-    Allow? [y]es / [a]lways for this tool / [N]o: n
-    ✗ declined
-  ▸ read_file timelog/parser.py
-    ✓
-  ▸ edit_file timelog/parser.py
-    @@ line 9
-     9       text = text.strip()
-    10       if not re.fullmatch(r"(\d+[hm])+", text):
-    11           raise ValueError(f"invalid duration: {text!r}")
-    12 -     units = [re.match(r"(\d+)([hm])", text).groups()]
-       +     units = re.findall(r"(\d+)([hm])", text)
-    13       return sum(int(number) * (60 if unit == "h" else 1) for number, unit in units)
-    Allow? [y]es / [a]lways for this tool / [N]o: y
-    ✓
-  ▸ run_tests .
-    Allow? [y]es / [a]lways for this tool / [N]o: y
-    ✓ 5 passed in 0.01s
-
-Fixed parse_duration: it only took the first unit.
-
-(5 steps · 50 + 25 tokens · 0 s)
-```
-
-- **每個工具呼叫一組**：標題行、改檔的差異（整個檔案改前與改後的比對，只列有變的地方，前後各 3 行上下文、帶改前的行號；每處變動的連續刪除或新增最多 10 行、最多 8 處）、問題、結果行（`✓`，或 `✗` 加原因：`declined`、`blocked`、測試失敗的摘要）。最後一行是步數、token 與耗時；耗時是牆上時間，包含你思考與回答問題的時間。全部印到標準輸出；顏色只在終端機、而且沒設 `NO_COLOR` 時才開。
-- **權限提示**：`edit_file`、`write_file`、`run_tests` 之前會問。`y` 這次放行；`a` 這個 session 內同一個工具都不再問（放行 `edit_file` 就是任何檔案，測試檔仍然唯讀）；其他任何輸入、空行、輸入結束都是拒絕。讀取類工具不問。工具一定會拒絕的呼叫（空路徑、唯讀檔、找不到要改的文字、新舊文字相同、沒讀過就覆寫）也不問，直接顯示 `✗` 和原因。被拒絕的呼叫算失敗，連續三輪全被拒絕任務會以 `stuck` 結束。
-- **指令**：`/reset` 清空對話、`/exit`（或 Ctrl-D、在提示字元按 Ctrl-C）離開、空行忽略，其他都當任務。
-- **Ctrl-C 打斷任務**：已完成的部分留在對話裡，沒有結果的工具呼叫補上「被中斷」的結果，下一個任務看得到前面做到哪裡；但被打斷的那個呼叫可能已經執行了一半，檔案可能已被改過。請求失敗也一樣：任務已經執行過工具就保留，接上說明並提醒檔案可能已被改過；還沒執行過任何工具（第一個請求就失敗、或只收到空回覆）才整個丟掉。
-- **不自動再跑一次測試**（一次性模式才會）：你在場，想驗證可以直接叫模型跑。**一次性模式從不問任何問題。**
-- **不跨 session 保存對話**，離開就沒了；對話也沒有長度上限，每一步會越來越貴，用 `/reset` 重來。
-
-### Benchmark 與實驗（階段 3）
-
-8 道題在 `bench/problems/`，每題一個資料夾（給 agent 的 `project`、藏起來的 `hidden/fix` 與 `hidden/keep`、標準解 `solution`、`problem.json`）。在 fixlab 原始碼根目錄執行，指令都是 `.venv/bin/python -m fixlab.bench ...`（若已啟用該虛擬環境，可簡寫為 `python -m fixlab.bench ...`）：
-
-**正式實驗 `run --confirm` 必須在 macOS 且 `sandbox-exec` 可用時執行**，否則會被拒絕，以免 agent 跑測試時讀到隱藏測試。未加 `--confirm` 的計畫預覽不需要沙箱。`check`、`grade` 在沒有沙箱時仍可執行，但測試程式不受沙箱保護。
-
-| 指令 | 做什麼 | 花錢嗎 |
+| 階段 | 狀態 | tag |
 |---|---|---|
-| `check [題目...] [--repeat N]` | 題目自我檢查：原始專案與套上標準解後各組測試的結果、重跑看會不會 flaky、失敗輸出不能點名 bug 檔 | 不花錢，只跑 pytest；全部 8 題約 2 分鐘 |
-| `grade 題目 工作目錄` | 在乾淨的暫存目錄用原版測試與隱藏測試評分，印 JSON（`fixed`、`broke_existing`、`overfit`、`invalid`） | 不花錢 |
-| `run --models bench/models.json --out 資料夾` | 展開（題目、模型、條件、次數）；沒有 `--confirm` 只印計畫；有 `--confirm` 才真的呼叫模型，可續跑 | **加 `--confirm` 才會花錢**；2026-10-18 的 160 次實驗約 $0.41、59 分鐘，見[結果報告](docs/benchmark-results.md)，重跑的費用與時間會隨模型、價格及回覆而變 |
-| `report results.jsonl --models bench/models.json` | 把結果變成 markdown 報告 | 不花錢 |
+| 1 骨架、六個工具與沙箱 | 完成 | `stage-1` |
+| 2 互動 CLI 與 telemetry | 完成 | `stage-2` |
+| 3 Benchmark 與實驗 | 完成 | `stage-3` |
+| 4 選做 | MCP connector 完成；多 agent 對照未做 | |
 
-`bench/models.json` 的每個模型可以寫選填的 `max_steps`（1 以上的整數）：這個模型每次執行的步數上限，兩個條件用同一個值。沒寫（或寫 `null`）就用 fixlab 自己的預設 20；寫成 0、負數、小數、字串或 `true` 會在載入時被拒絕，一次都不跑。
-
-同樣可以寫選填的 `system_prompt_extra`（有看得見的字的字串，或 `null`）：這個模型每次執行都在預設 system prompt 後面接這段文字，兩個條件傳同一段，用來做 prompt 的消融實驗；沒寫就是預設 prompt。寫成數字、`true`、清單、空字串或只有空白，會在載入時被拒絕，一次都不跑。
-
-教學文章第 15 到 19 篇依序說明題目、評分器、自我檢查、實驗執行器與結果；第 20 篇是後續實驗，找出 Qwen 沒有 `run_tests` 時停不下來的原因。
-
-### 事件檔
-
-每次執行（一次性或一個互動 session）都會寫一個 JSON Lines 檔：預設在 `~/.fixlab/runs/<UTC 時間>-<模型>/events.jsonl`，開始時 stderr 會印 `log: <路徑>`。階段 3 的統計腳本要讀的就是它。
-
-- `--log-dir DIR` 換位置；不能在被修的目錄裡面（會被拒絕，退出碼 2），不然快照 diff 會看到它，模型與被測的程式也碰得到自己的紀錄。省略 PATH 時若目前目錄是家目錄或更上層，不論有沒有 `--log-dir` 都會被拒絕，請到專案目錄執行或指定 PATH。
-- `--meta KEY=VALUE`（可重複）記下 API 不會告訴我們的實驗條件，例如 `--meta quantization=Q4_K_M --meta context_length=32768`。
-- 一行一個事件，只有四種：
-
-| 事件 | 什麼時候寫 | 內容 |
-|---|---|---|
-| `run_start` | 開始，一次 | 模式、模型、端點、步數上限、沙箱狀態、fixlab 的 git commit、`meta` |
-| `task_start` | 每個任務開始 | 任務序號與文字 |
-| `trace` | 迴圈每交出一筆紀錄（通常每步一行） | 整筆紀錄放在 `record`：步數、延遲、token、模型要求的工具呼叫與結果、是否被截斷 |
-| `task_end` | 每個任務結束 | stop reason、步數、計數器、token、耗時；一次性模式另有最後的測試結果與改了哪些檔 |
-
-**trace 是什麼**：迴圈每問模型一次（一步），就把這一步的紀錄交給一個叫 trace 回呼的函式；事件檔裡的 `trace` 行和畫面上的進度都是它產生的。欄位的完整說明與一次真實執行的內容見第 12 篇。
-
-要注意：事件檔裡有模型的回覆與工具的輸出，可能包含目標專案的原始碼或祕密，不要隨意分享。不記費用，只記 token。
-
-### 快照 diff 是什麼，限制在哪
-
-開始前，`fixlab` 把目錄裡每個檔案的內容記在記憶體裡；結束後再記一次，比對出新增、刪除、修改的檔案（不能以 UTF-8 解碼的檔只印 `binary file changed`）。**測試檔也在範圍內**，所以測試被改了看得到。限制：
-
-- 跳過 `.git`、`.venv`、`__pycache__`、`.pytest_cache`，也不看符號連結；這些地方的變動不會出現。
-- 只比對 PATH 底下。程式如果寫到目錄之外（沙箱會擋，見下），diff 看不到。
-- 整棵樹讀進記憶體，不適合很大的專案；讀不了的檔案（例如沒有讀取權限）會讓入口在印出結果前出錯。
-- 它不是版本控制。`fixlab` 直接改你的檔案，**請對有備份或已 commit 的目錄使用**。
-
-## 讀程式的順序
-
-從入口與迴圈開始，再讀工具、安全限制與記錄，最後看 benchmark。每個檔案的開頭都有說明它在整體流程中的角色。
-
-| 順序 | 檔案 | 做什麼 |
-|---|---|---|
-| 1 | `fixlab/cli.py` | 入口：檢查參數；一次性模式（拍快照、跑 agent、自己再跑一次測試、印結果）與互動模式（一次讀一行、保留對話、權限提示、中斷） |
-| 2 | `fixlab/loop.py` | agent 迴圈：問模型 → 解讀回覆 → 執行工具；步數上限、連續失敗上限、重試、trace 回呼（每一步把這一步的紀錄交給它，畫面上的進度與事件檔都由它產生） |
-| 3 | `fixlab/toolparse.py` | 把模型的回覆解析成工具呼叫：只認原生 `tool_calls`，參數對照 schema 驗證 |
-| 4 | `fixlab/tools.py` | 六個工具的實作與登記 |
-| 5 | `fixlab/workspace.py` | 工作目錄：路徑必須落在根目錄內、測試檔唯讀、工具分派、錯誤不丟例外 |
-| 6 | `fixlab/sandbox.py` | 用 macOS `sandbox-exec` 包住 `run_tests`：禁網路、限制讀寫 |
-| 7 | `fixlab/interpreter.py` | 選擇與檢查測試用 Python、驗證基底安裝目錄與符號連結，決定沙箱可放行的環境 |
-| 8 | `fixlab/telemetry.py` | 事件檔：一次執行一個資料夾、一行一個 JSON、每行立刻寫入、寫不進去只警告 |
-| 9 | `fixlab/display.py` | 互動模式的畫面：標題行、差異、結果行、用量行、顏色（只回傳字串，不直接印） |
-| 10 | `fixlab/mcp_tools.py` | 選用的 MCP connector：讀設定檔、以官方 SDK 連 stdio server、把工具登記成 `mcp__<server>__<tool>`、轉換結果、關閉 server |
-| 11 | `fixlab/bench/` | 階段 3：`problems.py`（題目載入與摘要）、`grader.py`（評分器）、`selfcheck.py`（題目自我檢查）、`runner.py`（實驗執行器）、`report.py`（報告）、`__main__.py`（上面四個指令） |
-
-## 六個工具
-
-| 工具 | 做什麼 | 值得知道的規則 |
-|---|---|---|
-| `read_file` | 讀檔，每行附行號，可指定行範圍 | 輸出上限 20000 字元，超過會註明總量 |
-| `list_files` | 遞迴列出所有檔案 | 上限 200，跳過 `.git`、`.venv` 等 |
-| `grep` | 搜尋檔案內容，輸出 `路徑:行號:內容` | 自己實作；單行 1 秒、整體 5 秒的時間上限，上限 100 行 |
-| `edit_file` | 把檔案裡**恰好出現一次**的字串換掉 | 0 次或多次都不改，並回報實際次數 |
-| `write_file` | 建立新檔，或整個覆寫 | 覆寫既有檔案前必須先整檔讀過，而且讀過之後沒被別人改 |
-| `run_tests` | 在工作目錄跑 pytest，可指定目標檔案或目錄 | 固定參數、忽略專案的 pytest 設定檔、不自動載入外掛；10 秒逾時、輸出最多 4000 字元（留頭尾）；macOS 沙箱可用時啟用 |
-
-**沒有任意 shell**，也沒有 `glob`（`list_files` 是遞迴的，目前沒有需要依檔名過濾的情境）。
-
-## 安全做了什麼
-
-- 所有路徑必須落在工作目錄內：`../`、絕對路徑、`~`、符號連結逃逸都被擋，並在回傳裡設 `blocked` 旗標。
-- **測試檔不可寫**：`edit_file`、`write_file` 碰到測試檔會被拒絕；`run_tests` 跑的程式在沙箱裡也寫不了測試檔（防止模型在原始碼裡塞「執行時改寫測試」的程式來假通過）。這是修 bug 模式的政策，不是通用限制，由入口決定。
-- **`run_tests` 在沙箱裡跑**（macOS）：不能連網、不能讀家目錄與 fixlab 自己的專案目錄（跑測試用的 Python 環境與它的基底 Python 安裝目錄例外，放行讀取）、只能寫工作目錄，而且不能寫跑測試用的 Python 環境（它在工作目錄裡時，改掉裡面的 pytest 就能偽造通過；工具層同樣擋下）。
-- **子行程環境變數白名單**：只傳 `PATH`、`LANG`、`LC_ALL`、`TMPDIR` 與 `PYTHONDONTWRITEBYTECODE=1`，API 金鑰不會被被測的程式看到。另外固定 `TZ=UTC`、`PYTHONHASHSEED=0`，並設 `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`（不自動載入 pytest 外掛），測試結果才不依賴機器。
-- **判定測試通過不只看結束碼**：用 `python -P` 啟動以免根目錄的 `pytest.py` 取代真的 pytest；`run_tests` 要求結束碼為 0，且輸出中有 `N passed ... in ...s` 摘要，不限最後一行。benchmark 評分器另要求最後一行是通過摘要，且通過數與題目記錄一致。這些檢查仍擋不住所有偽造，見下方限制。
-- **互動模式會先問**：改檔、寫檔、跑測試之前問使用者；一次性模式沒有人可以問，改成事後的差異與重跑測試。
-- **保險**：步數上限 20、連續三輪工具呼叫全失敗就停（`stuck`；被使用者拒絕的呼叫也算失敗）。這兩個數字是初始值，沒有實測依據。
-
-## 已知限制
-
-- **MCP server 不在沙箱裡**：只有呼叫前的確認，沒有限制 server 本身能做什麼；也只支援本機 stdio server，不支援遠端（HTTP）server、OAuth，以及 MCP 的 resources、prompts 等其他功能。
-- **沙箱只有 macOS 有效**，而且 `sandbox-exec` 在 Apple 的說明裡標為 **DEPRECATED**（已棄用）。其他平台只剩工具層的限制加結束時的 diff；沒有沙箱時入口會印 `sandbox: OFF (原因)`。
-- **硬連結**：事先在沙箱外建好、指向工作目錄之外的硬連結，沙箱只檢查路徑所以擋不到。
-- **不自動使用專案裡的環境**：要用專案自己的套件跑測試，必須以 `--python` 指定（原因見〈用專案自己的 Python 跑測試〉）；指定的 Python 要 3.11 以上，而且裝了 pytest。
-- **`--python` 的檢查擋不住刻意做壞的環境**：基底目錄的檢查只確認它像一個 Python 安裝、不碰到受保護的目錄；指定的環境本身會在沙箱裡執行，只指定你信任的環境。
-- **沙箱擋不到的偽造**：被測的程式在 pytest 行程內部竄改 pytest 本身，或自己印一行假的 `N passed` 摘要再以結束碼 0 離開（測試與原始碼在同一個行程；後者我用兩行 `atexit` 重現過，bug 還在，`tests_passed` 卻是 `True`）。階段 3 的評分器降低了這個風險（乾淨環境重跑、只讀最後一行摘要、通過數要等於題目記的數量），但**沒有根治**：被測的程式與 pytest 仍在同一個行程。見第 10、16 篇。
-- **`run_tests` 不自動載入 pytest 外掛，時區固定 UTC、雜湊順序固定**：這是階段 3 為了讓評分不依賴機器加的，一般使用也一樣。測試要靠自動載入的外掛（例如 pytest-asyncio、pytest-mock、pytest-django）的專案，外掛不會載入，測試可能失敗；`fixlab` 針對的是小型、只用標準函式庫的專案。要改成可選需要新增旗標，目前沒做。
-- **`run_tests` 忽略專案的 pytest 設定檔**：固定使用 `-c /dev/null`，不讀 `pytest.ini`、`pyproject.toml`、`setup.cfg` 或 `tox.ini` 中的 pytest 設定，例如 `addopts`、`testpaths`、`pythonpath`。專案目錄內的 `conftest.py` 仍會載入，上層目錄的則不載入。因此，即使指定了專案自己的 Python，結果也可能與平常直接執行 pytest 不同；目前沒有自訂 pytest 參數的 CLI 選項。
-- **沒有重複呼叫偵測**：模型一直重讀同一個檔案（成功的呼叫）不會觸發 `stuck`。
-- **不會自己讀 `.env`、金鑰沒有存進系統鑰匙圈**：用 uv 或 pipx 安裝後可以在任何目錄直接打 `fixlab`（見〈安裝（一般使用者）〉），但模型端點與金鑰要用環境變數提供。之後想做：金鑰存系統鑰匙圈。
-- **互動模式的對話沒有長度上限**：用久了每一步的 prompt 會很大，小模型（Ollama 設 32768）可能撞到 context 上限；用 `/reset` 重來，上限怎麼處理等有事件檔的資料再決定。
-- **互動模式的「一律放行」範圍是整個工具**（MCP 工具沒有這個選項，每次都問），沒有 `/permissions` 看、`/revoke` 收回。
-- **互動模式沒有串流**：模型的回覆結束後才印。實測每一步等 1 到 5 秒、多半約 1.4 秒，目前不值得；本機大模型很慢時再做。
-- **管線輸入會被當成回答**：`echo ... | fixlab PATH -i` 會把管線裡的下一行拿去回答問題。
-- **畫面的顏色只用假的終端機測過格式**，實際的樣子要用過才確定。
-- **只解析原生 tool call**：不支援把工具呼叫寫在文字裡的模型。
-- **證據仍然有限**：第一次完整實驗只有 8 題、2 個模型（一個開源、一個商用）、每格 5 次；Claude Haiku 5.5 在這組題目上碰到天花板（兩個條件合計 80 次全部修好，兩個模型合計才是 160 次），分不出有沒有測試的差別。Qwen 沒有 `run_tests` 時的 25% 是 20 步內的修好率；後續放寬到 40 步的 16 次實驗仍全部跑滿步數，修好次數與對照組相同，沒有支持「只是步數不夠」的猜測；改 prompt 則提高了修好次數，但仍常無法自行結束。步數上限仍未充分校準，詳見[結果報告與後續實驗](docs/benchmark-results.md)。
-
-## 實跑紀錄：第一次完整的修復（階段 1）
-
-用真模型對範例專案 timelog 跑了兩次完整的修復：模型可以列檔案、讀檔、改檔、跑測試。這是**觀察，不是通過門檻**，修好與否都照實記錄。範例專案裡藏了一個 bug：解析 `1h30m` 時只取第一個單位，所以 `weekly_total` 算出 3.75 而不是 4.25。
-
-指令（先把範例專案複製到暫存目錄，因為 `fixlab` 會直接修改指定的目錄）：
-
-```
-cp -R tests/fixtures/timelog /某個暫存目錄/timelog-try
-fixlab /某個暫存目錄/timelog-try
-```
-
-### 實驗條件
-
-| 項目 | 內容 |
+| 想了解什麼 | 文件 |
 |---|---|
-| 模型 | `qwen/qwen3.5-9b`，經 OpenRouter |
-| 供應商 | Venice（OpenRouter 轉給哪家由它決定，兩次都是 Venice） |
-| 量化方式 | 未知（OpenRouter 沒有提供） |
-| 執行環境 | OpenRouter 的 API，沒有版本號 |
-| 上下文長度 | 262144（OpenRouter 清單上寫的，沒有驗證實際值） |
-| 思考模式 | 當時沿用供應商預設（開啟），當時的入口沒有關閉選項；目前可用 `--extra-body` 傳入供應商支援的設定，參數名稱依端點而定 |
-| 題目 | timelog，1 題 |
-| 隨機種子 | 無（這個介面沒有提供） |
-| 日期與時間 | 2026-10-17，06:37（UTC） |
-| 軟體版本 | fixlab commit `b3d8e14`；`openai` 函式庫 3.31.0；Python 3.14.8；pytest 9.1.1 |
-| 價格（估算用） | 輸入 $0.10、輸出 $0.15（每百萬 token，OpenRouter 清單，2026-10-17） |
+| CLI、Python 環境、工具、事件檔與 diff | [使用手冊](docs/usage.md) |
+| MCP 安裝、設定與連線範例 | [MCP 使用指南](docs/mcp.md) |
+| 保護機制與已知限制 | [安全與限制](docs/safety.md) |
+| 題目檢查、評分與模型實驗 | [Benchmark 操作](docs/benchmark.md)與[結果報告](docs/benchmark-results.md) |
+| 開發安裝、程式閱讀順序、20 篇教學與設計文件 | [開發與教學指南](docs/development.md) |
+| 階段 1 的逐步實跑與回饋修正 | [第一次完整的修復](docs/first-repair.md) |
 
-### 結果
+可用 `git checkout stage-1`、`stage-2`、`stage-3` 或 `article-NN` 閱讀當時的程式。
 
-| | 第 1 次 | 第 2 次 |
-|---|---|---|
-| 結束原因 | 模型自己宣告完成 | 模型自己宣告完成 |
-| 步數 | 11 | 8 |
-| token | 輸入 15,824 加輸出 1,963 | 輸入 11,257 加輸出 1,162 |
-| 約費用 | $0.0019 | $0.0013 |
-| 耗時 | 約 24 秒 | 約 15 秒 |
-| 入口最後自己跑的測試 | `5 passed` | `5 passed` |
-| 最後的差異比較 | 只有 `timelog/parser.py` 的一行 | 同左 |
+## 來源說明
 
-兩次都修好了，而且最後那次測試是入口自己跑的，不是模型說了算。差異裡只有 `parser.py` 那一行：
-
-```diff
--    units = [re.match(r"(\d+)([hm])", text).groups()]
-+    units = re.findall(r"(\d+)([hm])", text)
-```
-
-### 每一步做了什麼
-
-| 第 1 次（11 步） | 第 2 次（8 步） |
-|---|---|
-| 1. 先跑測試（失敗） | 1. 先跑測試（失敗） |
-| 2. 讀測試檔 | 2. 讀測試檔 |
-| 3. 列出 `src` 目錄（不存在，失敗） | 3. 讀 `report.py` |
-| 4. 列出所有檔案 | 4. 讀 `parser.py` |
-| 5. 讀 `report.py` | 5. **改檔**（把整個函式當舊字串，一次成功） |
-| 6. 讀 `parser.py` | 6. 跑測試（通過） |
-| 7. **改檔**（只換那一行，一次成功） | 7. 空回覆，被要求重來 |
-| 8. 跑測試（通過） | 8. 說明做了什麼，結束 |
-| 9. 又跑一次測試（通過），同時說明 | |
-| 10. 空回覆，被要求重來 | |
-| 11. 說明做了什麼，結束 | |
-
-### 觀察
-
-**順利的部分**
-- 兩次都在改檔之後自己跑測試驗證，沒有在沒驗證的情況下宣告完成。
-- 兩次改檔都一次成功：沒有把行號抄進舊字串，`\d` 的跳脫也沒寫錯（兩次的樣本）。
-- 沒有呼叫不存在的工具，沒有去改測試檔；之前沒有跑測試的工具時，模型曾改過測試檔、也呼叫過不存在的工具，有了跑測試的工具之後兩次都沒有再發生（見第 4 篇）。
-- 19 個回覆裡，每個有工具呼叫的回覆都只有 1 個呼叫（連同之前的紀錄，共 41 個，沒有出現過一次叫兩個以上的）。
-
-**需要處理的問題**，分三類：
-
-- **工具／回饋的缺陷（兩次都出現）**：模型驗證完之後，只回了思考內容、沒有文字也沒有工具呼叫（空回覆）。迴圈給的回饋是 `Your tool call was invalid: empty response ... Please call a tool with valid arguments.`，但此時模型其實已經做完了，只差說一句結論。回饋叫它「呼叫工具」，措辭有誤導；模型第二次回覆才給出結論，白花了一步。這是我們的訊息寫得不對，不是模型能力的問題。跑完之後已經修正，現在的措辭是 `Your reply was empty. If you are finished, reply with a short final message; otherwise call a tool.`，實跑當時用的是舊措辭。
-- **模型的行為（不修，只記錄）**：第 1 次猜了一個不存在的 `src` 目錄，失敗一次後自己改成列出全部檔案，沒有造成問題；第 1 次驗證時重複跑了一次相同的測試。
-- **提示詞的缺陷**：沒有發現。
-
-### 措辭修正後重跑（2026-10-17，06:55 UTC）
-
-修正空回覆的回饋措辭之後，用同樣的條件又跑了兩次（程式是 commit `a040ce1` 加上當時還沒提交的措辭修改）：
-
-| | 重跑第 1 次 | 重跑第 2 次 |
-|---|---|---|
-| 結束原因 | 模型自己宣告完成 | 模型自己宣告完成 |
-| 步數 | 10 | 8 |
-| token | 輸入 14,046 加輸出 1,213 | 輸入 10,506 加輸出 980 |
-| 入口最後自己跑的測試 | `5 passed` | `5 passed` |
-| 空回覆 | 0 次 | 0 次 |
-
-兩次都修好了，但這次**沒有出現空回覆**，所以新措辭沒有被實際檢驗到；原本是 2 次裡 2 次，這次是 2 次裡 0 次。另外，第 1 次在改檔之後連續跑了三次相同的測試。要檢驗新措辭，需要更多次重跑，等到碰上空回覆才算數。
-
-### 限制
-
-兩次、一個模型、一道題，**不能說明這個模型「通常」修得好**，也不能和別的模型比較；題目本身簡單（bug 在單一檔案、測試訊息已指出差異數字）。這是階段 1 的實跑，用來確認整條流程（找、改、驗證、回報）能運作；穩定度與多模型比較屬於階段 3。
-
-原始的每步紀錄放在 `runs/3.12-qwen3.5-9b-20261017/`（不進版本控制，保留在本機）。
-
-## 教學文章
-
-在 `docs/articles/`。每篇對應一個 git tag，可以 `git checkout article-NN` 看到當時的程式。
-
-| 篇 | 主題 |
-|---|---|
-| 01 | 模型說要呼叫工具，程式怎麼接住（tool call 與 Workspace） |
-| 02 | 讓模型看得到專案（`read_file`、`list_files`） |
-| 03 | 讓迴圈跑起來，`fixlab PATH` 與第一次真模型探索 |
-| 04 | 讓模型改檔案（`edit_file`） |
-| 05 | 讓模型跑測試（`run_tests`） |
-| 06 | 第一次完整的真模型修復 |
-| 07 | 在檔案內容裡搜尋（`grep`） |
-| 08 | 建立與覆寫整個檔案（`write_file`） |
-| 09 | 限制測試程式能做什麼（沙箱） |
-| 10 | 不讓測試檔被偷偷改掉（沙箱的受保護路徑，與兩輪 code review） |
-| 11 | 模型卡住時要停下來（連續失敗保險，與迴圈的測試補齊） |
-| 12 | 把每次執行存下來（事件檔） |
-| 13 | 連續下指令（互動模式） |
-| 14 | 改檔和跑測試之前先問你（權限提示） |
-| 15 | 題目長什麼樣（8 道有 bug 的小專案） |
-| 16 | 評分器（修好、假通過、弄壞、無效） |
-| 17 | 題目自我檢查（怎麼證明題目量到想量的東西） |
-| 18 | 實驗執行器（有 `run_tests` 對沒有） |
-| 19 | 第一次實驗結果，以及怎麼讀它 |
-| 20 | [Qwen 沒有測試時為什麼停不下來](docs/articles/20-why-qwen-wont-stop.md)（量化、步數上限與 prompt 的後續實驗） |
-
-## 規格與設計文件
-
-用 Spectra 管理，在 `docs/spectra/`：`specs/` 是行為規格，`changes/archive/` 底下是每個階段的提案、設計（每個決定的替代方案與取捨，以及風險清單）和任務：階段 1 是 `bootstrap-agent-core`，階段 2 是 `stage2-cli-telemetry`，階段 3 是 `stage3-benchmark`（歸檔後的資料夾名稱前面有日期）。
-
-## 參考來源
-
-只是參考，不是設計依據：每個設計決定的依據是自己的實驗、自己程式的已知缺陷，或 Claude Code 的實際行為。以下是讀過什麼、採用了哪個想法（詳細的對照在設計文件〈設計依據與參考來源〉一節與各篇文章）。範例專案、bug 類型、檔案結構、規格與測試都是自己設計的。
-
-**高見龍〈用 AI 打造自己的 Claude Code〉連載與 KeSi 專案**（<https://kaochenlong.com/build-your-own-claude-code>、<https://github.com/kaochenlong/KeSi>，MIT 授權，Copyright (c) 2026 Eddie Kao；讀過 Day 01–18 與 repo，2026-10-17 查證 LICENSE）
-
-- 連續失敗只算「整輪全失敗」（第 11 篇）；步數上限 20 與失敗上限 3 的數字也相同，不能排除受他影響。
-- 環境變數洩漏列為風險、重視 token 與成本量測、沙箱的風險清單。
-- 〈讓 Agent 看見專案〉：空結果要明確回報，讓模型分得出「沒找到」與「沒執行成功」。他的 `list_files` 只列一層，這裡選遞迴。
-- `kesi.py`（commit `dfa0cd0`）：`edit_file` 用 bytes 讀寫以保留換行字元、判斷唯一時把重疊的匹配也算進去；`write_file` 記讀的當下的 sha256、覆寫前比對；沙箱用 `(regex (string-append "^" (regex-quote (param …)) …))` 接路徑（他用來禁止讀、這裡用來禁止寫測試檔）、沙箱不可用時直接執行並顯示狀態。
-- Day 13 示範：結束後印 diff、再跑一次測試、用「沒有 shell」對照；與這裡的快照 diff、結束後再跑一次測試、有／無 `run_tests` 實驗是相同的想法，不能排除受他影響。
-- 〈用 ripgrep 搜尋程式碼〉讀過，`grep` 目前自己實作，尚未決定是否改用 `rg`。
-- 沙箱規則（`fixlab/sandbox.py`）的結構參考 `sandbox_spec`，檔頭附有他的 MIT 授權全文。
-- 階段 2（互動模式，第 13、14 篇）：設計時只看過他的 commit 標題與指令名稱，`/exit`、`/reset`、整個 session 一份對話、`y`／`a`／`N` 與「這個 session 都好」的想法與他相同，不能排除受他影響；完成後才讀了 `kesi.py` 的 `main`、`run_agent`、`check_permission`、`ask_user`、`seal_dangling_tool_use`。讀完**改了做法**的一項：Ctrl-C 從「整個任務丟掉」改成「保留已完成的部分並補上結果」。採用的畫面想法是縮排分層與每輪結束一行用量。不同的地方：他串流、顯示費用、授權範圍記在每個檔案與每個指令、有 `/permissions` 與 `/revoke`；我們顯示差異與結果行、授權範圍是整個工具、沒有串流與費用。他沒有事件記錄，所以事件檔（第 12 篇）沒有可參考的做法。
-
-**Claude Code**（官方文件與實際行為，2026-10-17 查閱）
-
-- `Edit` 的「唯一字串替換」與 `Write`「覆寫前需先讀過」：`edit_file`、`write_file` 的規則。
-- 沙箱文件的「Protected paths」：「裁判用的東西，不能被受審的程式改寫」，這裡對應測試檔。
-- `/diff` 與 `/rewind` 的快照：用快照回答「這一次改了什麼」。
-- 寫檔與執行指令前問「這次允許、這個 session 一律允許、拒絕」三種：互動模式的 `y`／`a`／`N`（憑使用經驗，沒有重新查文件）。
+前身是自己的 `code-agent-eval`。曾參考[高見龍的 KeSi 連載](https://kaochenlong.com/build-your-own-claude-code)與 [KeSi 專案](https://github.com/kaochenlong/KeSi)的工具保護、連續失敗計數、沙箱結構及成本量測等想法，也參考 Claude Code 的工具行為。KeSi 採 MIT 授權，Copyright (c) 2026 Eddie Kao；沙箱檔頭保留授權聲明。完整的閱讀紀錄、採用想法與差異見[參考來源](docs/development.md#參考來源)及 [Spectra 設計文件](docs/spectra/)。
