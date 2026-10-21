@@ -2,6 +2,8 @@
 
 教學導向的最小 CLI coding agent：給它一個有 bug 的多檔小專案，它自己找、改、驗證。
 
+預設 system prompt 明確要求模型找出失敗行為的原因，並修復原始碼，工作環境設定為使用 pytest、測試檔唯讀的多檔 Python 專案。`--task` 或互動模式可以提供其他任務文字，但不會替換這個 system prompt；目前也沒有檢查或拒絕非修 bug 請求的機制。因此，修 bug 是目前的設計與評測範圍，其他任務的表現未經這套 benchmark 驗證。
+
 背景與範圍見 [AGENTS.md](AGENTS.md)。這個專案同時是一套教學文章：每個工具、每道保險各有一篇，從最天真的版本寫起，附真實的輸出（見最後的〈教學文章〉）。
 
 ## 目前做到哪裡
@@ -52,6 +54,8 @@ benchmark（`python -m fixlab.bench`）的題目沒有包進套件，要跑 benc
 fixlab --python .venv/bin/python
 ```
 
+`--python` 的相對路徑以啟動 fixlab 時的目前目錄為準，不會以 `PATH` 指定的目標專案為準。從別的目錄操作時，可用絕對路徑，例如 `fixlab /path/to/project --python /path/to/project/.venv/bin/python`。
+
 指定的 Python 要 3.11 以上（`run_tests` 用 `-P` 啟動 pytest，舊版本沒有這個參數），而且裝了 pytest；不符合時一開始就以結束碼 2 結束並說明原因，不會呼叫模型。用的是哪個直譯器、從哪裡來，記在事件檔 `run_start` 的 `test_python`。
 
 **指定 `--python` 等於信任那個環境。** 它的 Python 與套件會在沙箱裡執行；如果它的基底 Python 裝在家目錄底下（uv、pyenv 下載的 Python），沙箱會放行讀取那個安裝目錄（只有那個目錄，家目錄的其他地方仍然讀不到）。fixlab 會檢查這個基底目錄：`pyvenv.cfg` 的 `home` 必須是絕對路徑、目錄裡要有 Python 的標準函式庫、不能是家目錄本身或上層、不能和專案目錄重疊；環境也不能透過專案裡的符號連結指到別處（測試可能把連結換掉）。不符合就拒絕執行。這些檢查擋得住打錯路徑與明顯的誤設定，擋不住一個刻意做壞的 Python 環境，所以只指定你自己建立或信任的環境。
@@ -60,10 +64,22 @@ fixlab --python .venv/bin/python
 
 ### 呼叫外部 MCP server 的工具
 
-互動模式下，agent 可以呼叫本機 [MCP](https://modelcontextprotocol.io) server 提供的工具，例如查 issue 或查文件。需要另外安裝官方 SDK：
+互動模式下，agent 可以呼叫本機 [MCP](https://modelcontextprotocol.io) server 提供的工具，例如查 issue 或查文件。**目前只支援 stdio 傳輸**：由 fixlab 啟動本機 server，透過標準輸入／輸出通訊；不支援以 URL 連線的遠端 HTTP server（包含 Streamable HTTP 與 SSE）。需要將官方 SDK 裝進執行 fixlab 的同一個環境；依原本的安裝方式選一種（`OWNER` 同上）：
 
+```sh
+# 原本用 uv tool 安裝：重新安裝並加入 mcp extra
+uv tool install --force 'fixlab[mcp] @ git+https://github.com/OWNER/fixlab'
+
+# 原本用 pipx 安裝：重新安裝並加入 mcp extra
+pipx install --force 'fixlab[mcp] @ git+https://github.com/OWNER/fixlab'
+
+# 開發用安裝：在 fixlab 原始碼根目錄執行
+.venv/bin/python -m pip install -e '.[mcp]'
 ```
-pip install 'fixlab[mcp]'                 # 或 uv tool install 'fixlab[mcp] @ git+https://github.com/OWNER/fixlab'
+
+裝好後，在要修的專案目錄啟動（設定檔內容見下）：
+
+```sh
 fixlab --mcp-config servers.json
 ```
 
@@ -85,6 +101,62 @@ fixlab --mcp-config servers.json
 - 事件檔的 `run_start` 記錄 `mcp`：server 名稱、登記與略過的工具、SDK 版本；不記錄指令、參數與環境變數（可能含金鑰）。
 
 **指定 MCP server 等於信任它。** server 是以你的權限執行的程式，**不受 fixlab 的沙箱限制**：它可以讀寫你帳號能碰到的任何檔案、連網，fixlab 的工作目錄限制與測試檔保護都管不到它自己做的事。fixlab 擋得住的只有「模型不經你同意就呼叫它的工具」。只設定你信任的 server。
+
+#### 可照做的 stdio 連線範例
+
+下面自己建立一個只回傳固定文字的 server，不需要 Node.js 或額外的服務帳號。先完成上面的 fixlab 安裝（含 `[mcp]`）與模型環境變數設定，再為 server 建立獨立環境：
+
+```sh
+mkdir -p "$HOME/fixlab-mcp-demo"
+cd "$HOME/fixlab-mcp-demo"
+python3 -m venv .venv
+.venv/bin/python -m pip install 'mcp>=2.3,<3'
+pwd
+```
+
+在這個目錄建立 `server.py`，內容如下（使用與 fixlab 相同版本範圍的官方 MCP Python SDK）：
+
+```python
+from mcp.server.mcpserver import MCPServer
+
+app = MCPServer("demo")
+
+
+@app.tool()
+def connection_status() -> str:
+    """Check the MCP connection before debugging a project."""
+    return "MCP connection OK."
+
+
+if __name__ == "__main__":
+    app.run()
+```
+
+同一目錄建立 `servers.json`。把下面兩處 `/absolute/path/fixlab-mcp-demo` 都換成剛才 `pwd` 印出的完整路徑；JSON 裡不要用 `~` 或 `$HOME`，它們不會經過 shell 展開：
+
+```json
+{
+  "mcpServers": {
+    "demo": {
+      "command": "/absolute/path/fixlab-mcp-demo/.venv/bin/python",
+      "args": ["/absolute/path/fixlab-mcp-demo/server.py"]
+    }
+  }
+}
+```
+
+切到要修的 Python 專案，再啟動 fixlab（`servers.json` 的完整路徑也要換成自己的）：
+
+```sh
+cd /path/to/your-python-project
+fixlab --mcp-config /absolute/path/fixlab-mcp-demo/servers.json
+```
+
+不必另開終端機執行 `server.py`，fixlab 會啟動及關閉它。在 `fixlab>` 輸入「修復失敗的測試；開始前先呼叫 `mcp__demo__connection_status` 確認 MCP 連線」。模型決定是否呼叫工具；若它選用該工具，確認畫面會顯示 `mcp__demo__connection_status` 與空參數 `{}`，接著詢問 `Allow? [y]es / [N]o:`。輸入 `y` 才會送出呼叫，server 回傳 `MCP connection OK.`；這只確認 MCP 連線，修復結果仍要看測試。
+
+啟動時目前不會列出工具清單。要確認工具已載入，可開啟啟動時 `log:` 顯示的 JSONL 事件檔，在第一筆 `run_start` 的 `mcp.servers` 找到名稱 `demo`，其 `tools` 應包含 `mcp__demo__connection_status`。工具呼叫的確認畫面則表示模型已選用它；被拒絕的呼叫不會送到 server。
+
+`--mcp-config` 的相對路徑以啟動 fixlab 時的目前目錄為準，並非設定檔所在目錄；server 的 `args` 也不會自動以設定檔目錄解析，所以這個範例一律用絕對路徑。若啟動失敗，fixlab 會顯示 server 名稱與錯誤，並在可取得時附上 server stderr 的最後幾行；先檢查 Python、`server.py` 路徑，以及該 Python 環境是否裝好 MCP SDK。
 
 ## 快速開始（開發用）
 
@@ -118,7 +190,7 @@ cp -R tests/fixtures/timelog /某個暫存目錄/timelog-try
 ### 一次性模式會印什麼
 
 - **執行中**（stderr）：被修改的目錄、沙箱狀態（`sandbox: on` 或 `sandbox: OFF (原因)`），之後每個工具呼叫一行，例如 `read_file  ok=True  flags={}`。
-- **結束後**（stdout）：stop reason（`done` 模型自己宣告完成、`max_steps` 步數用完、`stuck` 連續三輪全失敗、`error` 請求失敗）、步數、token，然後是**快照 diff**，再來是 fixlab **自己再跑一次**測試的輸出，最後一行固定是 `RESULT: tests passed` 或 `RESULT: tests FAILED`。
+- **結束後**（stdout）：stop reason（`done` 模型自己宣告完成、`max_steps` 步數用完、`stuck` 連續三輪全失敗、`error` 請求失敗）、步數、token，然後是**快照 diff**，再來是 fixlab **自己再跑一次**測試的輸出，最後一行是 `RESULT: tests passed`、`RESULT: tests FAILED` 或逾時時的 `RESULT: tests FAILED (timed out)`。
 - **結束碼**：0 最後那次測試通過；1 沒通過；2 輸入有誤（路徑不是目錄、沒設金鑰、沒指定模型）。
 
 最後那次測試不聽模型怎麼說：模型可能沒跑測試就宣稱完成，所以結果以 fixlab 自己跑的為準。
@@ -127,7 +199,7 @@ cp -R tests/fixtures/timelog /某個暫存目錄/timelog-try
 
 在要處理的專案目錄直接執行 `fixlab`，就會進入互動模式，不需要加 `.` 或 `-i`。也可用 `fixlab PATH -i` 指定其他目錄。一次讀一行當任務，同一個 session 內**保留對話**，所以修完 bug 之後可以接著說「幫那個函式加上說明文字」。
 
-`fixlab PATH` 仍為一次性模式，可用 `fixlab PATH --task '任務內容'` 換掉任務文字；一次性模式寫檔不會詢問，所以不給 PATH 只給 `--task` 會被拒絕。`-i` 明確指定互動模式，優先於 `--task`，任務由提示字元輸入。下面是畫面的格式（用寫好劇本的假模型跑出來的，所以最後一行的 token 與耗時不代表真實的用量）：
+`fixlab PATH` 仍為一次性模式，可用 `fixlab PATH --task '任務內容'` 換掉任務文字；一次性模式寫檔不會詢問，所以不給 PATH 只給 `--task` 會被拒絕。`-i` 明確指定互動模式，優先於 `--task`，任務由提示字元輸入。下面是畫面的格式（使用假模型劇本示意，測試時間、token 與耗時不代表真模型的用量；差異由目前的顯示函式產生）：
 
 ```
 fixlab> fix the failing test
@@ -138,8 +210,13 @@ fixlab> fix the failing test
   ▸ read_file timelog/parser.py
     ✓
   ▸ edit_file timelog/parser.py
-    - [re.match(r"(\d+)([hm])", text).groups()]
-    + re.findall(r"(\d+)([hm])", text)
+    @@ line 9
+     9       text = text.strip()
+    10       if not re.fullmatch(r"(\d+[hm])+", text):
+    11           raise ValueError(f"invalid duration: {text!r}")
+    12 -     units = [re.match(r"(\d+)([hm])", text).groups()]
+       +     units = re.findall(r"(\d+)([hm])", text)
+    13       return sum(int(number) * (60 if unit == "h" else 1) for number, unit in units)
     Allow? [y]es / [a]lways for this tool / [N]o: y
     ✓
   ▸ run_tests .
@@ -160,13 +237,15 @@ Fixed parse_duration: it only took the first unit.
 
 ### Benchmark 與實驗（階段 3）
 
-8 道題在 `bench/problems/`，每題一個資料夾（給 agent 的 `project`、藏起來的 `hidden/fix` 與 `hidden/keep`、標準解 `solution`、`problem.json`）。指令都是 `python -m fixlab.bench ...`：
+8 道題在 `bench/problems/`，每題一個資料夾（給 agent 的 `project`、藏起來的 `hidden/fix` 與 `hidden/keep`、標準解 `solution`、`problem.json`）。在 fixlab 原始碼根目錄執行，指令都是 `.venv/bin/python -m fixlab.bench ...`（若已啟用該虛擬環境，可簡寫為 `python -m fixlab.bench ...`）：
+
+**正式實驗 `run --confirm` 必須在 macOS 且 `sandbox-exec` 可用時執行**，否則會被拒絕，以免 agent 跑測試時讀到隱藏測試。未加 `--confirm` 的計畫預覽不需要沙箱。`check`、`grade` 在沒有沙箱時仍可執行，但測試程式不受沙箱保護。
 
 | 指令 | 做什麼 | 花錢嗎 |
 |---|---|---|
 | `check [題目...] [--repeat N]` | 題目自我檢查：原始專案與套上標準解後各組測試的結果、重跑看會不會 flaky、失敗輸出不能點名 bug 檔 | 不花錢，只跑 pytest；全部 8 題約 2 分鐘 |
 | `grade 題目 工作目錄` | 在乾淨的暫存目錄用原版測試與隱藏測試評分，印 JSON（`fixed`、`broke_existing`、`overfit`、`invalid`） | 不花錢 |
-| `run --models bench/models.json --out 資料夾` | 展開（題目、模型、條件、次數）；沒有 `--confirm` 只印計畫；有 `--confirm` 才真的呼叫模型，可續跑 | **會花錢**（完整實驗約 $0.4、約 1 小時） |
+| `run --models bench/models.json --out 資料夾` | 展開（題目、模型、條件、次數）；沒有 `--confirm` 只印計畫；有 `--confirm` 才真的呼叫模型，可續跑 | **加 `--confirm` 才會花錢**；2026-10-18 的 160 次實驗約 $0.41、59 分鐘，見[結果報告](docs/benchmark-results.md)，重跑的費用與時間會隨模型、價格及回覆而變 |
 | `report results.jsonl --models bench/models.json` | 把結果變成 markdown 報告 | 不花錢 |
 
 `bench/models.json` 的每個模型可以寫選填的 `max_steps`（1 以上的整數）：這個模型每次執行的步數上限，兩個條件用同一個值。沒寫（或寫 `null`）就用 fixlab 自己的預設 20；寫成 0、負數、小數、字串或 `true` 會在載入時被拒絕，一次都不跑。
@@ -205,7 +284,7 @@ Fixed parse_duration: it only took the first unit.
 
 ## 讀程式的順序
 
-全部約 1600 行。每個檔案的開頭都有說明它在整體流程中的角色。
+從入口與迴圈開始，再讀工具、安全限制與記錄，最後看 benchmark。每個檔案的開頭都有說明它在整體流程中的角色。
 
 | 順序 | 檔案 | 做什麼 |
 |---|---|---|
@@ -215,10 +294,11 @@ Fixed parse_duration: it only took the first unit.
 | 4 | `fixlab/tools.py` | 六個工具的實作與登記 |
 | 5 | `fixlab/workspace.py` | 工作目錄：路徑必須落在根目錄內、測試檔唯讀、工具分派、錯誤不丟例外 |
 | 6 | `fixlab/sandbox.py` | 用 macOS `sandbox-exec` 包住 `run_tests`：禁網路、限制讀寫 |
-| 7 | `fixlab/telemetry.py` | 事件檔：一次執行一個資料夾、一行一個 JSON、每行立刻寫入、寫不進去只警告 |
-| 8 | `fixlab/display.py` | 互動模式的畫面：標題行、差異、結果行、用量行、顏色（只回傳字串，不直接印） |
-| 9 | `fixlab/mcp_tools.py` | 選用的 MCP connector：讀設定檔、以官方 SDK 連 stdio server、把工具登記成 `mcp__<server>__<tool>`、轉換結果、關閉 server |
-| 10 | `fixlab/bench/` | 階段 3：`problems.py`（題目載入與摘要）、`grader.py`（評分器）、`selfcheck.py`（題目自我檢查）、`runner.py`（實驗執行器）、`report.py`（報告）、`__main__.py`（上面四個指令） |
+| 7 | `fixlab/interpreter.py` | 選擇與檢查測試用 Python、驗證基底安裝目錄與符號連結，決定沙箱可放行的環境 |
+| 8 | `fixlab/telemetry.py` | 事件檔：一次執行一個資料夾、一行一個 JSON、每行立刻寫入、寫不進去只警告 |
+| 9 | `fixlab/display.py` | 互動模式的畫面：標題行、差異、結果行、用量行、顏色（只回傳字串，不直接印） |
+| 10 | `fixlab/mcp_tools.py` | 選用的 MCP connector：讀設定檔、以官方 SDK 連 stdio server、把工具登記成 `mcp__<server>__<tool>`、轉換結果、關閉 server |
+| 11 | `fixlab/bench/` | 階段 3：`problems.py`（題目載入與摘要）、`grader.py`（評分器）、`selfcheck.py`（題目自我檢查）、`runner.py`（實驗執行器）、`report.py`（報告）、`__main__.py`（上面四個指令） |
 
 ## 六個工具
 
@@ -229,7 +309,7 @@ Fixed parse_duration: it only took the first unit.
 | `grep` | 搜尋檔案內容，輸出 `路徑:行號:內容` | 自己實作；單行 1 秒、整體 5 秒的時間上限，上限 100 行 |
 | `edit_file` | 把檔案裡**恰好出現一次**的字串換掉 | 0 次或多次都不改，並回報實際次數 |
 | `write_file` | 建立新檔，或整個覆寫 | 覆寫既有檔案前必須先整檔讀過，而且讀過之後沒被別人改 |
-| `run_tests` | 在工作目錄跑 pytest | 固定指令、10 秒逾時、輸出最多 4000 字元（留頭尾）、在沙箱裡跑 |
+| `run_tests` | 在工作目錄跑 pytest，可指定目標檔案或目錄 | 固定參數、忽略專案的 pytest 設定檔、不自動載入外掛；10 秒逾時、輸出最多 4000 字元（留頭尾）；macOS 沙箱可用時啟用 |
 
 **沒有任意 shell**，也沒有 `glob`（`list_files` 是遞迴的，目前沒有需要依檔名過濾的情境）。
 
@@ -239,7 +319,7 @@ Fixed parse_duration: it only took the first unit.
 - **測試檔不可寫**：`edit_file`、`write_file` 碰到測試檔會被拒絕；`run_tests` 跑的程式在沙箱裡也寫不了測試檔（防止模型在原始碼裡塞「執行時改寫測試」的程式來假通過）。這是修 bug 模式的政策，不是通用限制，由入口決定。
 - **`run_tests` 在沙箱裡跑**（macOS）：不能連網、不能讀家目錄與 fixlab 自己的專案目錄（跑測試用的 Python 環境與它的基底 Python 安裝目錄例外，放行讀取）、只能寫工作目錄，而且不能寫跑測試用的 Python 環境（它在工作目錄裡時，改掉裡面的 pytest 就能偽造通過；工具層同樣擋下）。
 - **子行程環境變數白名單**：只傳 `PATH`、`LANG`、`LC_ALL`、`TMPDIR` 與 `PYTHONDONTWRITEBYTECODE=1`，API 金鑰不會被被測的程式看到。另外固定 `TZ=UTC`、`PYTHONHASHSEED=0`，並設 `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`（不自動載入 pytest 外掛），測試結果才不依賴機器。
-- **判定測試通過不只看結束碼**：用 `python -P` 啟動以免根目錄的 `pytest.py` 取代真的 pytest，並要求輸出最後一行有 `N passed`。
+- **判定測試通過不只看結束碼**：用 `python -P` 啟動以免根目錄的 `pytest.py` 取代真的 pytest；`run_tests` 要求結束碼為 0，且輸出中有 `N passed ... in ...s` 摘要，不限最後一行。benchmark 評分器另要求最後一行是通過摘要，且通過數與題目記錄一致。這些檢查仍擋不住所有偽造，見下方限制。
 - **互動模式會先問**：改檔、寫檔、跑測試之前問使用者；一次性模式沒有人可以問，改成事後的差異與重跑測試。
 - **保險**：步數上限 20、連續三輪工具呼叫全失敗就停（`stuck`；被使用者拒絕的呼叫也算失敗）。這兩個數字是初始值，沒有實測依據。
 
@@ -252,6 +332,7 @@ Fixed parse_duration: it only took the first unit.
 - **`--python` 的檢查擋不住刻意做壞的環境**：基底目錄的檢查只確認它像一個 Python 安裝、不碰到受保護的目錄；指定的環境本身會在沙箱裡執行，只指定你信任的環境。
 - **沙箱擋不到的偽造**：被測的程式在 pytest 行程內部竄改 pytest 本身，或自己印一行假的 `N passed` 摘要再以結束碼 0 離開（測試與原始碼在同一個行程；後者我用兩行 `atexit` 重現過，bug 還在，`tests_passed` 卻是 `True`）。階段 3 的評分器降低了這個風險（乾淨環境重跑、只讀最後一行摘要、通過數要等於題目記的數量），但**沒有根治**：被測的程式與 pytest 仍在同一個行程。見第 10、16 篇。
 - **`run_tests` 不自動載入 pytest 外掛，時區固定 UTC、雜湊順序固定**：這是階段 3 為了讓評分不依賴機器加的，一般使用也一樣。測試要靠自動載入的外掛（例如 pytest-asyncio、pytest-mock、pytest-django）的專案，外掛不會載入，測試可能失敗；`fixlab` 針對的是小型、只用標準函式庫的專案。要改成可選需要新增旗標，目前沒做。
+- **`run_tests` 忽略專案的 pytest 設定檔**：固定使用 `-c /dev/null`，不讀 `pytest.ini`、`pyproject.toml`、`setup.cfg` 或 `tox.ini` 中的 pytest 設定，例如 `addopts`、`testpaths`、`pythonpath`。專案目錄內的 `conftest.py` 仍會載入，上層目錄的則不載入。因此，即使指定了專案自己的 Python，結果也可能與平常直接執行 pytest 不同；目前沒有自訂 pytest 參數的 CLI 選項。
 - **沒有重複呼叫偵測**：模型一直重讀同一個檔案（成功的呼叫）不會觸發 `stuck`。
 - **不會自己讀 `.env`、金鑰沒有存進系統鑰匙圈**：用 uv 或 pipx 安裝後可以在任何目錄直接打 `fixlab`（見〈安裝（一般使用者）〉），但模型端點與金鑰要用環境變數提供。之後想做：金鑰存系統鑰匙圈。
 - **互動模式的對話沒有長度上限**：用久了每一步的 prompt 會很大，小模型（Ollama 設 32768）可能撞到 context 上限；用 `/reset` 重來，上限怎麼處理等有事件檔的資料再決定。
@@ -260,7 +341,7 @@ Fixed parse_duration: it only took the first unit.
 - **管線輸入會被當成回答**：`echo ... | fixlab PATH -i` 會把管線裡的下一行拿去回答問題。
 - **畫面的顏色只用假的終端機測過格式**，實際的樣子要用過才確定。
 - **只解析原生 tool call**：不支援把工具呼叫寫在文字裡的模型。
-- **證據仍然有限**：benchmark 只有 8 題、2 個模型（一個開源、一個商用）、每格 5 次；Claude Haiku 5.5 在這組題目上碰到天花板（160 次全部修好），分不出有沒有測試的差別；步數上限 20 沒有校準，Qwen 沒有 `run_tests` 時的 25% 有一部分是它跑滿步數造成的。見 [docs/benchmark-results.md](docs/benchmark-results.md)。
+- **證據仍然有限**：第一次完整實驗只有 8 題、2 個模型（一個開源、一個商用）、每格 5 次；Claude Haiku 5.5 在這組題目上碰到天花板（兩個條件合計 80 次全部修好，兩個模型合計才是 160 次），分不出有沒有測試的差別。Qwen 沒有 `run_tests` 時的 25% 是 20 步內的修好率；後續放寬到 40 步的 16 次實驗仍全部跑滿步數，修好次數與對照組相同，沒有支持「只是步數不夠」的猜測；改 prompt 則提高了修好次數，但仍常無法自行結束。步數上限仍未充分校準，詳見[結果報告與後續實驗](docs/benchmark-results.md)。
 
 ## 實跑紀錄：第一次完整的修復（階段 1）
 
@@ -282,7 +363,7 @@ fixlab /某個暫存目錄/timelog-try
 | 量化方式 | 未知（OpenRouter 沒有提供） |
 | 執行環境 | OpenRouter 的 API，沒有版本號 |
 | 上下文長度 | 262144（OpenRouter 清單上寫的，沒有驗證實際值） |
-| 思考模式 | 預設開啟，入口目前沒有關閉的選項 |
+| 思考模式 | 當時沿用供應商預設（開啟），當時的入口沒有關閉選項；目前可用 `--extra-body` 傳入供應商支援的設定，參數名稱依端點而定 |
 | 題目 | timelog，1 題 |
 | 隨機種子 | 無（這個介面沒有提供） |
 | 日期與時間 | 2026-10-17，06:37（UTC） |
@@ -383,6 +464,7 @@ fixlab /某個暫存目錄/timelog-try
 | 17 | 題目自我檢查（怎麼證明題目量到想量的東西） |
 | 18 | 實驗執行器（有 `run_tests` 對沒有） |
 | 19 | 第一次實驗結果，以及怎麼讀它 |
+| 20 | [Qwen 沒有測試時為什麼停不下來](docs/articles/20-why-qwen-wont-stop.md)（量化、步數上限與 prompt 的後續實驗） |
 
 ## 規格與設計文件
 
