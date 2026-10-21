@@ -20,8 +20,9 @@ from pathlib import Path
 import openai
 from openai import OpenAI
 
-from fixlab.display import call_header, edit_diff_lines, footer_line, result_line
+from fixlab.display import call_header, edit_diff_lines, footer_line, mcp_arguments, result_line
 from fixlab.interpreter import check_interpreter, choose_interpreter
+from fixlab.mcp_tools import close_all, load_config, register_mcp_tools, start_servers
 from fixlab.loop import DEFAULT_MAX_STEPS, run_agent
 from fixlab.sandbox import sandbox_available, sandbox_status
 from fixlab.telemetry import EventLog, default_log_dir
@@ -48,6 +49,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--python", metavar="PATH",
                         help="Python interpreter that runs the tests, e.g. the project's .venv/bin/python "
                              "(default: the one running fixlab). You trust this environment: it runs inside the sandbox")
+    parser.add_argument("--mcp-config", metavar="PATH",
+                        help="JSON file listing local MCP servers (mcpServers) whose tools the agent may call; "
+                             "interactive mode only, every call is confirmed. You trust these servers: they run "
+                             "with your permissions, outside the sandbox. Needs: pip install 'fixlab[mcp]'")
     parser.add_argument("--meta", action="append", default=[], metavar="KEY=VALUE",
                         help="record an experiment condition in the event log, e.g. quantization=Q4_K_M (repeatable)")
     parser.add_argument("--hide-tool", action="append", default=[], metavar="NAME",
@@ -71,6 +76,9 @@ def main(argv=None, client=None) -> int:
         # 一次性執行寫檔不會詢問，目標目錄必須明確指定，不能默默用目前目錄。
         return fail("--task needs PATH in one-shot mode: run fixlab PATH --task TEXT")
     args.interactive = args.interactive or not path_given
+    if args.mcp_config is not None and not args.interactive:
+        # 一次性執行沒有人可以確認：MCP 工具可以做任何事，不能不問就執行
+        return fail("MCP tools need interactive mode (every call is confirmed): add -i or leave out --mcp-config")
     args.path = args.path if path_given else "."
     args.task = args.task if args.task is not None else DEFAULT_TASK
 
@@ -110,9 +118,10 @@ def main(argv=None, client=None) -> int:
     options = {"confirm": make_asker()} if args.interactive else {}
     ws = workspace_class(root, python=python, read_only=looks_like_test_file, protect_tests=True, **options)
     register_tools(ws)
+    # MCP 工具要等 server 啟動、登記之後才能隱藏；其他名稱現在就檢查，打錯字不必等 server 啟動才知道
+    later = [name for name in args.hide_tool if args.mcp_config is not None and name.startswith(MCP_PREFIX)]
     try:
-        for name in args.hide_tool:
-            ws.hide(name)
+        hide_tools(ws, [name for name in args.hide_tool if name not in later])
     except ValueError as error:
         return fail(str(error))
     # 其他參數都檢查完、工作區也建好之後，才執行直譯器檢查（要花時間）；之後才建事件檔、呼叫模型。
@@ -123,7 +132,25 @@ def main(argv=None, client=None) -> int:
         return fail(str(error))
     # 沒有沙箱時不需要放行基底，也不計算它（標準函式庫的位置因平台而異）
     args.test_python = {"path": python, "source": source, "base": str(ws.base) if sandbox_available() else None}
+    # MCP server 在其他檢查都通過之後、事件檔與模型請求之前啟動；任何失敗都關閉已啟動的再結束
+    servers, args.mcp = [], None
+    if args.mcp_config is not None:
+        try:
+            servers = start_servers(load_config(args.mcp_config))
+            registered, skipped = register_mcp_tools(ws, servers)
+            hide_tools(ws, later)  # MCP 工具登記之後才隱藏，--hide-tool 才能指定它們
+        except ValueError as error:
+            close_all(servers)
+            return fail(str(error))
+        args.mcp = mcp_summary(servers, registered, skipped)
+    try:
+        return start_run(client, model, ws, root, args, meta, log_dir)
+    finally:
+        close_all(servers)
 
+
+def start_run(client, model: str, ws: Workspace, root: Path, args, meta: dict, log_dir: Path) -> int:
+    """印出狀態行、建立事件檔，再交給互動或一次性模式。"""
     print(f"editing in place: {root}", file=sys.stderr)
     print(f"sandbox: {sandbox_status()}", file=sys.stderr)  # 沙箱是安全功能，沒開要讓使用者看得到
 
@@ -245,7 +272,7 @@ class ShownWorkspace(Workspace):
     問題是在 call 裡面問的，所以標題要在 call 之前印、結果要在 call 之後印，順序才對。"""
 
     def call(self, name: str, args: dict):
-        print(call_header(name, args))
+        print(call_header(name, args, self.external_tools.get(name)))
         if name == "edit_file":
             for line in self.edit_preview(args):
                 print(line)
@@ -270,6 +297,8 @@ class ShownWorkspace(Workspace):
 
 # 會改檔或執行程式的工具才問；讀取類工具直接放行
 ASKED_TOOLS = ("edit_file", "write_file", "run_tests")
+MCP_PREFIX = "mcp__"  # 外部 MCP 工具：可以做任何事，一律先問
+MCP_CONFIRM_CHARS = 4000  # 確認畫面能完整顯示的參數長度上限；超過的 MCP 呼叫直接拒絕
 INTERRUPT_NOTE = "[The user interrupted this task.]"  # 接在被打斷的任務後面，給下一個任務的模型看
 REQUEST_FAILED_NOTE = "[The task stopped because the request failed.]"  # 同上，用在請求失敗、但前面已經做了一些事的任務
 
@@ -280,18 +309,26 @@ def make_asker():
     always = set()
 
     def ask(name: str, args: dict) -> bool:
-        if name not in ASKED_TOOLS or name in always:
+        if (name not in ASKED_TOOLS and not name.startswith(MCP_PREFIX)) or name in always:
             return True
+        if name.startswith(MCP_PREFIX) and len(mcp_arguments(args)) > MCP_CONFIRM_CHARS:
+            # 參數太長，畫面上看不完就同意等於沒確認：直接拒絕，請模型改用較短的呼叫
+            print(f"    The arguments are too long to confirm ({len(mcp_arguments(args))} characters); declined.")
+            return False
+        # MCP server 在沙箱外以使用者的權限執行，每次呼叫都確認是唯一擋住模型的關卡；
+        # 放行一次就不再看到之後的參數，模型可以對該工具送任何東西，所以 MCP 不提供「一律放行」
+        is_mcp = name.startswith(MCP_PREFIX)
+        prompt = "    Allow? [y]es / [N]o: " if is_mcp else "    Allow? [y]es / [a]lways for this tool / [N]o: "
         try:
-            answer = input("    Allow? [y]es / [a]lways for this tool / [N]o: ")
+            answer = input(prompt)
         except EOFError:  # 輸入結束了，沒有人可以同意：拒絕
             print()  # 問題後面沒有換行，補一個，下一行的結果才不會接在後面
             return False
         answer = answer.strip().lower()
-        if answer in ("a", "always"):
+        if answer in ("a", "always") and not is_mcp:
             always.add(name)
             return True
-        return answer in ("y", "yes")  # 其他一律拒絕，包括空白
+        return answer in ("y", "yes")  # 其他一律拒絕，包括空白；MCP 的 a/always 也算拒絕
 
     return ask
 
@@ -369,8 +406,22 @@ def run_conditions(args, model: str, root: Path, meta: dict, mode: str, ws: Work
         "sandbox": sandbox_status(), "fixlab_commit": fixlab_commit(),
         "python": platform.python_version(), "openai": openai.__version__, "meta": meta,
         "hidden_tools": ws.hidden_tools, "temperature": args.temperature, "extra_body": args.extra_body,
-        "system_prompt_extra": args.system_prompt_extra, "test_python": args.test_python,
+        "system_prompt_extra": args.system_prompt_extra, "test_python": args.test_python, "mcp": args.mcp,
     }
+
+
+def hide_tools(ws: Workspace, names: list[str]) -> None:
+    """--hide-tool：不讓模型看到這些工具。名稱不存在時丟出 ValueError。"""
+    for name in names:
+        ws.hide(name)
+
+
+def mcp_summary(servers, registered: dict, skipped: dict) -> dict:
+    """事件檔的 mcp 欄位：server 名稱、登記與略過的工具、SDK 版本。不記指令、參數、環境變數與 cwd：可能含金鑰。"""
+    import importlib.metadata
+    return {"sdk_version": importlib.metadata.version("mcp"),
+            "servers": [{"name": server.name, "tools": registered[server.name], "skipped": skipped[server.name]}
+                        for server in servers]}
 
 
 def fixlab_commit() -> str | None:

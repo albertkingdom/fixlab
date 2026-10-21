@@ -562,3 +562,161 @@ def test_the_extra_system_prompt_is_in_every_request_of_an_interactive_session(s
     expected = {"role": "system", "content": SYSTEM_PROMPT + "\n\nFinish once the fix is made."}
     assert client.sent[0][0] == expected and client.sent[1][0] == expected
     assert [m["role"] for m in client.sent[1]].count("system") == 1
+
+
+# ── mcp-tools：MCP tools are offered only in interactive mode and every call is confirmed ──
+
+import os  # noqa: E402
+import sys  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+ECHO = str(Path(__file__).with_name("mcp_echo_server.py"))
+
+
+@pytest.fixture
+def mcp_config(tmp_path):
+    pytest.importorskip("mcp", reason="the mcp extra is not installed")
+    calls, pids = tmp_path / "calls.txt", tmp_path / "pids.txt"
+    path = tmp_path / "servers.json"
+    path.write_text(json.dumps({"mcpServers": {"echo": {
+        "command": sys.executable, "args": [ECHO], "env": {"ECHO_CALLS": str(calls), "ECHO_PID": str(pids)}}}}))
+    return {"path": str(path), "calls": calls, "pids": pids}
+
+
+def server_calls(mcp_config):
+    return mcp_config["calls"].read_text().split() if mcp_config["calls"].exists() else []
+
+
+def no_server_left(mcp_config):
+    if not mcp_config["pids"].exists():
+        return True
+    for pid in map(int, mcp_config["pids"].read_text().split()):
+        try:
+            os.kill(pid, 0)
+            return False
+        except ProcessLookupError:
+            pass
+    return True
+
+
+# Scenario: One-shot mode with MCP
+def test_mcp_needs_interactive_mode(project, home, mcp_config, capsys):
+    client = FakeClient([("Done.", None)])
+    assert main([str(project), "--model", "m", "--mcp-config", mcp_config["path"]], client=client) == 2
+    assert "interactive" in capsys.readouterr().err
+    assert client.sent == [] and not mcp_config["pids"].exists()
+
+
+# Scenario: SDK not installed
+def test_a_missing_sdk_is_explained(session, home, tmp_path, monkeypatch, capsys):
+    path = tmp_path / "servers.json"
+    path.write_text(json.dumps({"mcpServers": {"echo": {"command": sys.executable, "args": [ECHO]}}}))
+    monkeypatch.setitem(sys.modules, "mcp", None)  # 讓 import mcp 失敗
+    client = FakeClient([])
+    assert session(client, [], "--mcp-config", str(path)) == 2
+    assert "fixlab[mcp]" in capsys.readouterr().err and client.sent == []
+
+
+def test_an_invalid_configuration_stops_before_the_prompt(session, home, tmp_path, capsys):
+    path = tmp_path / "servers.json"
+    path.write_text(json.dumps({"mcpServers": {"echo": {"url": "https://example.com"}}}))
+    assert session(FakeClient([]), [], "--mcp-config", str(path)) == 2
+    out, err = capsys.readouterr()
+    assert "only stdio" in err and "fixlab> " not in out
+    assert not (home / ".fixlab").exists()
+
+
+# Scenario: The confirmation shows the arguments, Declined call
+def test_a_declined_mcp_call_never_reaches_the_server(session, mcp_config, capsys):
+    client = FakeClient([(None, [native("mcp__echo__shout", text="hi")]), ("OK.", None)])
+    session(client, ["shout please", "n"], "--mcp-config", mcp_config["path"])
+    out = capsys.readouterr().out
+    assert "echo" in out and "shout" in out and '"text": "hi"' in out
+    assert "Allow?" in out
+    assert "shout" not in server_calls(mcp_config)
+    assert no_server_left(mcp_config)
+
+
+def test_an_allowed_mcp_call_returns_the_server_s_answer(session, mcp_config, capsys):
+    client = FakeClient([(None, [native("mcp__echo__shout", text="hi")]), ("OK.", None)])
+    session(client, ["shout please", "y"], "--mcp-config", mcp_config["path"])
+    assert server_calls(mcp_config) == ["shout"]
+    assert client.sent[-1][-1]["content"] == "HI"
+    assert no_server_left(mcp_config)
+
+
+# Scenario: MCP calls are asked every time
+def test_an_always_answer_to_an_mcp_call_is_declined(session, mcp_config, capsys):
+    client = FakeClient([(None, [native("mcp__echo__shout", text="hi")]), ("OK.", None)])
+    session(client, ["shout please", "a"], "--mcp-config", mcp_config["path"])
+    out = capsys.readouterr().out
+    assert "Allow?" in out and "[a]lways" not in out
+    assert server_calls(mcp_config) == []
+    assert client.sent[-1][-1]["content"].startswith("error: the user declined this call")
+
+
+def test_every_mcp_call_is_asked_again(session, mcp_config, capsys):
+    client = FakeClient([(None, [native("mcp__echo__shout", text="one")]),
+                         (None, [native("mcp__echo__shout", text="two")]), ("OK.", None)])
+    session(client, ["shout twice", "y", "y"], "--mcp-config", mcp_config["path"])
+    assert capsys.readouterr().out.count("Allow?") == 2
+    assert server_calls(mcp_config) == ["shout", "shout"]
+
+
+# run_start records the MCP configuration summary
+def test_run_start_records_the_mcp_summary_without_the_command(session, home, mcp_config):
+    session(FakeClient([]), [], "--mcp-config", mcp_config["path"])
+    start = event_lines(home)[0]
+    server = start["mcp"]["servers"][0]
+    assert server["name"] == "echo" and "mcp__echo__shout" in server["tools"] and server["skipped"] == []
+    assert start["mcp"]["sdk_version"]
+    assert ECHO not in json.dumps(start) and sys.executable not in json.dumps(start["mcp"])
+
+
+def test_without_mcp_run_start_records_null(session, home):
+    session(FakeClient([]), [])
+    assert event_lines(home)[0]["mcp"] is None
+
+
+# ── code review 修正：確認畫面 ──────────────────────────────────────────────
+
+
+def mcp_session_with_server(tmp_path, name):
+    pytest.importorskip("mcp", reason="the mcp extra is not installed")
+    calls = tmp_path / "calls.txt"
+    path = tmp_path / "servers.json"
+    path.write_text(json.dumps({"mcpServers": {name: {"command": sys.executable, "args": [ECHO],
+                                                      "env": {"ECHO_CALLS": str(calls)}}}}))
+    return str(path), calls
+
+
+def test_the_confirmation_names_the_real_server_and_tool(session, tmp_path, capsys):
+    path, _ = mcp_session_with_server(tmp_path, "prod_")
+    client = FakeClient([(None, [native("mcp__prod___shout", text="hi")]), ("OK.", None)])
+    session(client, ["go", "n"], "--mcp-config", path)
+    assert "(server prod_, tool shout)" in capsys.readouterr().out
+
+
+def test_the_confirmation_shows_all_arguments_and_escapes_control_characters(session, tmp_path, capsys):
+    path, calls = mcp_session_with_server(tmp_path, "echo")
+    text = "a" * 700 + "‮" + "b" * 700
+    client = FakeClient([(None, [native("mcp__echo__shout", text=text)]), ("OK.", None)])
+    session(client, ["go", "y"], "--mcp-config", path)
+    out = capsys.readouterr().out
+    assert "a" * 700 in out and "b" * 700 in out and "\\u202e" in out and "‮" not in out
+    assert calls.read_text().split() == ["shout"]
+
+
+def test_arguments_too_long_to_confirm_are_refused(session, tmp_path, capsys):
+    path, calls = mcp_session_with_server(tmp_path, "echo")
+    client = FakeClient([(None, [native("mcp__echo__shout", text="x" * 20000)]), ("OK.", None)])
+    session(client, ["go"], "--mcp-config", path)
+    out = capsys.readouterr().out
+    assert "too long" in out and "Allow?" not in out
+    assert not calls.exists() or "shout" not in calls.read_text()
+
+
+def test_an_mcp_tool_can_be_hidden(session, home, mcp_config):
+    session(FakeClient([]), [], "--mcp-config", mcp_config["path"], "--hide-tool", "mcp__echo__shout")
+    start = event_lines(home)[0]
+    assert start["hidden_tools"] == ["mcp__echo__shout"]

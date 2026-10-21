@@ -27,13 +27,13 @@ def paint(text: str, style: str) -> str:
     return f"\x1b[{STYLES[style]}m{text}\x1b[0m"
 
 
-def call_header(name: str, args: dict) -> str:
-    """一個工具呼叫的標題行：「  ▸ 工具 它要動什麼」。"""
-    detail = call_detail(name, args)
+def call_header(name: str, args: dict, origin: tuple[str, str] | None = None) -> str:
+    """一個工具呼叫的標題行：「  ▸ 工具 它要動什麼」。origin 是外部工具（MCP）的 (server, 原本的工具名稱)。"""
+    detail = call_detail(name, args, origin)
     return f"  {paint('▸', 'bold')} {name}" + (f" {detail}" if detail else "")
 
 
-def call_detail(name: str, args: dict) -> str:
+def call_detail(name: str, args: dict, origin: tuple[str, str] | None = None) -> str:
     # 參數可能不合法（缺欄位、型別不對）：這裡用 get 取值，不能因為要顯示而出錯
     path = args.get("path", "")
     if name == "read_file":
@@ -52,7 +52,18 @@ def call_detail(name: str, args: dict) -> str:
         return f"{path} ({len(str(args.get('content', '')))} characters)"
     if name == "run_tests":
         return args.get("target", ".")
+    if origin is not None:
+        # 外部工具：使用者要在同意前看得到它會做什麼，所以印出 server、原本的工具名稱與完整的參數
+        server, tool = origin
+        return f"(server {server}, tool {tool}) {mcp_arguments(args)}"
     return ""
+
+
+def mcp_arguments(args: dict) -> str:
+    """確認畫面上的參數：完整的 JSON，非 ASCII 字元一律跳脫。模型可以在參數裡放控制字元或改變文字方向的字元，
+    讓畫面上看到的和實際送出的不一樣，所以不能原樣印。太長的參數不截斷，由詢問的地方直接拒絕（見 cli.make_asker）。"""
+    import json
+    return json.dumps(args, ensure_ascii=True)
 
 
 def edit_diff_lines(before: str, after: str) -> list[str]:
@@ -116,9 +127,14 @@ def result_line(result) -> str:
 
 
 def reason(output: str) -> str:
-    """錯誤輸出的第一行，去掉開頭的 "error: "。"""
+    """錯誤輸出的第一行，去掉開頭的 "error: "。不可列印的字元（跳脫序列、改變文字方向的字元）改成看得見的跳脫寫法：
+    外部工具的錯誤可能回顯模型給的參數，原樣印出會讓模型控制終端機，遮住下一次的確認畫面。"""
     first = output.splitlines()[0] if output else ""
-    return first.removeprefix("error: ")
+    return printable(first.removeprefix("error: "))
+
+
+def printable(text: str) -> str:
+    return "".join(c if c.isprintable() else c.encode("unicode_escape").decode("ascii") for c in text)
 
 
 def test_result_line(result) -> str:
