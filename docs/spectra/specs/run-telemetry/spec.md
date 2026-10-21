@@ -610,3 +610,31 @@ tests:
   - tests/test_isolation.py
   - tests/test_interpreter.py
 -->
+
+---
+### Requirement: run_start records the MCP configuration summary
+
+The `run_start` event SHALL include the key `mcp`: null when `--mcp-config` is not given, otherwise an object with `sdk_version` and `servers`, a list of objects with `name`, `tools` (the registered names) and `skipped` (the names of skipped tools). It SHALL NOT include a server's command, arguments, environment or working directory, because they can contain secrets.
+
+#### Scenario: Run with one MCP server
+
+- **WHEN** fixlab runs with a configuration listing server `echo` that provides tool `shout`
+- **THEN** the `run_start` line has `mcp.servers` equal to `[{"name": "echo", "tools": ["mcp__echo__shout"], "skipped": []}]` and contains no `command` or `args` value
+
+<!-- @trace
+source: mcp-client
+updated: 2026-10-21
+code:
+  - tests/mcp_echo_server.py
+  - fixlab/cli.py
+  - fixlab/display.py
+  - pyproject.toml
+  - fixlab/workspace.py
+  - README.md
+  - fixlab/mcp_tools.py
+tests:
+  - tests/test_display.py
+  - tests/test_packaging.py
+  - tests/test_mcp_tools.py
+  - tests/test_interactive.py
+-->
