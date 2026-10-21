@@ -15,6 +15,7 @@ import io
 import json
 import os
 import shutil
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -116,7 +117,8 @@ def plan_runs(problem_ids, models, conditions, repeats) -> list[RunSpec]:
 
 def fixlab_arguments(workdir, model: ModelConfig, spec: RunSpec, digest: str, log_dir) -> list:
     """這一次執行傳給 fixlab 的命令列。兩個條件只差 condition 這個 meta 的值與 no_tests 多的 --hide-tool。"""
-    arguments = [str(workdir), "--model", model.name, "--log-dir", str(log_dir)]
+    # --python 明確寫出 fixlab 自己的直譯器：實驗用哪個直譯器是實驗條件，事件檔記成 source=option，一看就知道是刻意指定的。
+    arguments = [str(workdir), "--model", model.name, "--log-dir", str(log_dir), "--python", sys.executable]
     meta = {"problem": spec.problem, "condition": spec.condition, "repeat": spec.repeat, "problem_digest": digest}
     meta.update(model.meta)
     for key, value in meta.items():

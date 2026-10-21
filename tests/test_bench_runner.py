@@ -3,6 +3,7 @@ import json
 import os
 import re
 import shutil
+import sys
 from pathlib import Path
 
 import pytest
@@ -447,3 +448,20 @@ def test_a_null_or_a_visible_system_prompt_extra_is_loaded(tmp_path, value):
     (loaded,) = runner.load_models(models_file(tmp_path, labels=("x",), system_prompt_extra=value))
 
     assert loaded.system_prompt_extra == value
+
+
+# ── test-interpreter：The benchmark uses fixlab's own interpreter ──────────
+
+
+def test_the_runner_passes_fixlab_s_own_interpreter(tmp_path):
+    arguments = fixlab_arguments(tmp_path, model(), RunSpec("cart", "fake", "with_tests", 1), "abc", tmp_path / "log")
+    assert arguments[arguments.index("--python") + 1] == sys.executable
+
+
+# Scenario: Benchmark run records fixlab's interpreter
+def test_a_benchmark_run_records_fixlab_s_interpreter(problem, tmp_path):
+    line = run_one(RunSpec("cart", "fake", "with_tests", 1), problem, model(), tmp_path, client=FakeClient([("Done.", None)]))
+
+    run_start = json.loads(Path(line["log_path"]).read_text().splitlines()[0])
+    assert run_start["test_python"]["path"] == sys.executable
+    assert run_start["test_python"]["source"] == "option"

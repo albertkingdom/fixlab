@@ -2,6 +2,7 @@
 import re
 import shutil
 import socket
+import subprocess
 import sys
 import textwrap
 import uuid
@@ -10,6 +11,7 @@ from pathlib import Path
 import pytest
 
 import fixlab.sandbox as sandbox
+from fixlab.interpreter import check_interpreter
 from fixlab.tools import register_tools
 from fixlab.workspace import FIXLAB_ROOT, ToolError, ToolResult, Workspace, looks_like_test_file
 
@@ -459,7 +461,8 @@ def test_profile_text_has_no_literal_paths(tmp_path):
     root.mkdir()
     secrets = tmp_path / "secrets"
     secrets.mkdir()
-    command = sandbox.wrap_command(["python", "-V"], root, sys.executable, FIXLAB_ROOT, (secrets,), tmp_path / "tmp")
+    command = sandbox.wrap_command(["python", "-V"], root, sys.executable, FIXLAB_ROOT, (secrets,), tmp_path / "tmp",
+                                   base=Workspace(root).base)
     profile = command[command.index("-p") + 1] if "-p" in command else sandbox.build_profile(1)
     for path in (root, FIXLAB_ROOT, HOME, secrets, tmp_path / "tmp"):
         assert str(path) not in profile
@@ -731,3 +734,217 @@ def test_run_tests_works_in_place_on_the_real_fixture():
     output = w.call("run_tests", {}).output
     assert "PermissionError" not in output
     assert "1 failed, 4 passed" in output
+
+
+# ---- 測試用直譯器：對應 workspace-isolation 規格的 The sandbox allows the test interpreter and its base Python ----
+
+# 家目錄底下由 uv 管理的 Python（uv python install 放的位置）。沒有就略過：這幾個測試要真的有一個家目錄底下的基底 Python。
+UV_PYTHONS = sorted(HOME.glob(".local/share/uv/python/cpython-3.1[1-9]*/bin/python3.1[1-9]"))
+needs_uv_python = pytest.mark.skipif(not UV_PYTHONS, reason="no uv-managed Python under the home directory")
+
+
+@pytest.fixture
+def home_based_venv(tmp_path):
+    """用家目錄底下的 uv Python 建一個不裝任何套件的 venv。這一步在沙箱外執行的是 uv 的 Python 本身，不是被修的專案。"""
+    env = tmp_path / "env"
+    subprocess.run([str(UV_PYTHONS[-1]), "-m", "venv", "--without-pip", str(env)], check=True)
+    return env / "bin" / "python"
+
+
+def run_sandboxed(root, python, code, tmp):
+    tmp.mkdir(exist_ok=True)
+    command = sandbox.wrap_command([str(python), "-c", code], root, str(python), FIXLAB_ROOT, (), tmp,
+                                   base=Workspace(root, python=str(python)).base)
+    return subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=20)
+
+
+# Scenario: Base Python under the home directory
+@macos_only
+@needs_uv_python
+def test_a_base_python_under_the_home_directory_can_start(tmp_path, home_based_venv):
+    root = tmp_path / "ws"
+    root.mkdir()
+    done = run_sandboxed(root, home_based_venv, "import json, decimal; print(json.dumps('ok'))", tmp_path / "tmp")
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.strip() == '"ok"'
+    assert "dyld" not in done.stderr
+
+
+# Scenario: The rest of the home directory stays closed
+@macos_only
+@needs_uv_python
+def test_the_rest_of_the_home_directory_stays_closed(tmp_path, home_based_venv, home_scratch):
+    (home_scratch / "fake_key").write_text("sk-fake-123\n")
+    root = tmp_path / "ws"
+    root.mkdir()
+    code = f"open({str(home_scratch / 'fake_key')!r}).read()"
+    done = run_sandboxed(root, home_based_venv, code, tmp_path / "tmp")
+    assert done.returncode != 0 and "PermissionError" in done.stderr, done.stderr
+
+
+def test_the_base_python_is_a_parameter_not_a_literal(tmp_path):
+    root = tmp_path / "ws"
+    root.mkdir()
+    command = sandbox.wrap_command(["python", "-V"], root, sys.executable, FIXLAB_ROOT, (), tmp_path / "tmp",
+                                   base=Workspace(root).base)
+    assert any(arg.startswith("BASE=") for arg in command)
+    profile = command[command.index("-p") + 1] if "-p" in command else sandbox.build_profile(0)
+    assert '(param "BASE")' in profile
+
+
+# ---- 對應 The test environment inside the workspace is read-only ----
+
+# Scenario: Code under test edits pytest in the project venv
+@macos_only
+def test_code_under_test_cannot_write_into_the_test_environment(tmp_path):
+    root = tmp_path / "ws"
+    (root / ".venv" / "bin").mkdir(parents=True)
+    (root / ".venv" / "bin" / "python").symlink_to(sys.executable)
+    (root / ".venv" / "pyvenv.cfg").write_text(f"home = {Path(sys.executable).resolve().parent}\n")
+    (root / ".venv" / "fake_pytest.py").write_text("real\n")
+    python = str(root / ".venv" / "bin" / "python")
+    done = run_sandboxed(root, python, "open('.venv/fake_pytest.py', 'w').write('forged')", tmp_path / "tmp")
+    assert "PermissionError" in done.stderr, done.stderr
+    assert (root / ".venv" / "fake_pytest.py").read_text() == "real\n"
+    # 工作目錄的其他地方照樣能寫
+    done = run_sandboxed(root, python, "open('inside.txt', 'w').write('x')", tmp_path / "tmp")
+    assert done.returncode == 0, done.stderr
+
+
+# Scenario: Model edits pytest in the project venv（工具層，任何平台都能測）
+@pytest.mark.parametrize("tool", ["write_file", "edit_file"])
+def test_the_model_cannot_write_into_the_test_environment(tmp_path, tool):
+    root = tmp_path / "ws"
+    (root / ".venv" / "bin").mkdir(parents=True)
+    (root / ".venv" / "bin" / "python").symlink_to(sys.executable)
+    target = root / ".venv" / "lib" / "pytest.py"
+    target.parent.mkdir()
+    target.write_text("real = True\n")
+    w = Workspace(root, python=str(root / ".venv" / "bin" / "python"))
+    register_tools(w)
+    w.call("read_file", {"path": ".venv/lib/pytest.py"})
+    args = ({"path": ".venv/lib/pytest.py", "content": "forged = True\n"} if tool == "write_file"
+            else {"path": ".venv/lib/pytest.py", "old_string": "real", "new_string": "forged"})
+    result = w.call(tool, args)
+    assert not result.ok and result.flags.get("blocked"), result
+    assert target.read_text() == "real = True\n"
+
+
+def test_an_environment_outside_the_workspace_does_not_lock_anything(tmp_path):
+    # 預設用 fixlab 自己的直譯器：它的環境不在工作目錄裡，工作目錄裡叫 .venv 的資料夾照樣能寫。
+    root = tmp_path / "ws"
+    (root / ".venv").mkdir(parents=True)
+    w = Workspace(root)
+    register_tools(w)
+    assert w.call("write_file", {"path": ".venv/notes.txt", "content": "x\n"}).ok
+
+
+def env_in_workspace(root, relative):
+    """在工作目錄裡建一個測試用環境：bin/python 指向 fixlab 自己的直譯器，pyvenv.cfg 指向它的基底。"""
+    env = root / relative
+    (env / "bin").mkdir(parents=True)
+    (env / "bin" / "python").symlink_to(sys.executable)
+    (env / "pyvenv.cfg").write_text(f"home = {Path(sys.executable).resolve().parent}\n")
+    (env / "fake_pytest.py").write_text("real\n")
+    return str(env / "bin" / "python")
+
+
+# Scenario: Renaming a parent of the environment
+@macos_only
+def test_a_parent_of_the_environment_cannot_be_renamed_even_without_test_protection(tmp_path):
+    root = tmp_path / "ws"
+    python = env_in_workspace(root, "tools/env")
+    (root / "other").mkdir()
+    done = run_sandboxed(root, python, "import os; os.rename('tools', 'tools2')", tmp_path / "tmp")
+    assert "PermissionError" in done.stderr, done.stderr
+    assert (root / "tools" / "env" / "fake_pytest.py").exists()
+    # 和環境無關的資料夾照樣能改名（protect_tests 沒開）
+    done = run_sandboxed(root, python, "import os; os.rename('other', 'other2')", tmp_path / "tmp")
+    assert done.returncode == 0, done.stderr
+
+
+# Scenario: Code under test edits pytest in the environment（hard link）
+@macos_only
+def test_a_hard_link_to_a_file_in_the_environment_cannot_be_created(tmp_path):
+    root = tmp_path / "ws"
+    python = env_in_workspace(root, ".venv")
+    done = run_sandboxed(root, python, "import os; os.link('.venv/fake_pytest.py', 'x.py')", tmp_path / "tmp")
+    assert "PermissionError" in done.stderr, done.stderr
+    assert not (root / "x.py").exists()
+
+
+# ---- 第二輪 review：環境目錄的放行與 symlink ----
+
+
+def test_a_plain_interpreter_does_not_open_its_whole_parent_folder(tmp_path):
+    # 不是 venv 的直譯器（例如 ~/.local/bin/python3 這種捷徑）：往上兩層是 ~/.local，不能整個放行，只放行基底。
+    shims = tmp_path / "local" / "bin"
+    shims.mkdir(parents=True)
+    (shims / "python3").symlink_to(Path(sys.executable).resolve())
+    root = tmp_path / "ws"
+    root.mkdir()
+    w = Workspace(root, python=str(shims / "python3"))
+    command = sandbox.wrap_command(["python", "-V"], root, w.python, FIXLAB_ROOT, (), tmp_path / "tmp", base=w.base)
+    definitions = dict(arg.split("=", 1) for arg in command if "=" in arg and arg.split("=", 1)[0].isupper())
+    assert definitions["VENV"] == str(w.base)
+
+
+def test_an_environment_reached_through_a_symbolic_link_in_the_project_is_refused(tmp_path):
+    # 專案的 .venv 是指到外面的 symlink：保護規則看的是真實位置，symlink 本身會沒人保護，被換掉就能偽造通過。
+    real_env = Path(sys.executable).parent.parent
+    root = tmp_path / "ws"
+    root.mkdir()
+    (root / ".venv").symlink_to(real_env)
+    w = Workspace(root, python=str(root / ".venv" / "bin" / "python"))
+    with pytest.raises(ValueError, match="symbolic link"):
+        check_interpreter(w)
+
+
+def test_a_failed_base_is_computed_only_once(tmp_path, monkeypatch):
+    calls = []
+    import fixlab.workspace as workspace_module
+
+    def failing(*args, **kwargs):
+        calls.append(1)
+        raise ValueError("no base")
+
+    monkeypatch.setattr(workspace_module, "find_base", failing)
+    w = Workspace(tmp_path)
+    for _ in range(2):
+        with pytest.raises(ValueError):
+            w.base
+    assert len(calls) == 1
+
+
+# Scenario: Code under test edits the environment（環境沒有 pyvenv.cfg 時，沙箱照樣不准寫）
+@macos_only
+def test_an_environment_without_pyvenv_cfg_is_still_write_protected(tmp_path):
+    root = tmp_path / "ws"
+    (root / "tools" / "bin").mkdir(parents=True)
+    (root / "tools" / "bin" / "python").symlink_to(Path(sys.executable).resolve())
+    python = str(root / "tools" / "bin" / "python")
+    done = run_sandboxed(root, python, "import os; os.remove('tools/bin/python')", tmp_path / "tmp")
+    assert "PermissionError" in done.stderr, done.stderr
+    assert (root / "tools" / "bin" / "python").is_symlink()
+
+
+# macOS 的檔案系統不分大小寫：--python 與專案路徑大小寫不同時，環境的保護照樣要生效
+case_insensitive = pytest.mark.skipif(not Path("/USERS").exists(), reason="needs a case-insensitive file system")
+
+
+@case_insensitive
+def test_the_environment_is_read_only_even_with_different_letter_case(tmp_path):
+    root = tmp_path / "Proj"
+    env_in_workspace(root, ".venv")
+    w = Workspace(root, python=str(tmp_path / "proj" / ".venv" / "bin" / "python"))
+    register_tools(w)
+    result = w.call("write_file", {"path": ".venv/notes.txt", "content": "x\n"})
+    assert not result.ok and result.flags.get("blocked"), result
+
+
+@case_insensitive
+def test_parents_of_the_environment_are_found_even_with_different_letter_case(tmp_path):
+    root = tmp_path / "Proj"
+    env_in_workspace(root, "tools/env")
+    folders = sandbox.environment_dirs_in(root, tmp_path / "proj" / "tools" / "env")
+    assert len(folders) == 2
