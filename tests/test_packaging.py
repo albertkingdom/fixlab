@@ -63,3 +63,11 @@ def test_only_fixlab_packages_are_installed():
     assert installed and all(name == "fixlab" or name.startswith("fixlab.") for name in installed), installed
     for name in ["tests", "tests.fixtures", "bench", "bench.problems", "docs"]:
         assert not included(name, settings), name
+
+
+def test_mcp_is_an_optional_dependency():
+    # MCP 的 SDK 依賴很多：做成選用安裝，核心依賴維持原樣，不裝的人不受影響。
+    config = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    assert not any(dependency.split("[")[0].split(">")[0].split("=")[0].strip() == "mcp"
+                   for dependency in config["dependencies"])
+    assert any(dependency.startswith("mcp") for dependency in config.get("optional-dependencies", {}).get("mcp", []))

@@ -109,6 +109,9 @@ class Tool:
     # 選用：只驗證、不做事。用同樣的參數呼叫，工具一定會拒絕的話就丟 ToolError。在問使用者之前先跑，
     # 注定失敗的呼叫就不會拿去問。工具本身開頭也呼叫它，所以驗證只有一份。
     precheck: Callable[..., object] | None = None
+    # 外部工具（MCP）的 schema 可以是任何合法的 JSON Schema，簡單的檢查只會誤拒或出錯：
+    # 開啟時只檢查必要參數，其他規則交給提供工具的 server。
+    loose_args: bool = False
 
 
 class Workspace:
@@ -133,14 +136,16 @@ class Workspace:
         self._base: Path | ValueError | None = None  # 見 base
         self._tools: dict[str, Tool] = {}
         self._hidden: list[str] = []  # 不給模型看的工具（見 hide）
+        # 外部工具（MCP）的來源：登記的名稱 → (server, 原本的工具名稱)。確認畫面照這張表顯示，不從名稱反推。
+        self.external_tools: dict[str, tuple[str, str]] = {}
         # 模型「整檔、未截斷」讀過的檔案：解析後的真實路徑 → 讀的當下的內容指紋。write_file 覆寫既有檔案前要查它：
         # 沒有記錄，代表模型沒看過；指紋和現在的內容不一樣，代表讀過之後被別人改了（例如使用者在編輯器裡改）。
         # 兩種情況都不能整檔覆寫，不然會憑空改寫、或蓋掉別人的修改。edit_file 成功後會把該檔移除。
         self.files_read: dict[Path, str] = {}
 
     def register(self, name: str, func: Callable[..., ToolResult], schema: dict, description: str = "",
-                 precheck: Callable[..., object] | None = None) -> None:
-        self._tools[name] = Tool(func, schema, description, precheck)
+                 precheck: Callable[..., object] | None = None, loose_args: bool = False) -> None:
+        self._tools[name] = Tool(func, schema, description, precheck, loose_args)
 
     def hide(self, name: str) -> None:
         """不讓模型看到這個工具：它不在工具清單、也不在驗證回覆用的 schema 裡，所以模型亂叫只會被當成不認識的工具。
@@ -214,6 +219,8 @@ class Workspace:
         missing = [p for p in tool.schema.get("required", []) if p not in args]
         if missing:
             raise ToolError(f"{name}: missing required argument(s) {missing}")
+        if tool.loose_args:
+            return
         extra = [k for k in args if k not in props]
         if extra:
             raise ToolError(f"{name}: unexpected argument(s) {extra}")

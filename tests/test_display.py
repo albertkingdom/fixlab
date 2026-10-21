@@ -197,3 +197,11 @@ def test_colored_lines_keep_their_text(monkeypatch):
     assert "5 passed in 0.01s" in result_line(ToolResult("5 passed in 0.01s", True, {"tests_passed": True}))
     assert "\x1b[" in edit_diff_lines("a\n", "b\n")[0]
     assert "(3 steps" in footer_line(agent_result())
+
+
+def test_error_text_cannot_put_control_characters_on_the_screen(monkeypatch):
+    # 外部工具的錯誤可能回顯模型給的參數：跳脫序列不能原樣印到終端機，否則能遮住下一次的確認畫面。
+    monkeypatch.setenv("NO_COLOR", "1")
+    line = result_line(ToolResult("error: no such file '\x1b[1;1r‮secret\x9b2J'", False))
+    assert "\x1b" not in line and "‮" not in line and "\x9b" not in line
+    assert "\\x1b[1;1r" in line and "secret" in line

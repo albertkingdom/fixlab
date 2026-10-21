@@ -13,6 +13,10 @@ dependencies = [
     "regex",
 ]
 
+[project.optional-dependencies]
+# 呼叫外部 MCP server 的工具（--mcp-config）。官方 SDK 依賴很多，所以做成選用：pip install 'fixlab[mcp]'
+mcp = ["mcp>=2.3,<3"]
+
 [project.scripts]
 fixlab = "fixlab.cli:main"
 
