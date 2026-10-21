@@ -11,7 +11,7 @@
 | 1 骨架與規格 | agent 迴圈、六個工具、原生 tool call 解析、macOS 沙箱、`fixlab PATH` 最小入口 | 完成 | `stage-1` |
 | 2 CLI 與 telemetry | 事件檔（JSONL）、互動模式、權限提示 | 完成 | `stage-2` |
 | 3 Benchmark 與實驗 | 8 題多檔 bug、隱藏測試、評分器、題目自我檢查、有／無 `run_tests` 對照、兩個模型 | 完成 | `stage-3` |
-| 4 選做 | 多 agent 對照、MCP 或 GitHub issue connector | 未做 | |
+| 4 選做 | MCP connector（呼叫外部 MCP server 的工具，見〈呼叫外部 MCP server 的工具〉）；多 agent 對照未做 | 部分完成 | |
 
 可以用 `git checkout stage-1`、`stage-2` 或 `stage-3` 看到各階段完成時的程式。
 
@@ -57,6 +57,34 @@ fixlab --python .venv/bin/python
 **指定 `--python` 等於信任那個環境。** 它的 Python 與套件會在沙箱裡執行；如果它的基底 Python 裝在家目錄底下（uv、pyenv 下載的 Python），沙箱會放行讀取那個安裝目錄（只有那個目錄，家目錄的其他地方仍然讀不到）。fixlab 會檢查這個基底目錄：`pyvenv.cfg` 的 `home` 必須是絕對路徑、目錄裡要有 Python 的標準函式庫、不能是家目錄本身或上層、不能和專案目錄重疊；環境也不能透過專案裡的符號連結指到別處（測試可能把連結換掉）。不符合就拒絕執行。這些檢查擋得住打錯路徑與明顯的誤設定，擋不住一個刻意做壞的 Python 環境，所以只指定你自己建立或信任的環境。
 
 **為什麼不自動偵測專案裡的 `.venv`：** 被修的專案可能是剛 clone 下來、還沒讀過的程式碼。自動使用它的 `.venv`，等於讓專案裡的檔案決定 fixlab 執行哪個程式、沙箱放行哪個目錄：`.venv/pyvenv.cfg` 裡的一行設定就可能讓沙箱放行 `~/.ssh`，而 `.venv/bin/python` 會在你確認任何事情之前就被執行。所以 fixlab 只在你用 `--python` 明確指定時才使用專案的環境。
+
+### 呼叫外部 MCP server 的工具
+
+互動模式下，agent 可以呼叫本機 [MCP](https://modelcontextprotocol.io) server 提供的工具，例如查 issue 或查文件。需要另外安裝官方 SDK：
+
+```
+pip install 'fixlab[mcp]'                 # 或 uv tool install 'fixlab[mcp] @ git+https://github.com/OWNER/fixlab'
+fixlab --mcp-config servers.json
+```
+
+設定檔沿用常見的 `mcpServers` 格式，只支援以 `command` 啟動的本機（stdio）server：
+
+```json
+{
+  "mcpServers": {
+    "docs": {"command": "npx", "args": ["-y", "some-docs-mcp-server"], "env": {"DOCS_TOKEN": "..."}}
+  }
+}
+```
+
+- 工具在模型眼中的名稱是 `mcp__<server>__<tool>`，說明前面標著它來自哪個外部 server。
+- **只在互動模式能用，每次呼叫都先問你，MCP 工具沒有「一律放行」**（回答 `a` 視為拒絕，每次都要回答 `y`）；詢問前會印出 server、工具名稱與完整的參數（非 ASCII 字元會跳脫，避免畫面和實際送出的不一樣）。參數長到畫面看不完（超過 4000 字元）的呼叫直接拒絕。一次性模式給了 `--mcp-config` 會直接拒絕，因為沒有人可以確認。
+- 呼叫超過 60 秒會被取消；server 回報錯誤、結束或逾時都只讓那次呼叫失敗，不會讓 agent 停下來。
+- 結束時最多花 10 秒關閉所有 server；在 macOS 與 Linux 上，不肯結束的 server 最後會被強制結束（SIGKILL），Windows 上只有 SDK 本身的關閉流程。
+- 設定檔只從 `--mcp-config` 讀，fixlab 不會自動讀專案或家目錄裡的 MCP 設定：專案可能是還沒讀過的程式碼。
+- 事件檔的 `run_start` 記錄 `mcp`：server 名稱、登記與略過的工具、SDK 版本；不記錄指令、參數與環境變數（可能含金鑰）。
+
+**指定 MCP server 等於信任它。** server 是以你的權限執行的程式，**不受 fixlab 的沙箱限制**：它可以讀寫你帳號能碰到的任何檔案、連網，fixlab 的工作目錄限制與測試檔保護都管不到它自己做的事。fixlab 擋得住的只有「模型不經你同意就呼叫它的工具」。只設定你信任的 server。
 
 ## 快速開始（開發用）
 
@@ -189,7 +217,8 @@ Fixed parse_duration: it only took the first unit.
 | 6 | `fixlab/sandbox.py` | 用 macOS `sandbox-exec` 包住 `run_tests`：禁網路、限制讀寫 |
 | 7 | `fixlab/telemetry.py` | 事件檔：一次執行一個資料夾、一行一個 JSON、每行立刻寫入、寫不進去只警告 |
 | 8 | `fixlab/display.py` | 互動模式的畫面：標題行、差異、結果行、用量行、顏色（只回傳字串，不直接印） |
-| 9 | `fixlab/bench/` | 階段 3：`problems.py`（題目載入與摘要）、`grader.py`（評分器）、`selfcheck.py`（題目自我檢查）、`runner.py`（實驗執行器）、`report.py`（報告）、`__main__.py`（上面四個指令） |
+| 9 | `fixlab/mcp_tools.py` | 選用的 MCP connector：讀設定檔、以官方 SDK 連 stdio server、把工具登記成 `mcp__<server>__<tool>`、轉換結果、關閉 server |
+| 10 | `fixlab/bench/` | 階段 3：`problems.py`（題目載入與摘要）、`grader.py`（評分器）、`selfcheck.py`（題目自我檢查）、`runner.py`（實驗執行器）、`report.py`（報告）、`__main__.py`（上面四個指令） |
 
 ## 六個工具
 
@@ -216,6 +245,7 @@ Fixed parse_duration: it only took the first unit.
 
 ## 已知限制
 
+- **MCP server 不在沙箱裡**：只有呼叫前的確認，沒有限制 server 本身能做什麼；也只支援本機 stdio server，不支援遠端（HTTP）server、OAuth，以及 MCP 的 resources、prompts 等其他功能。
 - **沙箱只有 macOS 有效**，而且 `sandbox-exec` 在 Apple 的說明裡標為 **DEPRECATED**（已棄用）。其他平台只剩工具層的限制加結束時的 diff；沒有沙箱時入口會印 `sandbox: OFF (原因)`。
 - **硬連結**：事先在沙箱外建好、指向工作目錄之外的硬連結，沙箱只檢查路徑所以擋不到。
 - **不自動使用專案裡的環境**：要用專案自己的套件跑測試，必須以 `--python` 指定（原因見〈用專案自己的 Python 跑測試〉）；指定的 Python 要 3.11 以上，而且裝了 pytest。
@@ -225,7 +255,7 @@ Fixed parse_duration: it only took the first unit.
 - **沒有重複呼叫偵測**：模型一直重讀同一個檔案（成功的呼叫）不會觸發 `stuck`。
 - **不會自己讀 `.env`、金鑰沒有存進系統鑰匙圈**：用 uv 或 pipx 安裝後可以在任何目錄直接打 `fixlab`（見〈安裝（一般使用者）〉），但模型端點與金鑰要用環境變數提供。之後想做：金鑰存系統鑰匙圈。
 - **互動模式的對話沒有長度上限**：用久了每一步的 prompt 會很大，小模型（Ollama 設 32768）可能撞到 context 上限；用 `/reset` 重來，上限怎麼處理等有事件檔的資料再決定。
-- **互動模式的「一律放行」範圍是整個工具**，沒有 `/permissions` 看、`/revoke` 收回。
+- **互動模式的「一律放行」範圍是整個工具**（MCP 工具沒有這個選項，每次都問），沒有 `/permissions` 看、`/revoke` 收回。
 - **互動模式沒有串流**：模型的回覆結束後才印。實測每一步等 1 到 5 秒、多半約 1.4 秒，目前不值得；本機大模型很慢時再做。
 - **管線輸入會被當成回答**：`echo ... | fixlab PATH -i` 會把管線裡的下一行拿去回答問題。
 - **畫面的顏色只用假的終端機測過格式**，實際的樣子要用過才確定。
