@@ -82,7 +82,7 @@ agent 只會拿到 `project` 的副本；`hidden/` 與 `solution/` 永遠不在�
 
    檢查項目：路徑都存在；原始專案的可見失敗數、fix 至少一個失敗、keep 全過、各組數量與 `problem.json` 一致；套上標準解後三組全過；重跑結果完全一樣；失敗輸出不點名 bug 檔。有一項沒過就修題目，不要改檢查。
 5. 跑 fixlab 自己的測試：`.venv/bin/python -m pytest -q`。多數 benchmark 測試用 `tests/fixtures/bench_toy` 的玩具題目，不受正式題集影響；若有測試因題目清單或題數失敗，**先讀失敗訊息再改**，確認是「題數從 8 變 9」的合理更新，不是弄壞了別的東西。
-6. 同步文件：題數出現在 `fixlab/bench/problems.py` 的註解與 `EXPECTED_IDS`、`AGENTS.md`（「8 題左右」「8 個 benchmark 題目」）、規格 `benchmark-problems`（"exactly the eight problems"，這要走 Spectra change 改）、`tests/test_bench_selfcheck.py` 的測試名稱（`..._exactly_the_eight_problems`）、`docs/benchmark.md`（「8 道題」）。`README.md` 與 `docs/benchmark-results.md` 中的「8 題」只在**重跑實驗並有新結果之後**才改；在那之前，結果報告加一段說明「題集已增加，這份數字仍是原 8 題」。教學文章 15 到 20 描述了題目、評分、自我檢查與實驗結果，題目數量或規則變了要提醒使用者文章是否需要更新（`article-NN` tag 只建在本機，不自動推送）。
+6. 同步文件：題數出現在 `fixlab/bench/problems.py` 的註解與 `EXPECTED_IDS`、`AGENTS.md`（「8 題左右」「8 個 benchmark 題目」）、`fixlab/bench/report.py` 的 `LIMITS`（寫死「降到 8 題」，會輸出到報告）與 `tests/test_bench_report.py` 鎖定它的斷言、`fixlab/bench/__main__.py` 與 `selfcheck.py` 的註解和 docstring、規格 `benchmark-problems`（"exactly the eight problems"，這要走 Spectra change 改）、`tests/test_bench_selfcheck.py` 的測試名稱（`..._exactly_the_eight_problems`）、`docs/benchmark.md`（「8 道題」）、`docs/safety.md`、`docs/development.md`（教學文章表的「8 道有 bug 的小專案」）。`README.md` 與 `docs/benchmark-results.md` 中的「8 題」只在**重跑實驗並有新結果之後**才改；在那之前，結果報告加一段說明「題集已增加，這份數字仍是原 8 題」。教學文章 15 到 20 描述了題目、評分、自我檢查與實驗結果，題目數量或規則變了要提醒使用者文章是否需要更新（`article-NN` tag 只建在本機，不自動推送）。
 7. 走完整流程：`project-review`（含 `bench` 區域的檢查清單）→ `review-findings` → `create-pr`。
 
 ## 修改既有題目

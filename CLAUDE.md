@@ -66,6 +66,6 @@ Hooks（`.claude/settings.json`，腳本在 `.claude/hooks/`）執行 AGENTS.md 
 | Hook | 作用 |
 |---|---|
 | `guard-bash.sh`（PreToolUse，Bash） | 擋下 `git add -A`／`.`／`-u` 與 `git commit -a`、在 `main`／`master`／`develop` 上 commit、帶 AI 署名行（`Co-Authored-By`、`Generated with`）的 commit 訊息，以及 HEAD 沒有審查紀錄時的 `gh pr create`／`spectra archive`（`--preview` 放行；只改文件與規格的分支免審；歸檔產生的 `docs/spectra/` commit 不會讓審查紀錄失效）。`git commit` 與 `gh pr create` 不能串在同一個指令 |
-| `remind-docs.sh`（PostToolUse，Edit/Write） | 修改套件程式碼後，每個檔案每個 HEAD 提醒一次檢查規格、README 與文件；提醒不要手改 golden trace |
+| `remind-docs.sh`（PostToolUse，Edit/Write） | 修改套件程式碼（含 `fixlab/bench/`）後，每個檔案每個 HEAD 提醒一次檢查規格、README 與文件；提醒不要手改 golden trace |
 | `review-reminder.sh`（Stop） | 分支上有未審查的程式碼 commit 時，每個 HEAD 提醒一次要做 code review（程式碼範圍同 `guard-bash.sh`） |
 | `mark-reviewed.sh` | 把 HEAD 的審查結果記在 `.claude/state/`（不進版控），可在任何子目錄執行；由 skill 呼叫，不要手動執行 |

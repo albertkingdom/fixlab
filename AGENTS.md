@@ -68,7 +68,7 @@ docs/benchmark-results.md  階段 3 第一次完整實驗的結果、設定、�
 3. 每次實驗記錄：模型名稱與版本、量化、runtime 與版本、context 長度、題目子集、隨機種子、日期。
 4. 不為了讓數字好看而調整題目或切分；任何調整寫入結果報告。不編造結果。
 5. 引用外部數字註明來源與日期。
-6. 版控：commit 訊息不提 AI 工具、不加 Co-Authored-By；Conventional Commits、英文。
+6. 版控：commit 訊息不帶 AI 署名行（`Co-Authored-By: <AI 工具>`、`Generated with <AI 工具>`），內文可以提到工具名稱；Conventional Commits、英文。
    - 新功能一律從 `main` 開新分支，命名 `feature/{feature-name}`，不直接 commit 到 `main`。
    - 實作前要有完成的 Spectra 提案（`/spectra-propose`）。
    - 合併前更新 `README.md` 反映新功能。

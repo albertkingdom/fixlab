@@ -24,14 +24,14 @@ case "$file" in
   *) exit 0 ;;
 esac
 
-cd "$(root_dir)" 2>/dev/null || exit 0
-git rev-parse --git-dir >/dev/null 2>&1 || exit 0
+init_repo "$input" || exit 0
 if git status --porcelain -- README.md docs 2>/dev/null | grep -q .; then
   exit 0
 fi
 
 state="$(root_dir)/.claude/state/docs-reminded"
-key="$(git rev-parse HEAD 2>/dev/null || echo none):$(basename "$file")"
+rel=${file#"$(root_dir)"/}; [ "$rel" = "$file" ] && rel=fixlab/$(basename "$file")
+key="$(git rev-parse HEAD 2>/dev/null || echo none):$rel"
 if grep -qxF "$key" "$state" 2>/dev/null; then
   exit 0
 fi
@@ -41,7 +41,7 @@ printf '%s\n' "$key" >> "$state"
 if [ "$kind" = golden ]; then
   msg="You edited tests/golden/. The golden trace is the baseline for test_trace_golden.py; regenerate it only with UPDATE_GOLDEN=1 for an intentional behavior change, never by hand, and say so in the commit."
 else
-  msg="You edited fixlab/$(basename "$file"). Its behavior is specified in docs/spectra/specs/ and described in README.md and docs/. If behavior, CLI output, tool schemas or telemetry fields changed: the change needs a Spectra change (do not edit archived ones), and README.md or docs/*.md must be updated if users can see the difference."
+  msg="You edited $rel. Its behavior is specified in docs/spectra/specs/ and described in README.md and docs/. If behavior, CLI output, tool schemas or telemetry fields changed: the change needs a Spectra change (do not edit archived ones), and README.md or docs/*.md must be updated if users can see the difference."
 fi
 
 jq -n --arg m "$msg" '{hookSpecificOutput: {hookEventName: "PostToolUse", additionalContext: $m}}'
