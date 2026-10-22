@@ -125,7 +125,7 @@ pytest 有個功能叫 `tmp_path`：測試需要暫存檔時，它在系統暫�
 
 ```
 沒有沙箱                        : 1 passed in 0.00s ｜工作目錄多出： 無
-沙箱、TMPDIR 沿用系統的         : 1 passed in 0.00s ｜工作目錄多出： ['pytest-of-yklin', 'pytest-of-yklin/pytest-0', '...']
+沙箱、TMPDIR 沿用系統的         : 1 passed in 0.00s ｜工作目錄多出： ['pytest-of-user', 'pytest-of-user/pytest-0', '...']
 ```
 
 測試**通過了**，但工作目錄裡多了一個 `pytest-of-使用者` 資料夾。原因我另外確認過：Python 找暫存目錄時，會依序試幾個候選位置，都寫不進去就退回**目前目錄**：
