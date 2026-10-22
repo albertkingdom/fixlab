@@ -9,7 +9,7 @@
 ```
 python3 -m venv .venv
 .venv/bin/pip install -e .
-.venv/bin/pytest                     # fixlab 自己的測試，約 30 秒
+.venv/bin/pytest                     # fixlab 自己的測試，約 2 分鐘
 ```
 
 跑 agent 要有一個 OpenAI 相容的端點。三個環境變數（或用 `--model` 覆寫模型）：
