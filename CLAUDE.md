@@ -59,6 +59,7 @@ UPDATE_GOLDEN=1 .venv/bin/python -m pytest tests/test_trace_golden.py   # 只在
 | `review-findings` | 處理 review 發現的問題：驗證、分級、用新 commit 修正、重審 |
 | `unit-test` | 撰寫或修改測試（劇本假模型、golden trace、fixtures） |
 | `create-pr` | push 並開 PR |
+| `add-bench-problem` | 新增或修改 benchmark 題目；說明題集變動對既有結果的影響 |
 
 Hooks（`.claude/settings.json`，腳本在 `.claude/hooks/`）執行 AGENTS.md 第 5 節的規則：
 
