@@ -1,10 +1,6 @@
 ---
 name: unit-test
 description: "替 fixlab 的變更撰寫或修改測試：測試放哪裡、用劇本假模型（FakeClient）驗證 agent 迴圈而不呼叫真實 LLM、timelog 範例專案與 tmp_path 工作區、規格對應註解、golden trace 的重新產生規則、沙箱測試的平台限制、benchmark 題目的自我檢查。當使用者說「寫測試」「補測試」「加單元測試」「測試怎麼寫」，或實作新行為、修 bug、處理 review 發現的問題需要測試時使用。"
-license: MIT
-metadata:
-  author: yklin
-  version: "1.0"
 ---
 
 # 測試（fixlab）
@@ -14,7 +10,7 @@ metadata:
 ## 跑法
 
 ```bash
-.venv/bin/python -m pytest -q                        # 全部，約 30 秒
+.venv/bin/python -m pytest -q                        # 全部，約 2 分鐘
 .venv/bin/python -m pytest tests/test_loop.py -q     # 單檔
 .venv/bin/python -m pytest -q -k "step_limit"        # 依名稱
 .venv/bin/python -m fixlab.bench check               # benchmark 題目自我檢查（不花錢）
@@ -25,7 +21,7 @@ CI 在 macOS 跑（`pip install -e '.[mcp]'`），因為沙箱只在 macOS 啟�
 ## 放哪裡、怎麼命名
 
 - `tests/test_<模組名>.py` 對應 `fixlab/<模組名>.py`；benchmark 相關是 `test_bench_*.py`。
-- **檔案開頭用註解寫它驗證哪份規格**（`docs/spectra/specs/<capability>`），測試上方用 `# 規格：<Requirement 名稱>` 標出對應的 Requirement，與既有檔案一致。
+- **檔案開頭用註解寫它驗證哪份規格**，例如 `# agent 迴圈的單元測試：對應 agent-loop 規格`（`test_loop.py`、`test_isolation.py` 這樣寫）；需要時在個別測試上方用 `# 規格：<Requirement 名稱>` 標出對應的 Requirement（`test_trace_golden.py` 這樣寫）。不是每個檔案都有對應的規格（例如 `test_cli.py`、`test_packaging.py`）。
 - 測試名稱寫「在什麼情況下，會怎樣」；一個行為一個測試，邊界值（剛好等於上限、空輸入）各自一個。
 - 註解用繁體中文，識別字用英文。
 
@@ -64,7 +60,7 @@ CI 在 macOS 跑（`pip install -e '.[mcp]'`），因為沙箱只在 macOS 啟�
 
 - 不放真實金鑰、真實模型輸出的長篇內容；假模型的劇本要短、要能看懂。
 - 不為了讓測試通過而放寬斷言或刪掉案例；測試與規格衝突時，改程式或另開 Spectra change。
-- 不依賴測試執行順序；不 `sleep` 等待，需要時間就注入時鐘（`Telemetry` 有 `now` 可注入）。
+- 不依賴測試執行順序；不 `sleep` 等待，需要時間就注入時鐘（`EventLog` 的 `now` 參數可注入）。
 
 ## 完成前
 

@@ -1,10 +1,6 @@
 ---
 name: create-pr
 description: "依 fixlab 的流程開 Pull Request：開 PR 前的檢查（分支、Spectra 歸檔、code review 紀錄、測試與 benchmark 自我檢查、README 與文件同步、來源與個資檢查）、PR 標題與英文說明格式、推送與等 CI。當使用者說「開 PR」「建立 PR」「create PR」「推上去開 PR」「準備合併」時使用。需要使用者明確要求才會 push 與開 PR。"
-license: MIT
-metadata:
-  author: yklin
-  version: "1.0"
 ---
 
 # 開 Pull Request（fixlab）
@@ -22,7 +18,7 @@ git diff --stat origin/main...HEAD
 | 項目 | 標準 |
 |---|---|
 | Spectra | 新功能有完成的提案（`/spectra-propose`）、任務做完、已歸檔（`/spectra-archive` 或 `/spectra-wrapup`）。文件或設定的小變更可以沒有，PR 說明要寫明 |
-| Code review | 已跑 `code-review`，阻擋與重要問題都處理完（`review-findings`）。`.claude/state/review-passed` 要等於目前 HEAD，否則 `gh pr create` 與 `spectra archive` 會被 hook 擋下。**不要手動寫這個檔案繞過**，補審查 |
+| Code review | 已跑 `project-review`，阻擋與重要問題都處理完（`review-findings`）。`.claude/state/review-passed` 要對應目前 HEAD（歸檔產生的、只動 `docs/spectra/` 的 commit 不會讓它失效），否則 `gh pr create` 與 `spectra archive`（不含 `--preview`）會被 hook 擋下；只改文件與規格的分支不需要。**不要手動寫這個檔案繞過**，補審查。順序是：實作 → review → 歸檔 → 開 PR；`git commit` 與 `gh pr create` 不要串在同一個指令（hook 會擋） |
 | 測試 | `.venv/bin/python -m pytest -q` 全過；動到 benchmark 再跑 `python -m fixlab.bench check`。沙箱相關變更要在 macOS 跑過 |
 | 文件 | 使用者看得到的差異已同步 `README.md` 與 `docs/`；新功能 README 已更新（合併前的規則） |
 | 實驗紀錄 | 有新的實驗結果時：設定、日期、限制都寫進 `docs/benchmark-results.md`，沒有挑數字、沒有編造 |

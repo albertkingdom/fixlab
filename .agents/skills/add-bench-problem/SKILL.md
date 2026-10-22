@@ -1,10 +1,6 @@
 ---
 name: add-bench-problem
 description: "新增或修改 fixlab 的 benchmark 題目：題目資料夾結構（project、solution、hidden/fix、hidden/keep、problem.json）、設計原則（失敗輸出不能點名 bug 檔、README 寫出正確行為、要有干擾檔、不依賴環境）、註冊到 EXPECTED_IDS、用 fixlab.bench check 自我檢查，以及題集變動對既有實驗結果與 README 數字的影響。當使用者說「新增題目」「加一題 benchmark」「改題目」「寫 bug 題」「題目 check 沒過」，或要擴充或調整 bench/problems 時使用。"
-license: MIT
-metadata:
-  author: yklin
-  version: "1.0"
 ---
 
 # 新增 benchmark 題目
@@ -65,12 +61,12 @@ agent 只會拿到 `project` 的副本；`hidden/` 與 `solution/` 永遠不在�
 
 1. **README 寫出正確行為。** `project/README.md` 說明公開入口、規則與邊界情況，讓人（和 agent）不看 bug 也能知道「對的行為是什麼」。隱藏的 fix 測試驗證的行為必須在 README 找得到依據，不能考 README 沒寫的事。
 2. **失敗輸出不能點名 bug 檔。** 原始專案的可見測試失敗時，輸出裡不能出現 `bug_files` 的檔名（自我檢查會擋）。斷言要寫成看結果的形式，不要讓 traceback 直接指到錯誤位置；否則題目變成「照 traceback 改」而不是「找 bug」。
-3. **至少一個可見測試失敗**，可見測試通過的部分覆蓋正常功能，讓 agent 有可以跑的回饋。
-4. **有干擾檔。** `distractors` 列出與 bug 看起來相關、但沒有 bug 的檔案（例如 `rounding.py`、`prices.py`）。
+3. **至少一個可見測試失敗**，可見測試通過的部分覆蓋正常功能，讓 agent 有可以跑的回饋。（靠人工判斷；自我檢查只比對 `problem.json` 記的失敗數，不要求它大於零。）
+4. **有干擾檔。** `distractors` 列出與 bug 看起來相關、但沒有 bug 的檔案（例如 `rounding.py`、`prices.py`）。（靠人工判斷；自我檢查只確認列出的路徑存在，不要求非空。）
 5. **fix 與 keep 各自要有意義**：fix 測試在原始專案必須至少一個失敗、套上標準解後全過；keep 測試在兩種情況都全過，用來抓「修好 A 弄壞 B」。
 6. **不依賴執行環境。** 不依賴時區、語系、目前時間、隨機數、檔案系統順序。需要時間就寫死偏移或傳入固定值。
 7. **標準解要最小**：只放有改動的檔案；不要順手重構，否則「標準解」變成「重寫」。
-8. 專案要小（約 3 到 6 個檔案），測試要快（整個題目的 `check` 要能重跑 20 次）。
+8. 專案要小（現有 8 題的非測試 `.py` 檔約 5 到 7 個），測試要快（整個題目的 `check` 要能重跑 20 次）。
 
 ## 步驟
 
@@ -86,8 +82,8 @@ agent 只會拿到 `project` 的副本；`hidden/` 與 `solution/` 永遠不在�
 
    檢查項目：路徑都存在；原始專案的可見失敗數、fix 至少一個失敗、keep 全過、各組數量與 `problem.json` 一致；套上標準解後三組全過；重跑結果完全一樣；失敗輸出不點名 bug 檔。有一項沒過就修題目，不要改檢查。
 5. 跑 fixlab 自己的測試：`.venv/bin/python -m pytest -q`。多數 benchmark 測試用 `tests/fixtures/bench_toy` 的玩具題目，不受正式題集影響；若有測試因題目清單或題數失敗，**先讀失敗訊息再改**，確認是「題數從 8 變 9」的合理更新，不是弄壞了別的東西。
-6. 同步文件：`docs/benchmark.md`（寫了「8 道題」）、`README.md` 與 `docs/benchmark-results.md` 中的「8 題」只在**重跑實驗並有新結果之後**才改；在那之前，結果報告加一段說明「題集已增加，這份數字仍是原 8 題」。教學文章 15 到 19 描述了題目、評分與自我檢查，題目數量或規則變了要提醒使用者文章是否需要更新（`article-NN` tag 只建在本機，不自動推送）。
-7. 走完整流程：`code-review`（含 `bench` 區域的檢查清單）→ `review-findings` → `create-pr`。
+6. 同步文件：題數出現在 `fixlab/bench/problems.py` 的註解與 `EXPECTED_IDS`、`AGENTS.md`（「8 題左右」「8 個 benchmark 題目」）、規格 `benchmark-problems`（"exactly the eight problems"，這要走 Spectra change 改）、`tests/test_bench_selfcheck.py` 的測試名稱（`..._exactly_the_eight_problems`）、`docs/benchmark.md`（「8 道題」）。`README.md` 與 `docs/benchmark-results.md` 中的「8 題」只在**重跑實驗並有新結果之後**才改；在那之前，結果報告加一段說明「題集已增加，這份數字仍是原 8 題」。教學文章 15 到 20 描述了題目、評分、自我檢查與實驗結果，題目數量或規則變了要提醒使用者文章是否需要更新（`article-NN` tag 只建在本機，不自動推送）。
+7. 走完整流程：`project-review`（含 `bench` 區域的檢查清單）→ `review-findings` → `create-pr`。
 
 ## 修改既有題目
 

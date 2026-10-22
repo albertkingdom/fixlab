@@ -1,15 +1,11 @@
 ---
-name: code-review
+name: project-review
 description: "依 fixlab 的設計原則與守則審查變更、找出問題：跑測試與 benchmark 自我檢查、依變更區域套用檢查清單（agent 迴圈不退化成寫死流程、工具與安全邊界、沙箱與環境變數、隱藏測試隔離、telemetry、benchmark 與實驗紀錄的誠實度、原創性與來源註明、文件與規格同步）、問題分級（阻擋／重要／建議），通過後記錄審查結果讓 PR 與歸檔閘門放行。當使用者說「code review」「審查」「review 一下」「準備開 PR」「可以歸檔嗎」，或功能做完要開 PR／歸檔前使用。找到問題之後怎麼處理交給 review-findings。"
-license: MIT
-metadata:
-  author: yklin
-  version: "1.0"
 ---
 
-# Code review（fixlab）
+# Code review（fixlab，skill 名稱 `project-review`）
 
-專案規則（AGENTS.md 第 5 節）：**歸檔與開 PR 之前都要完成 code review，阻擋與重要問題都處理完。** `.claude/hooks/guard-bash.sh` 會在 `gh pr create` 與 `spectra archive` 前檢查審查紀錄是否對應目前的 HEAD，沒有就擋下。
+專案規則（AGENTS.md 第 5 節）：**歸檔與開 PR 之前都要完成 code review，阻擋與重要問題都處理完。** `.claude/hooks/guard-bash.sh` 會在 `gh pr create` 與 `spectra archive`（不含唯讀的 `--preview`）前檢查審查紀錄是否對應目前的 HEAD，沒有就擋下；只改文件與規格的分支免審。這個 skill 取名 `project-review`，以免與內建的 `/code-review` 同名。派 subagent 審查時，要把這份清單與步驟交給它，結果仍由你驗證後才記錄。
 
 這個 skill 負責**找問題**；整理、驗證、修正由 `review-findings` 接手。`/spectra-review` 審的是某個 Spectra change 的程式品質，`/spectra-verify` 對照規格；這份清單補的是 fixlab 自己的設計原則，三者可以搭配，不互相取代。
 
@@ -32,7 +28,7 @@ git log --oneline origin/main..HEAD
 ### 2. 自動檢查
 
 ```bash
-.venv/bin/python -m pytest -q                          # fixlab 自己的測試，約 30 秒
+.venv/bin/python -m pytest -q                          # fixlab 自己的測試，約 2 分鐘
 .venv/bin/python -m fixlab.bench check                 # 動到 bench/ 或 fixlab/bench/ 時：題目自我檢查，不花錢
 ```
 
@@ -59,12 +55,12 @@ git log --oneline origin/main..HEAD
 
 **Telemetry**（`telemetry.py`）
 - 一行一個 JSON、每行立刻寫入；寫不進去只警告，實驗繼續。
-- 事件欄位改動要看 `docs/spectra/specs/run-telemetry`、報告端（`fixlab/bench/report.py`）與 golden 是否同步；欄位不得洩漏金鑰或本機路徑。
+- 事件欄位改動要看 `docs/spectra/specs/run-telemetry`、報告端（`fixlab/bench/report.py`）與 golden 是否同步；欄位不得含金鑰。`run_start` 的 `path` 與 `test_python.path` 是規格內的欄位（會含本機絕對路徑），所以事件檔不能提交進版控。
 
 **CLI**（`cli.py`、`display.py`）
 - 結束碼語意：0 最後測試通過、1 沒通過、2 輸入或設定有誤。
 - 互動模式在改檔與跑測試前要詢問；一次性模式結束時自己重跑測試並印出差異。
-- 在家目錄或更上層執行要被拒絕；`display.py` 只回傳字串，不直接印。
+- 未指定 PATH 時，在家目錄或更上層執行要被拒絕（明確給 PATH 不拒）；`display.py` 只回傳字串，不直接印。
 - 只有 `OPENAI_BASE_URL`、`OPENAI_API_KEY`、`FIXLAB_MODEL` 這類環境變數；**不讀 `.env`**（README 有寫，不能偷偷改變）。
 
 **Benchmark 與實驗**（`bench/`、`fixlab/bench/`、`docs/benchmark*.md`）
@@ -107,7 +103,7 @@ git log --oneline origin/main..HEAD
 **沒有未處理的阻擋與重要問題，而且步驟 2 的檢查都通過**，才執行：
 
 ```bash
-.claude/hooks/mark-reviewed.sh
+"$(git rev-parse --show-toplevel)/.claude/hooks/mark-reviewed.sh"
 ```
 
-它把目前 HEAD 寫進本機的 `.claude/state/review-passed`（不進版控）。有未 commit 的追蹤檔案時會拒絕，先 commit。之後任何新 commit 都會讓紀錄失效，修正完要重審並重新記錄。有阻擋或重要問題時**不要記錄**，交給 `review-findings`。
+它把目前 HEAD 寫進本機的 `.claude/state/review-passed`（不進版控）。有未 commit 的追蹤檔案時會拒絕，先 commit。之後任何新 commit 都會讓紀錄失效（只動 `docs/spectra/` 的歸檔 commit 除外），修正完要重審並重新記錄。順序是：實作 → review → 歸檔 → 開 PR；程式碼的範圍定義在 `.claude/hooks/lib.sh` 的 `CODE_RE`。有阻擋或重要問題時**不要記錄**，交給 `review-findings`。

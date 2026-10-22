@@ -7,7 +7,7 @@ context: |
   這個專案是能實際使用的 CLI 工具，評測沿用可見／隱藏測試與假通過的方法。
   涵蓋的能力：Tool-use agent／coding assistant、CLI AI assistant、模型評估／telemetry／實驗框架、
   程式碼生成的自動化驗證、開源模型、Prompt／Context engineering；
-  後期選做 Agent workflow／Multi-agent、平台 connector（MCP 或 GitHub issue）。
+  平台 connector 已有 MCP client；Agent workflow／Multi-agent 對照為選做。
   讀者：使用者本人與外部讀者。使用者必須能用自己的話解釋每個設計決定。
   技術：Python、OpenAI 相容 API（本機 Ollama、OpenRouter），不使用 agent 框架，迴圈自己寫。
   Agent 定義：由 LLM 決定下一步與何時完成；程式只設步數上限、連續失敗上限等保險。不得退化成寫死流程。

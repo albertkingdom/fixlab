@@ -24,7 +24,7 @@ fixlab 是能實際使用的工具，沿用它的評測方法（可見／隱藏�
 | 程式碼生成的自動化驗證 | 可抽換的 verifier（pytest） |
 | 開源模型與推論框架 | Ollama／OpenRouter 上的 Qwen、Gemma 對商用模型 |
 | Prompt／context engineering | system prompt 規則消融、tool output 截斷 |
-| Agent workflow、平台 connector | 後期選做（MCP） |
+| Agent workflow、平台 connector | MCP client 已完成（`docs/mcp.md`）；多 agent 對照為選做 |
 
 ### 定位（對外怎麼說）
 - 可以說：「我實作了 CLI coding agent，並用自建的多檔 bug benchmark 量測驗證回饋、假通過與成本。」
@@ -79,6 +79,6 @@ docs/benchmark-results.md  階段 3 第一次完整實驗的結果、設定、�
 7. **原創性**：不得複製他人專案的程式碼或題目結構（包含範例專案、bug 類型、檔案配置）。每個設計決定的依據必須是自己的實驗、自己程式的已知缺陷，或 Claude Code 的實際行為；外部文章只當參考，並在 README 與 `docs/spectra` 的設計文件註明讀過什麼、採用了哪個想法。
 
 ## 6. 參考來源（只是參考，不是設計依據）
-- 高見龍 KeSi 連載：<https://kaochenlong.com/build-your-own-claude-code>。讀過 Day 01–18，也讀過其 repo。影響到的想法：連續失敗只算「整輪全失敗」、環境變數洩漏是風險、重視 token 與成本量測、沙箱的風險清單。程式 repo：<https://github.com/kaochenlong/KeSi>，MIT 授權，Copyright (c) 2026 Eddie Kao（2026-10-16 查證 LICENSE）。沙箱寫法在 code-agent-eval 的註解標為參考 KeSi 的 sandbox_spec；5.2 動工前要比對兩者，有沿用的部分就附上版權聲明。範例專案、bug 類型、檔案結構、規格與測試都是自己設計。範例專案、bug 類型、檔案結構、規格與測試都是自己設計。
+- 高見龍 KeSi 連載：<https://kaochenlong.com/build-your-own-claude-code>。讀過 Day 01–18，也讀過其 repo。影響到的想法：連續失敗只算「整輪全失敗」、環境變數洩漏是風險、重視 token 與成本量測、沙箱的風險清單。程式 repo：<https://github.com/kaochenlong/KeSi>，MIT 授權，Copyright (c) 2026 Eddie Kao（2026-10-16 查證 LICENSE）。沙箱寫法在 code-agent-eval 的註解標為參考 KeSi 的 sandbox_spec；5.2 動工前要比對兩者，有沿用的部分就附上版權聲明。範例專案、bug 類型、檔案結構、規格與測試都是自己設計。
 - 前身專案：`../code-agent-eval`（自己的程式與試跑結果 docs/pilot-results.md）。
 - Claude Code 的工具行為（Edit 的唯一字串替換、Write 覆寫前需先讀過）。
