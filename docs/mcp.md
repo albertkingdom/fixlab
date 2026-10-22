@@ -2,14 +2,14 @@
 
 [回到首頁](../README.md)
 
-互動模式下，agent 可以呼叫本機 [MCP](https://modelcontextprotocol.io) server 提供的工具，例如查 issue 或查文件。**目前只支援 stdio 傳輸**：由 fixlab 啟動本機 server，透過標準輸入／輸出通訊；不支援以 URL 連線的遠端 HTTP server（包含 Streamable HTTP 與 SSE）。需要將官方 SDK 裝進執行 fixlab 的同一個環境；依原本的安裝方式選一種（`OWNER` 換成實際的 GitHub 帳號）：
+互動模式下，agent 可以呼叫本機 [MCP](https://modelcontextprotocol.io) server 提供的工具，例如查 issue 或查文件。**目前只支援 stdio 傳輸**：由 fixlab 啟動本機 server，透過標準輸入／輸出通訊；不支援以 URL 連線的遠端 HTTP server（包含 Streamable HTTP 與 SSE）。需要將官方 SDK 裝進執行 fixlab 的同一個環境；依原本的安裝方式選一種：
 
 ```sh
 # 原本用 uv tool 安裝：重新安裝並加入 mcp extra
-uv tool install --force 'fixlab[mcp] @ git+https://github.com/OWNER/fixlab'
+uv tool install --force 'fixlab[mcp] @ git+https://github.com/albertkingdom/fixlab'
 
 # 原本用 pipx 安裝：重新安裝並加入 mcp extra
-pipx install --force 'fixlab[mcp] @ git+https://github.com/OWNER/fixlab'
+pipx install --force 'fixlab[mcp] @ git+https://github.com/albertkingdom/fixlab'
 
 # 開發用安裝：在 fixlab 原始碼根目錄執行
 .venv/bin/python -m pip install -e '.[mcp]'
