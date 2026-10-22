@@ -16,3 +16,6 @@ build/
 
 # tests/test_isolation.py 在專案目錄底下建的臨時資料夾（被中斷時會留下）
 .fixlab-test-*/
+
+# Local hook state (review records)
+.claude/state/
