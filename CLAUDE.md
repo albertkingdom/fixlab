@@ -31,40 +31,40 @@ Changes can be parked（暫存）— temporarily moved out of `docs/spectra/chan
 
 <!-- SPECTRA:END -->
 
-## Commands
+## 指令
 
 ```bash
-.venv/bin/python -m pytest -q                  # fixlab's own tests (about 30 s); CI runs them on macOS
-.venv/bin/python -m fixlab.bench check         # benchmark problem self-check, free
-UPDATE_GOLDEN=1 .venv/bin/python -m pytest tests/test_trace_golden.py   # only for an intentional behavior change; review the diff
+.venv/bin/python -m pytest -q                  # fixlab 自己的測試（約 30 秒）；CI 在 macOS 跑
+.venv/bin/python -m fixlab.bench check         # benchmark 題目自我檢查，不花錢
+UPDATE_GOLDEN=1 .venv/bin/python -m pytest tests/test_trace_golden.py   # 只在刻意改變行為時使用；要檢視 diff
 ```
 
-`bench run --confirm` calls real models and costs money; run it only when the user asks. Directory layout and design rules are in AGENTS.md.
+`bench run --confirm` 會呼叫真實模型、花錢，只有使用者要求時才執行。目錄結構與設計原則見 AGENTS.md。
 
-## Specs
+## 規格
 
-- Specs live in `docs/spectra/specs/`, one capability per directory in kebab-case (`workspace-isolation`, `run-telemetry`). New behavior needs a Spectra change (`/spectra-propose`) before implementation.
-- Requirements use `SHALL`/`SHALL NOT`; each has at least one `#### Scenario:`, as WHEN/THEN lines or a table of inputs and results.
-- Tests cite the requirement they verify in a `# 規格：<Requirement>` comment.
-- Archived changes are history. Do not edit them; open a new change instead.
-- Docs-only or tooling-only changes (README, `docs/`, `.claude/`, CI wiring) may skip the Spectra flow; say so in the PR description.
+- 規格放在 `docs/spectra/specs/`，一個 capability 一個資料夾，用 kebab-case 命名（`workspace-isolation`、`run-telemetry`）。新行為在實作前要有 Spectra change（`/spectra-propose`）。
+- 需求用 `SHALL`／`SHALL NOT`；每條需求至少一個 `#### Scenario:`，以 WHEN／THEN 或「輸入與結果」表格撰寫。
+- 測試用 `# 規格：<Requirement>` 註解標出它驗證的需求。
+- 已歸檔的 change 是歷史紀錄，不要修改；需要時另開新的 change。
+- 只動文件或工具設定的變更（README、`docs/`、`.claude/`、CI 設定）可以不走 Spectra 流程，並在 PR 說明寫明。
 
-## Skills and Hooks
+## Skills 與 Hooks
 
-Project skills in `.claude/skills/` (the `spectra-*` skills are general-purpose):
+`.claude/skills/` 的專案專屬 skill（`spectra-*` 是通用 skill）：
 
-| Skill | Use when |
+| Skill | 使用時機 |
 |---|---|
-| `code-review` | Finding problems before a PR or archive; applies fixlab's design rules and records the result |
-| `review-findings` | Handling the findings: verify, grade, fix with new commits, re-review |
-| `unit-test` | Writing or changing tests (scripted fake model, golden trace, fixtures) |
-| `create-pr` | Pushing and opening a PR |
+| `code-review` | 開 PR 或歸檔前找問題；套用 fixlab 的設計原則並記錄結果 |
+| `review-findings` | 處理 review 發現的問題：驗證、分級、用新 commit 修正、重審 |
+| `unit-test` | 撰寫或修改測試（劇本假模型、golden trace、fixtures） |
+| `create-pr` | push 並開 PR |
 
-Hooks (`.claude/settings.json`, scripts in `.claude/hooks/`) enforce the rules in AGENTS.md section 5:
+Hooks（`.claude/settings.json`，腳本在 `.claude/hooks/`）執行 AGENTS.md 第 5 節的規則：
 
-| Hook | Effect |
+| Hook | 作用 |
 |---|---|
-| `guard-bash.sh` (PreToolUse, Bash) | Blocks `git add -A`/`.`/`-u`, commits on `main`/`master`/`develop`, commit messages with AI attribution, and `gh pr create` / `spectra archive` when HEAD has no recorded code review |
-| `remind-docs.sh` (PostToolUse, Edit/Write) | After editing package code, reminds to check specs, README and docs; warns against hand-editing the golden trace |
-| `review-reminder.sh` (Stop) | Once per HEAD, asks for a code review when the branch has unreviewed code commits |
-| `mark-reviewed.sh` | Records the review for HEAD in `.claude/state/` (git-ignored); run by the skills, not by hand |
+| `guard-bash.sh`（PreToolUse，Bash） | 擋下 `git add -A`／`.`／`-u`、在 `main`／`master`／`develop` 上 commit、帶 AI 署名的 commit 訊息，以及 HEAD 沒有審查紀錄時的 `gh pr create`／`spectra archive` |
+| `remind-docs.sh`（PostToolUse，Edit/Write） | 修改套件程式碼後，提醒檢查規格、README 與文件；提醒不要手改 golden trace |
+| `review-reminder.sh`（Stop） | 分支上有未審查的程式碼 commit 時，每個 HEAD 提醒一次要做 code review |
+| `mark-reviewed.sh` | 把 HEAD 的審查結果記在 `.claude/state/`（不進版控）；由 skill 呼叫，不要手動執行 |
