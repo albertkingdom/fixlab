@@ -1,8 +1,12 @@
 # fixlab
 
+![test](https://github.com/albertkingdom/fixlab/actions/workflows/test.yml/badge.svg)
+
 教學導向的最小 CLI coding agent：給它一個有 bug 的多檔 Python 小專案，它自己找出原因、修改原始碼、用 pytest 驗證。
 
 模型自行決定下一步與何時完成；程式提供六個內建工具、步數與連續失敗上限、檔案保護及 telemetry。這個專案也附有 20 篇教學文章與自建的多檔 bug benchmark，用來觀察修好率、假通過、既有功能退化與成本。
+
+**主要發現：** 在這組 8 題 bug 上，9B 開源模型（Qwen3.5-9B）能自己跑測試時修好 82%，不能跑時只有 25%。沒有測試時它不是亂宣稱修好，而是一直搜尋、不敢結束；在 prompt 加一句停止規則後修好率回到約 81%，但多數執行仍停不下來。這是這組題目的觀察，不是一般成功率（見 [Benchmark 的觀察](#benchmark-的觀察)）。
 
 ![fixlab 修復範例：模型讀檔、改檔，跑測試通過](docs/assets/demo.gif)
 
