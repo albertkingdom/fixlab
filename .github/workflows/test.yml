@@ -1,0 +1,16 @@
+name: test
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  pytest:
+    # 沙箱只在 macOS 啟用，用 macOS 才會跑到沙箱相關測試
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e '.[mcp]'
+      - run: python -m pytest -q

@@ -10,11 +10,11 @@
 
 fixlab 只支援用 pytest 跑測試的 Python 專案；其他語言或測試工具的專案，`run_tests` 給不出有用的結果。
 
-需要 Python 3.11 以上；電腦上沒有的話，先用 Homebrew（`brew install python`）或 python.org 的安裝程式裝一個（macOS 內建的 `/usr/bin/python3` 版本太舊）。用 uv 或 pipx 擇一安裝成指令，它們會自動建立獨立的虛擬環境，不必自己建 venv（`OWNER` 換成實際的 GitHub 帳號）：
+需要 Python 3.11 以上；電腦上沒有的話，先用 Homebrew（`brew install python`）或 python.org 的安裝程式裝一個（macOS 內建的 `/usr/bin/python3` 版本太舊）。用 uv 或 pipx 擇一安裝成指令，它們會自動建立獨立的虛擬環境，不必自己建 venv：
 
 ```
-uv tool install git+https://github.com/OWNER/fixlab
-pipx install git+https://github.com/OWNER/fixlab
+uv tool install git+https://github.com/albertkingdom/fixlab
+pipx install git+https://github.com/albertkingdom/fixlab
 ```
 
 裝好後若出現 `fixlab: command not found`，代表指令所在的 `~/.local/bin` 不在 PATH 上：執行 `uv tool update-shell` 或 `pipx ensurepath`，再開一個新的終端機。
