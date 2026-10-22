@@ -42,7 +42,7 @@ def run_tests_v1(root):
 **問題三：pytest 會往上層資料夾找設定。** 當工作目錄放在這個專案自己的資料夾裡面（範例專案就是 `tests/fixtures/timelog`），pytest 找到了上層的設定檔：
 
 ```
-['rootdir: /Users/yklin/Documents/AI_projects/fixlab', 'configfile: pyproject.toml']
+['rootdir: /path/to/fixlab', 'configfile: pyproject.toml']
 ```
 
 測試結果因此受到專案之外的設定影響。目前還沒有沙箱，所以只是多讀了一個檔案；設計文件記錄過一次實驗：沙箱禁止讀取專案目錄之後，pytest 會因為讀不到這個設定檔而直接崩潰。
@@ -202,7 +202,7 @@ def clip_middle(text, limit=4000):
    ok=True flags={'tests_passed': False, 'timed_out': False}
    測試輸出裡出現金鑰： False | 測試印出的值： ['None']
 -- 2 工作目錄新增的東西： （沒有）
--- 3 固定指令的設定來源： ['rootdir: /Users/yklin/Documents/AI_projects/fixlab/tests/fixtures/timelog', 'configfile: ../../../../../../../../dev/null']
+-- 3 固定指令的設定來源： ['rootdir: /path/to/fixlab/tests/fixtures/timelog', 'configfile: ../../../../../../../../dev/null']
 -- 4 目標 --version
    ok=True flags={'tests_passed': False, 'timed_out': False}
    ERROR: file or directory not found: ./--version
