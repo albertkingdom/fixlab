@@ -4,6 +4,10 @@
 
 模型自行決定下一步與何時完成；程式提供六個內建工具、步數與連續失敗上限、檔案保護及 telemetry。這個專案也附有 20 篇教學文章與自建的多檔 bug benchmark，用來觀察修好率、假通過、既有功能退化與成本。
 
+![fixlab 修復範例：模型讀檔、改檔，跑測試通過](docs/assets/demo.gif)
+
+上圖是在附帶的範例專案 `timelog` 上，用 Qwen3.5-9B 做的一次實際修復（8 步、約 1.3 萬 token）；單次錄影不代表成功率，統計見下方 benchmark。
+
 **定位是修 bug。** 預設 system prompt 要求修復失敗行為，測試檔唯讀。`--task` 與互動輸入不會替換這個 system prompt；目前沒有拒絕非修 bug 請求的機制，其他任務也未經這套 benchmark 驗證。背景與範圍見 [AGENTS.md](AGENTS.md)。
 
 ## 安裝（一般使用者）
