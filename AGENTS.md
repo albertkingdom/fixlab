@@ -15,22 +15,20 @@
 fixlab 是能實際使用的工具，沿用它的評測方法（可見／隱藏測試、假通過）與部分程式（迴圈、tool call 解析、沙箱）。
 沙箱寫法最初參考 KeSi（github.com/kaochenlong/KeSi，MIT，Copyright (c) 2026 Eddie Kao）；沿用須註明來源，複製較大段內容時須保留其版權聲明。
 
-### 為什麼做（JD 對應）
-華邦電子「軟體類 AI 應用工程師（竹北）」，104 職缺 `94ndv`：
-
-| JD | fixlab 的對應 |
+### 涵蓋的能力
+| 主題 | fixlab 的對應 |
 |---|---|
-| Tool-use Agent、Coding Copilot（工作 3） | 多檔修 bug 的 agent 迴圈與工具 |
-| CLI AI Assistant、Developer Productivity Tool（工作 8、加分 3） | 互動式 CLI 與一次性 `fixlab PATH` 指令 |
-| 評估、Telemetry、實驗框架、AI Evaluation Framework（工作 5、加分 1） | 事件記錄、彙整報告、bug benchmark |
-| 程式碼生成的自動化驗證（工作 6） | 可抽換的 verifier（pytest） |
-| 開源模型與推論框架（加分 2） | Ollama／OpenRouter 上的 Qwen、Gemma 對商用模型 |
-| Prompt／Context Engineering（加分 1） | system prompt 規則消融、tool output 截斷 |
-| Agent Workflow／Multi-Agent、平台 Connector（工作 2、8） | 後期選做 |
+| Tool-use agent、coding assistant | 多檔修 bug 的 agent 迴圈與工具 |
+| CLI AI assistant、開發者工具 | 互動式 CLI 與一次性 `fixlab PATH` 指令 |
+| 評估、telemetry、實驗框架 | 事件記錄、彙整報告、bug benchmark |
+| 程式碼生成的自動化驗證 | 可抽換的 verifier（pytest） |
+| 開源模型與推論框架 | Ollama／OpenRouter 上的 Qwen、Gemma 對商用模型 |
+| Prompt／context engineering | system prompt 規則消融、tool output 截斷 |
+| Agent workflow、平台 connector | 後期選做（MCP） |
 
-### 定位（面試時怎麼說）
+### 定位（對外怎麼說）
 - 可以說：「我實作了 CLI coding agent，並用自建的多檔 bug benchmark 量測驗證回饋、假通過與成本。」
-- 不可以說：做了 Claude Code／商用 Copilot；有 EDA／Verilog／RTL 經驗（沒有，且本專案不做）。
+- 不可以說：做了 Claude Code／商用 Copilot；結論適用於一般程式修復（只適用這組 8 題）。
 
 ## 2. Agent 的定義
 「誰決定下一步」才是 agent 與 workflow 的差別。LLM 自己決定先做什麼、何時完成；程式只設保險（步數上限、連續失敗上限）。不得退化成寫死流程。
@@ -43,7 +41,7 @@ fixlab 是能實際使用的工具，沿用它的評測方法（可見／隱藏�
 - 實驗：有／無 `run_tests` 兩組，system prompt 一致，只差工具。
 
 ### 非目標
-Verilog／EDA、SWE-bench 與真實大型 repo（需 Docker、小模型成功率低）、Web UI、記憶、微調。
+SWE-bench 與真實大型 repo（需 Docker、小模型成功率低）、Web UI、記憶、微調。
 
 ### 目錄結構
 ```

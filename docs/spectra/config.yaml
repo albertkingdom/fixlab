@@ -5,12 +5,10 @@ context: |
   並附 telemetry 與 bug benchmark，量化 agent 的表現。
   與 ../code-agent-eval 的關係：那個專案是評測實驗（單檔函式題、agent 是受測對象）；
   這個專案是能實際使用的 CLI 工具，評測沿用可見／隱藏測試與假通過的方法。
-  用途：華邦電子「AI 應用工程師」面試作品（104 職缺 94ndv）。
-  JD 對應：Tool-use Agent／Coding Copilot、CLI AI Assistant、模型評估／Telemetry／實驗框架、
-  程式碼生成的自動化驗證、開源模型、Prompt／Context Engineering；
-  後期選做 Agent Workflow／Multi-Agent、平台 Connector（MCP 或 GitHub issue）。
-  不做 Verilog／EDA（沒有相關經驗，不宣稱）。
-  讀者：使用者本人＋面試官。使用者必須能用自己的話解釋每個設計決定。
+  涵蓋的能力：Tool-use agent／coding assistant、CLI AI assistant、模型評估／telemetry／實驗框架、
+  程式碼生成的自動化驗證、開源模型、Prompt／Context engineering；
+  後期選做 Agent workflow／Multi-agent、平台 connector（MCP 或 GitHub issue）。
+  讀者：使用者本人與外部讀者。使用者必須能用自己的話解釋每個設計決定。
   技術：Python、OpenAI 相容 API（本機 Ollama、OpenRouter），不使用 agent 框架，迴圈自己寫。
   Agent 定義：由 LLM 決定下一步與何時完成；程式只設步數上限、連續失敗上限等保險。不得退化成寫死流程。
 
@@ -31,12 +29,12 @@ context: |
 
 rules:
   proposal:
-    - 寫明這個變更對應 JD 的哪幾點，以及不做什麼（Non-goals）。
+    - 寫明這個變更對應「涵蓋的能力」的哪幾項，以及不做什麼（Non-goals）。
     - 若是補寫既有行為的規格，標註「實作後補寫」。
   specs:
     - 每條需求至少一個具體情境（給定／當／則），用實際檔名、指令或輸入值舉例。
     - 用白話描述行為，避免只寫抽象名詞。
   design:
-    - 每個設計決定寫出替代方案與取捨，讓使用者能在面試時說明「為什麼這樣做」。
+    - 每個設計決定寫出替代方案與取捨，讓使用者能向外部讀者說明「為什麼這樣做」。
   tasks:
     - 任務切成每項 2 小時以內，並標出對應的測試。
